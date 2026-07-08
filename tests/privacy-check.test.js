@@ -36,9 +36,43 @@ test("privacy-check passes clean trial feedback", async () => {
 
 test("privacy-check blocks unsafe trial records and redacts secret excerpts", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-privacy-risk-"));
+  const riskInput = path.join(tempRoot, "session");
   const jsonPath = path.join(tempRoot, "privacy.json");
   const markdownPath = path.join(tempRoot, "privacy.md");
-  const riskInput = path.join(rootPath, "examples", "trial-privacy-risk");
+
+  await fs.mkdir(riskInput, { recursive: true });
+  await fs.writeFile(path.join(riskInput, "unsafe-feedback.md"), [
+    "# Unsafe Trial Feedback Example",
+    "",
+    "```text",
+    "OPENAI_API_KEY=sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "```",
+    "",
+    "```js",
+    "import fs from \"node:fs\";",
+    "export function one() { return 1; }",
+    "export function two() { return 2; }",
+    "export function three() { return 3; }",
+    "export function four() { return 4; }",
+    "export function five() { return 5; }",
+    "export function six() { return 6; }",
+    "export function seven() { return 7; }",
+    "export function eight() { return 8; }",
+    "export function nine() { return 9; }",
+    "export function ten() { return 10; }",
+    "export function eleven() { return 11; }",
+    "export function twelve() { return 12; }",
+    "export function thirteen() { return 13; }",
+    "export function fourteen() { return 14; }",
+    "export function fifteen() { return 15; }",
+    "export function sixteen() { return 16; }",
+    "export function seventeen() { return 17; }",
+    "export function eighteen() { return 18; }",
+    "export function nineteen() { return 19; }",
+    "export function twenty() { return 20; }",
+    "```",
+    ""
+  ].join("\n"), "utf8");
 
   const result = await runPrivacyCheck([riskInput, "--json", jsonPath, "--markdown", markdownPath]);
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));

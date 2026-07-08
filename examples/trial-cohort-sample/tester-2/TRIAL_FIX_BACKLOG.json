@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "mode": "trial-fix-backlog",
+  "decision": "READY_FOR_TESTER_2_WITH_SAFETY_WATCH",
+  "mustFixBeforeTester2": [],
+  "watchDuringTester2": [
+    {
+      "id": "P2-001",
+      "priority": "P2",
+      "theme": "demo-real-mode",
+      "title": "Watch Demo vs real project mode clarity",
+      "action": "Make Demo vs real project mode visually prominent near the path controls.",
+      "reason": "Repeated friction theme in feedback summary.",
+      "evidence": ["Tester understood Demo vs real project mode: Friction"]
+    },
+    {
+      "id": "P1-001",
+      "priority": "P1",
+      "theme": "safety",
+      "title": "Watch safety and write-boundary confidence",
+      "action": "Tighten Apply/Verify confirmation copy.",
+      "reason": "Safety concern should be watched even when it is not a blocker.",
+      "evidence": ["Tester felt safe trying a disposable patch next: Maybe"]
+    }
+  ]
+}

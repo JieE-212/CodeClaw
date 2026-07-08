@@ -51,6 +51,14 @@ If it says `FIX_BEFORE_NEXT_TESTER` or `HOST_READY_HOLD`, fix the listed blocker
 
 If it says `POST_SESSION_PIPELINE_FAILED` because privacy check failed, redact the completed session records and rerun the same command.
 
+After at least two completed tester folders exist, run:
+
+```bash
+npm.cmd run trial:cohort-summary -- <completed-trials-folder>
+```
+
+Use `TRIAL_COHORT_SUMMARY.md` before expanding to 3-5 testers.
+
 ## Notes
 
 `trial:post-session` intentionally allows the final host-ready step to produce `HOLD` without hiding the report. A real tester can reveal blockers; the command should preserve that decision rather than crash before writing the summary.

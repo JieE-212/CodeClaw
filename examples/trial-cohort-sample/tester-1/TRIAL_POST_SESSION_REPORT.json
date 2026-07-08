@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "mode": "trial-post-session",
+  "decision": "READY_FOR_NEXT_TESTER",
+  "privacyDecision": "PRIVACY_OK",
+  "feedbackDecision": "READY_WITH_WATCH_ITEMS",
+  "backlogDecision": "READY_FOR_TESTER_2_WITH_WATCH",
+  "hostReadyDecision": "READY_TO_HOST",
+  "mustFixBeforeNextTester": [],
+  "watchDuringNextTester": [
+    {
+      "id": "P2-001",
+      "priority": "P2",
+      "theme": "demo-real-mode",
+      "title": "Watch Demo vs real project mode clarity"
+    }
+  ]
+}

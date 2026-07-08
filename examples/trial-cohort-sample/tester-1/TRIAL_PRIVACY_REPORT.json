@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "mode": "trial-privacy-check",
+  "decision": "PRIVACY_OK",
+  "blockers": [],
+  "warnings": []
+}

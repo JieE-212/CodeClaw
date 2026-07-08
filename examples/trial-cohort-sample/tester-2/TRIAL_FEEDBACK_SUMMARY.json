@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "mode": "trial-feedback-ingest",
+  "decision": "READY_WITH_WATCH_ITEMS",
+  "coverage": {
+    "feedbackFiles": 1,
+    "observationFiles": 1,
+    "resultFiles": 1
+  },
+  "blockers": [],
+  "warnings": [
+    {
+      "label": "Tester understood Demo vs real project mode",
+      "result": "Friction",
+      "category": "demo-real-mode",
+      "reason": "Tester asked whether Demo touched their files."
+    },
+    {
+      "label": "Tester felt safe trying a disposable patch next",
+      "result": "Maybe",
+      "category": "safety",
+      "reason": "Tester wanted one more confirmation before Apply."
+    }
+  ],
+  "safetyConcerns": [
+    {
+      "text": "Tester felt safe trying a disposable patch next? Maybe",
+      "category": "safety"
+    }
+  ],
+  "frictionThemes": [
+    {
+      "theme": "demo-real-mode",
+      "count": 2,
+      "blockers": 0,
+      "warnings": 1,
+      "examples": ["Tester understood Demo vs real project mode: Friction"]
+    },
+    {
+      "theme": "safety",
+      "count": 1,
+      "blockers": 0,
+      "warnings": 1,
+      "examples": ["Tester felt safe trying a disposable patch next: Maybe"]
+    }
+  ]
+}

@@ -76,6 +76,7 @@ Share these with the tester:
 - `docs/TRIAL_FEEDBACK_INGEST.md`.
 - `docs/TRIAL_FIX_BACKLOG.md`.
 - `docs/TRIAL_SESSION_PACK.md`.
+- `docs/TRIAL_COHORT_SUMMARY.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -221,6 +222,19 @@ dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
 ```
 
+After at least two completed tester folders exist, run:
+
+```bash
+npm.cmd run trial:cohort-summary -- <completed-trials-folder>
+```
+
+This writes:
+
+```text
+dist/TRIAL_COHORT_SUMMARY.md
+dist/TRIAL_COHORT_SUMMARY.json
+```
+
 Create a short follow-up note if you need a lightweight human summary:
 
 ```text
@@ -235,4 +249,4 @@ Suggested next product fix:
 Proceed to tester 2? Yes / No
 ```
 
-Only expand to 3-5 testers after the first session shows no launch blocker, no trust-breaking safety confusion, `TRIAL_PRIVACY_REPORT.md` does not say `PRIVACY_HOLD`, `TRIAL_FEEDBACK_SUMMARY.md` does not say `NO_GO_FIX_FIRST`, `TRIAL_FIX_BACKLOG.md` has no `P0` items, `TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST` for the next session, and `TRIAL_POST_SESSION_REPORT.md` says `READY_FOR_NEXT_TESTER`.
+Only expand to 3-5 testers after at least two completed sessions show no launch blocker, no trust-breaking safety confusion, `TRIAL_PRIVACY_REPORT.md` does not say `PRIVACY_HOLD`, `TRIAL_FEEDBACK_SUMMARY.md` does not say `NO_GO_FIX_FIRST`, `TRIAL_FIX_BACKLOG.md` has no `P0` items, `TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST` for the next session, `TRIAL_POST_SESSION_REPORT.md` says `READY_FOR_NEXT_TESTER`, and `TRIAL_COHORT_SUMMARY.md` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`.

@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "mode": "trial-fix-backlog",
+  "decision": "READY_FOR_TESTER_2_WITH_WATCH",
+  "mustFixBeforeTester2": [],
+  "watchDuringTester2": [
+    {
+      "id": "P2-001",
+      "priority": "P2",
+      "theme": "demo-real-mode",
+      "title": "Watch Demo vs real project mode clarity",
+      "action": "Make Demo vs real project mode visually prominent near the path controls.",
+      "reason": "Feedback summary marked this theme as a watch item.",
+      "evidence": ["Demo vs real project mode was clear: Friction"]
+    }
+  ]
+}

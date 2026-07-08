@@ -53,6 +53,7 @@ docs/TRIAL_SESSION_PACK.md
 docs/TRIAL_HOST_READY.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
+docs/TRIAL_COHORT_SUMMARY.md
 docs/TRIAL_RESULT_RECORD.md
 docs/TRIAL_INVITE_MESSAGE.md
 docs/RELEASE_STRATEGY.md
@@ -219,6 +220,7 @@ npm.cmd run trial:session-pack
 npm.cmd run trial:host-ready
 npm.cmd run trial:privacy-check
 npm.cmd run trial:post-session
+npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 ```
 
 This writes:
@@ -235,9 +237,11 @@ dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
+dist/TRIAL_COHORT_SUMMARY.md
+dist/TRIAL_COHORT_SUMMARY.json
 ```
 
-Proceed to tester 2 only when privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, and the host accepts any watch items. Generate a fresh `trial:session-pack` for every hosted tester.
+Proceed to tester 2 only when privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
 
 ## Simulated First Trial
 
@@ -344,6 +348,7 @@ docs/TRIAL_SESSION_PACK.md
 docs/TRIAL_HOST_READY.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
+docs/TRIAL_COHORT_SUMMARY.md
 ```
 
 Use this ready-to-send invite if helpful:

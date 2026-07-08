@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "mode": "trial-feedback-ingest",
+  "decision": "READY_WITH_WATCH_ITEMS",
+  "coverage": {
+    "feedbackFiles": 1,
+    "observationFiles": 1,
+    "resultFiles": 1
+  },
+  "blockers": [],
+  "warnings": [
+    {
+      "label": "Demo vs real project mode was clear",
+      "result": "Friction",
+      "category": "demo-real-mode",
+      "reason": "Tester hesitated before choosing a path."
+    }
+  ],
+  "safetyConcerns": [],
+  "frictionThemes": [
+    {
+      "theme": "demo-real-mode",
+      "count": 3,
+      "blockers": 0,
+      "warnings": 1,
+      "examples": ["Demo vs real project mode was clear: Friction"]
+    }
+  ]
+}

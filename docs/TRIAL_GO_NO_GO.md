@@ -72,6 +72,7 @@ Proceed to tester 2 only if:
 - `npm.cmd run trial:host-ready` says `READY_TO_HOST`.
 - Completed session records pass `npm.cmd run trial:privacy-check -- <session-folder>`.
 - After a completed session, `npm.cmd run trial:post-session -- --session <session-folder>` says `READY_FOR_NEXT_TESTER` before inviting another tester.
+- After at least two completed sessions, `npm.cmd run trial:cohort-summary -- <completed-trials-folder>` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH` before expanding to 3-5 testers.
 - The next product fix is clear and not a safety blocker.
 
 Do not proceed to tester 2 if:
@@ -87,3 +88,4 @@ Do not proceed to tester 2 if:
 - `TRIAL_HOST_READY_REPORT.md` says `HOLD`.
 - `TRIAL_PRIVACY_REPORT.md` says `PRIVACY_HOLD`.
 - `TRIAL_POST_SESSION_REPORT.md` says `FIX_BEFORE_NEXT_TESTER`, `HOST_READY_HOLD`, or `POST_SESSION_PIPELINE_FAILED`.
+- `TRIAL_COHORT_SUMMARY.md` says `REVIEW_REPEATED_SAFETY` or `HOLD_EXPANSION_FIX_FIRST`.
