@@ -1,0 +1,14 @@
+﻿node_modules/
+.env
+.env.*
+.DS_Store
+dist/
+build/
+coverage/
+.codeclaw/cache/
+.codeclaw/logs/
+.codeclaw/audit.jsonl
+.codeclaw/tasks.json
+.codeclaw/model.json
+.codeclaw/*.json
+*.log
