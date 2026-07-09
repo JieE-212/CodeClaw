@@ -138,14 +138,41 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 2.2 is complete: guided first real tester host run.
+
+Implemented and verified:
+
+- `trial:host-run` generates a live `HOST_RUNBOOK.md` after `trial:host-ready` passes.
+- `dist/TRIAL_HOST_RUN_REPORT.md` and `dist/TRIAL_HOST_RUN_REPORT.json` record the host-run gate.
+- The command blocks when host-ready is missing, held, tester ids do not match, session files are missing, or intake-session is held.
+- Generated runbooks include pre-call gates, accepted warnings, tester language and scope, live script steps, watch items, stop conditions, and post-session commands.
+- `trial:status` now recommends `trial:host-run` between host-ready and hosting.
+- Local archives can include `HOST_RUNBOOK.md` as session context while still excluding raw tester records.
+- Trial runbook, local package guide, release checklist, status guide, host-ready guide, session-pack guide, archive guide, dispatch docs, and package readiness were updated.
+- Automated tests cover ready host-run generation, host-run blocking, and the new status transition.
+
+Latest verification:
+
+- `node --check scripts\generate-host-run.js`: passed.
+- `node --check scripts\trial-status.js`: passed.
+- `npm.cmd run test`: passed, 73 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:host-run`: correctly blocked with `HOST_RUN_HOLD` because current local intake-session is not ready.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+
 ## Next Planned Phase
 
-Stage 2.2: guided first real tester host run.
+Stage 2.3: first real tester completion and post-session capture.
 
 Planned order:
 
-1. Fill the local tester roster for the first real tester using an anonymous id.
-2. Run `trial:intake`, then `trial:intake-session -- --force`.
-3. Run `trial:host-ready` and `trial:status` immediately before hosting.
-4. Use the generated `SESSION_BRIEF.md` as the live host script.
-5. Record the first real session using the generated observation, feedback, and result files.
+1. Add a completion gate that checks filled observation, feedback, and result records before `trial:post-session`.
+2. Make the gate block empty placeholders and obvious personal data before ingest.
+3. Generate a concise host completion checklist for the first real tester.
+4. Connect the completion gate into `trial:status`.
+5. Verify the flow with safe and incomplete session fixtures.

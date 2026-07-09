@@ -35,6 +35,7 @@ async function buildReport() {
     freeze: await readReport("TRIAL_FREEZE_REPORT.json"),
     dispatch: await readReport("TRIAL_DISPATCH_NOTE.json"),
     hostReady: await readReport("TRIAL_HOST_READY_REPORT.json"),
+    hostRun: await readReport("TRIAL_HOST_RUN_REPORT.json"),
     privacy: await readReport("TRIAL_PRIVACY_REPORT.json"),
     feedback: await readReport("TRIAL_FEEDBACK_SUMMARY.json"),
     backlog: await readReport("TRIAL_FIX_BACKLOG.json"),
@@ -123,6 +124,12 @@ function decideState(reports, blockers) {
   if (reports.privacy.decision === "PRIVACY_HOLD") {
     return state("PRIVACY_HOLD", "post-session", "npm.cmd run trial:privacy-check -- <session-folder>", "Redact completed records before ingesting or archiving.");
   }
+  if (!reports.postSession.exists && !reports.hostRun.exists) {
+    return state("NEEDS_HOST_RUN", "hosting", "npm.cmd run trial:host-run", "Generate the live host runbook before the session.");
+  }
+  if (!reports.postSession.exists && reports.hostRun.decision === "HOST_RUN_HOLD") {
+    return state("HOST_RUN_BLOCKED", "hosting", "npm.cmd run trial:host-run", "Fix host-run blockers before hosting.");
+  }
   if (!reports.postSession.exists) {
     return state("READY_TO_HOST", "hosting", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Host the session, fill records, then run post-session.");
   }
@@ -158,7 +165,8 @@ function decideState(reports, blockers) {
 
 function collectBlockers(reports) {
   const blockers = [];
-  for (const report of Object.values(reports)) {
+  for (const [key, report] of Object.entries(reports)) {
+    if (key === "hostRun" && reports.postSession.exists) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -200,6 +208,7 @@ function quickLinks(reports, artifacts) {
     readinessReport: reports.readiness.exists ? reports.readiness.relativePath : "",
     dispatchNote: reports.dispatch.exists ? reports.dispatch.relativePath : "",
     hostReadyReport: reports.hostReady.exists ? reports.hostReady.relativePath : "",
+    hostRunReport: reports.hostRun.exists ? reports.hostRun.relativePath : "",
     postSessionReport: reports.postSession.exists ? reports.postSession.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
@@ -216,6 +225,7 @@ function commandGuide(current, reports) {
     { step: "Freeze", command: "npm.cmd run trial:simulate && npm.cmd run trial:freeze", status: reports.freeze.exists ? reports.freeze.decision : "missing" },
     { step: "Dispatch", command: "npm.cmd run trial:dispatch", status: reports.dispatch.exists ? reports.dispatch.decision : "missing" },
     { step: "Host-ready", command: "npm.cmd run trial:session-pack -- --force; npm.cmd run trial:host-ready", status: reports.hostReady.exists ? reports.hostReady.decision : "missing" },
+    { step: "Host runbook", command: "npm.cmd run trial:host-run", status: reports.hostRun.exists ? reports.hostRun.decision : "missing" },
     { step: "Post-session", command: "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", status: reports.postSession.exists ? reports.postSession.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },

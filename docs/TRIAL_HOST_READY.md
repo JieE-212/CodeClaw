@@ -13,6 +13,7 @@ npm.cmd run trial:freeze
 npm.cmd run trial:dispatch
 npm.cmd run trial:session-pack -- --force
 npm.cmd run trial:host-ready
+npm.cmd run trial:host-run
 ```
 
 The host-ready command reads:
@@ -35,6 +36,7 @@ Generate and check a specific tester:
 ```bash
 npm.cmd run trial:session-pack -- --tester tester-2 --force
 npm.cmd run trial:host-ready -- --tester tester-2
+npm.cmd run trial:host-run -- --tester tester-2
 ```
 
 ## Ready Criteria
@@ -52,6 +54,8 @@ The report says `READY_TO_HOST` only when:
 
 P1/P2 watch items do not block hosting, but the host must explicitly accept them before starting.
 
+After this gate says `READY_TO_HOST`, run `trial:host-run` and use the generated `HOST_RUNBOOK.md` as the live session script.
+
 ## Stop Conditions
 
 Do not host the session if the decision is `HOLD`.
@@ -62,6 +66,7 @@ Fix the listed blockers, then rerun:
 npm.cmd run trial:dispatch
 npm.cmd run trial:session-pack -- --force
 npm.cmd run trial:host-ready
+npm.cmd run trial:host-run
 ```
 
 If the package contents changed, rerun the full readiness/freeze path before dispatch.

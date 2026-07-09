@@ -47,10 +47,11 @@ After generation:
 
 ```bash
 npm.cmd run trial:host-ready -- --tester tester-1
+npm.cmd run trial:host-run -- --tester tester-1
 npm.cmd run trial:status
 ```
 
-Host only when `trial:host-ready` says `READY_TO_HOST` and `trial:status` has no blockers.
+Host only when `trial:host-ready` says `READY_TO_HOST`, `trial:host-run` writes `HOST_RUNBOOK.md`, and `trial:status` has no blockers.
 
 ## Blocking Rules
 
@@ -62,4 +63,3 @@ The command blocks when:
 - the selected tester is blocked
 - the selected tester is not ready
 - session pack generation fails
-

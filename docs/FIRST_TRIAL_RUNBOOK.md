@@ -88,9 +88,10 @@ Generate a session-specific folder before the hosted run:
 ```bash
 npm.cmd run trial:session-pack
 npm.cmd run trial:host-ready
+npm.cmd run trial:host-run
 ```
 
-Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `Decision: READY_TO_HOST`. Use the generated `dist/trial-session-packs/tester-1/SESSION_BRIEF.md` as the live host brief.
+Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `Decision: READY_TO_HOST` and `dist/TRIAL_HOST_RUN_REPORT.md` says `HOST_RUN_READY` or `HOST_RUN_READY_WITH_REVIEW`. Use the generated `HOST_RUNBOOK.md` as the live host script.
 
 At any point, run:
 
@@ -238,6 +239,8 @@ dist/TRIAL_FIX_BACKLOG.md
 dist/TRIAL_FIX_BACKLOG.json
 dist/TRIAL_HOST_READY_REPORT.md
 dist/TRIAL_HOST_READY_REPORT.json
+dist/TRIAL_HOST_RUN_REPORT.md
+dist/TRIAL_HOST_RUN_REPORT.json
 dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md
@@ -285,4 +288,4 @@ Suggested next product fix:
 Proceed to tester 2? Yes / No
 ```
 
-Only expand to 3-5 testers after at least two completed sessions show no launch blocker, no trust-breaking safety confusion, `TRIAL_PRIVACY_REPORT.md` does not say `PRIVACY_HOLD`, `TRIAL_FEEDBACK_SUMMARY.md` does not say `NO_GO_FIX_FIRST`, `TRIAL_FIX_BACKLOG.md` has no `P0` items, `TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST` for the next session, `TRIAL_POST_SESSION_REPORT.md` says `READY_FOR_NEXT_TESTER`, and `TRIAL_COHORT_SUMMARY.md` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`.
+Only expand to 3-5 testers after at least two completed sessions show no launch blocker, no trust-breaking safety confusion, `TRIAL_PRIVACY_REPORT.md` does not say `PRIVACY_HOLD`, `TRIAL_FEEDBACK_SUMMARY.md` does not say `NO_GO_FIX_FIRST`, `TRIAL_FIX_BACKLOG.md` has no `P0` items, `TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST` for the next session, `TRIAL_HOST_RUN_REPORT.md` says `HOST_RUN_READY` or `HOST_RUN_READY_WITH_REVIEW`, `TRIAL_POST_SESSION_REPORT.md` says `READY_FOR_NEXT_TESTER`, and `TRIAL_COHORT_SUMMARY.md` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`.

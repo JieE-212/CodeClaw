@@ -30,6 +30,7 @@ const requiredDocs = [
   "docs/TRIAL_STATUS.md",
   "docs/TRIAL_TESTER_INTAKE.md",
   "docs/TRIAL_INTAKE_SESSION.md",
+  "docs/TRIAL_HOST_RUN.md",
   "docs/TRIAL_RESULT_RECORD.md"
 ];
 
@@ -69,6 +70,7 @@ const report = {
     "Run npm.cmd run trial:fix-backlog before inviting tester 2.",
     "Run npm.cmd run trial:session-pack before each hosted tester session.",
     "Run npm.cmd run trial:host-ready immediately before hosting.",
+    "Run npm.cmd run trial:host-run to generate the live HOST_RUNBOOK.md.",
     "Run npm.cmd run trial:privacy-check before ingesting completed records.",
     "Run npm.cmd run trial:post-session after the hosted records are filled.",
     "Run npm.cmd run trial:cohort-summary after at least two completed tester folders exist.",

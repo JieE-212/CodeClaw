@@ -32,6 +32,7 @@ npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:status
 npm.cmd run trial:intake -- --init --force
 node --check scripts/generate-intake-session.js
+node --check scripts/generate-host-run.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -52,6 +53,7 @@ Expected result:
 - `trial:fix-backlog` writes `WAITING_FOR_FEEDBACK` before human records exist, or a P0/P1/P2/P3 repair plan after records are collected.
 - `trial:session-pack` writes a generated tester folder with `SESSION_BRIEF.md` and the three fillable records.
 - `trial:host-ready` says `READY_TO_HOST` before a hosted tester session.
+- `trial:host-run` is syntax-checked and covered by automated tests; run it live only after intake-session and host-ready are aligned.
 - `trial:privacy-check` passes on safe sample feedback and blocks unsafe session records.
 - `trial:post-session` writes a post-session decision report and next tester pack.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.

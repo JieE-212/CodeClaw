@@ -150,7 +150,7 @@ async function copyReports() {
 
 async function copySessionContext() {
   const files = [];
-  for (const base of ["SESSION_PACK_MANIFEST.json", "SESSION_BRIEF.md"]) {
+  for (const base of ["SESSION_PACK_MANIFEST.json", "SESSION_BRIEF.md", "HOST_RUNBOOK.md"]) {
     const source = path.join(sessionPath, base);
     if (!(await exists(source))) continue;
     const target = path.join(archivePath, "session-context", base);
@@ -170,6 +170,8 @@ function reportFileNames() {
     "TRIAL_FIX_BACKLOG.md",
     "TRIAL_HOST_READY_REPORT.json",
     "TRIAL_HOST_READY_REPORT.md",
+    "TRIAL_HOST_RUN_REPORT.json",
+    "TRIAL_HOST_RUN_REPORT.md",
     "TRIAL_POST_SESSION_REPORT.json",
     "TRIAL_POST_SESSION_REPORT.md",
     "TRIAL_COHORT_SUMMARY.json",

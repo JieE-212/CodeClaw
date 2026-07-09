@@ -42,6 +42,8 @@ reports/
 session-context/
 ```
 
+`session-context/` may include `SESSION_PACK_MANIFEST.json`, `SESSION_BRIEF.md`, and `HOST_RUNBOOK.md`. It still excludes raw tester records by default.
+
 ## Privacy Gate
 
 The command requires `TRIAL_PRIVACY_REPORT.json`.

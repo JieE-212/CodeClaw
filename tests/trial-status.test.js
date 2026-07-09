@@ -23,7 +23,7 @@ test("trial-status starts with readiness when reports are missing", async () => 
   assert.equal(report.nextCommand, "npm.cmd run trial:ready");
 });
 
-test("trial-status recognizes ready-to-host state", async () => {
+test("trial-status asks for host runbook before ready-to-host state", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-host-"));
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
@@ -32,6 +32,23 @@ test("trial-status recognizes ready-to-host state", async () => {
   await writeJson(tempRoot, "TRIAL_FREEZE_REPORT.json", { ok: true, mode: "trial-freeze", decision: "GO_HOSTED_TRIAL", blockers: [] });
   await writeJson(tempRoot, "TRIAL_DISPATCH_NOTE.json", { ok: true, mode: "trial-dispatch", decision: "READY_TO_SEND", blockers: [] });
   await writeJson(tempRoot, "TRIAL_HOST_READY_REPORT.json", { ok: true, mode: "trial-host-ready", decision: "READY_TO_HOST", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_HOST_RUN");
+  assert.equal(report.currentStage, "hosting");
+  assert.match(report.nextCommand, /trial:host-run/);
+});
+
+test("trial-status recognizes ready-to-host state after host runbook", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-host-run-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
 
   const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));

@@ -96,9 +96,10 @@ Before the next hosted session, run:
 
 ```bash
 npm.cmd run trial:host-ready
+npm.cmd run trial:host-run
 ```
 
-Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST`.
+Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST` and `dist/TRIAL_HOST_RUN_REPORT.md` says `HOST_RUN_READY` or `HOST_RUN_READY_WITH_REVIEW`.
 
 ## Privacy
 

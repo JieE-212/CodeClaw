@@ -34,6 +34,8 @@ NEEDS_READINESS
 NEEDS_FREEZE
 NEEDS_DISPATCH
 NEEDS_HOST_READY
+NEEDS_HOST_RUN
+HOST_RUN_BLOCKED
 READY_TO_HOST
 PRIVACY_HOLD
 POST_SESSION_REVIEW
@@ -76,3 +78,11 @@ If intake is ready, the next command should be:
 ```bash
 npm.cmd run trial:intake-session -- --force
 ```
+
+If the decision is `NEEDS_HOST_RUN`, run:
+
+```bash
+npm.cmd run trial:host-run
+```
+
+Host only after the host run report says `HOST_RUN_READY`, or after the host accepts every warning in `HOST_RUN_READY_WITH_REVIEW`.
