@@ -248,14 +248,39 @@ Latest verification:
 - `npm.cmd run trial:intake-review-dry-run -- --force --run-id intake-review-latest`: `DRY_RUN_READY_FOR_REAL_INTAKE`.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 2.6 is complete: real tester roster handoff and first live-session launch gate.
+
+Implemented and verified:
+
+- `trial:pre-live` final gate for the first real hosted tester session.
+- The gate checks dry-run readiness, real tester intake, local roster hygiene, intake-session, session pack files, host-ready, host-run, and status evidence.
+- It blocks dry-run tester ids such as `tester-dry-run-1` before a real live session.
+- It checks the selected tester id, consent, privacy acceptance, and allowed scope across roster, intake report, session manifest, host-ready, and host-run reports.
+- It requires `HOST_RUNBOOK.md` and generated session records to exist before hosting.
+- `dist/TRIAL_PRE_LIVE_REPORT.md` and `dist/TRIAL_PRE_LIVE_REPORT.json` record `PRE_LIVE_HOLD`, `PRE_LIVE_READY_WITH_HOST_REVIEW`, or `PRE_LIVE_READY_TO_HOST`.
+- `trial:status` now recommends `trial:pre-live` after host-run and before `READY_TO_HOST`.
+- Trial runbook, local package guide, release checklist, status guide, dispatch docs, and package readiness were updated.
+- Automated tests cover a ready pre-live gate, dry-run tester blocking, and the status transition.
+
+Latest verification:
+
+- `node --check scripts\pre-live-gate.js`: passed.
+- `node --check tests\pre-live-gate.test.js`: passed.
+- `node --check scripts\trial-status.js`: passed.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 85 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 2.6: real tester roster handoff and first live-session launch gate.
+Stage 2.7: first real tester live-session operator capture.
 
 Planned order:
 
-1. Add a beginner-safe checklist for filling `.codeclaw/trial-intake/TESTER_ROSTER.json` with anonymous real tester data.
-2. Add a pre-live gate that confirms dry-run passed, intake is ready, the selected tester has consent/privacy/scope, and no personal fields are present.
-3. Generate the first real tester launch packet from intake and require `trial:host-ready`, `trial:host-run`, and `trial:status` to align.
-4. Document the exact PowerShell command sequence for the user before the first real hosted session.
-5. Keep real tester roster and raw records local-only and excluded from package/share paths.
+1. Add a live-session capture checklist for the host to follow during the first real call.
+2. Make a beginner-safe after-call command sequence from filled records to completion, privacy, post-session, review, and archive.
+3. Add checks that the selected real tester session folder contains only completed Markdown records, not screenshots, logs, source files, or contact data.
+4. Generate a compact host summary that can be pasted into project notes without raw tester identity.
+5. Keep raw real tester records local-only until privacy and review reports pass.
