@@ -66,4 +66,8 @@ Fill:
 <session-folder>/LIVE_SESSION_HOST_SUMMARY.md
 ```
 
-Then run the command sequence printed in `TRIAL_LIVE_CAPTURE_REPORT.md`.
+Then run the command sequence printed in `TRIAL_LIVE_CAPTURE_REPORT.md`, or use the single guarded recovery command:
+
+```bash
+npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
+```

@@ -299,14 +299,41 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 2.8 is complete: first real tester after-call recovery and evidence packaging.
+
+Implemented and verified:
+
+- `trial:after-live` guarded after-call workflow.
+- The command runs completion, privacy, post-session, review, archive, and status in order.
+- It stops on incomplete records, privacy hold, post-session failure, review fix-now/block, or archive hold.
+- `dist/TRIAL_AFTER_LIVE_REPORT.md` and `dist/TRIAL_AFTER_LIVE_REPORT.json` record the after-live decision.
+- A local-only evidence packet is generated under `dist/trial-after-live/<tester-id>-<timestamp>/`.
+- Evidence packets copy generated reports and safe session context such as `LIVE_SESSION_HOST_SUMMARY.md`, but exclude raw tester records, screenshots, logs, source files, contact data, and secrets.
+- `trial:post-session` now supports an alternate `--reports` directory so isolated after-live runs can avoid report collisions.
+- `trial:status` now distinguishes `READY_FOR_AFTER_LIVE`, `NEEDS_AFTER_LIVE`, and `AFTER_LIVE_BLOCKED`.
+- Trial runbook, local package guide, release checklist, status guide, dispatch docs, package readiness, and freeze packet docs were updated.
+- Automated tests cover successful after-live evidence packaging, incomplete-session blocking, and the new status transitions.
+
+Latest verification:
+
+- `node --check scripts\after-live-recovery.js`: passed.
+- `node --check scripts\post-session-recovery.js`: passed.
+- `node --test tests\after-live-recovery.test.js`: passed.
+- `node --test tests\trial-status.test.js tests\intake-review-dry-run.test.js`: passed.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 92 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 2.8: first real tester after-call recovery and evidence packaging.
+Stage 2.9: next tester launch loop hardening.
 
 Planned order:
 
-1. Add a guarded `trial:after-live` command that runs completion, privacy, post-session, review, archive, and status in order.
-2. Stop immediately on incomplete records, privacy hold, or review blockers.
-3. Generate a compact local evidence packet that includes reports and anonymous host summary but excludes raw screenshots/logs/source files.
-4. Update status to distinguish `READY_FOR_AFTER_LIVE`, `AFTER_LIVE_BLOCKED`, and `READY_FOR_REVIEW_OR_ARCHIVE` if needed.
-5. Keep raw real tester records local-only until privacy and review reports pass.
+1. Add a guarded next-tester loop check that confirms after-live, intake, next session pack, host-ready, host-run, pre-live, and live-capture are aligned.
+2. Prevent accidentally reusing tester 1 records or stale watch items for tester 2.
+3. Generate a concise host handoff note for tester 2 with accepted watch items and stop conditions.
+4. Update `trial:status` so the operator sees a clear tester-2 launch path after 2.8 passes.
+5. Keep tester roster and raw session records local-only.

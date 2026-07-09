@@ -670,6 +670,9 @@ function dispatchRequiredDocs() {
     "docs/TRIAL_SESSION_COMPLETION.md",
     "docs/TRIAL_SESSION_REVIEW.md",
     "docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md",
+    "docs/TRIAL_PRE_LIVE.md",
+    "docs/TRIAL_LIVE_CAPTURE.md",
+    "docs/TRIAL_AFTER_LIVE.md",
     "docs/TRIAL_RESULT_RECORD.md"
   ];
 }

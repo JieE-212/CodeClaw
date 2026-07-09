@@ -45,6 +45,7 @@ async function buildReport() {
     intakeReviewDryRun: await readReport("TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json"),
     preLive: await readReport("TRIAL_PRE_LIVE_REPORT.json"),
     liveCapture: await readReport("TRIAL_LIVE_CAPTURE_REPORT.json"),
+    afterLive: await readReport("TRIAL_AFTER_LIVE_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
     intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
@@ -97,6 +98,7 @@ async function collectArtifacts() {
   return {
     latestPackage: await latestDirectory(/^CodeClaw-local-trial-\d{8}$/),
     latestSessionPack: await latestNestedDirectory(path.join(distPath, "trial-session-packs")),
+    latestAfterLivePacket: await latestNestedDirectory(path.join(distPath, "trial-after-live")),
     latestArchive: await latestNestedDirectory(path.join(distPath, "trial-archives"))
   };
 }
@@ -151,10 +153,16 @@ function decideState(reports, blockers) {
     return state("SESSION_COMPLETION_BLOCKED", "post-session", "npm.cmd run trial:complete-session -- --session <session-folder>", "Finish or redact completed session records before post-session.");
   }
   if (!reports.postSession.exists && reports.completion.exists && reports.completion.decision.startsWith("SESSION_COMPLETION_READY")) {
-    return state("READY_FOR_POST_SESSION", "post-session", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Run the post-session pipeline for the completed records.");
+    return state("READY_FOR_AFTER_LIVE", "post-session", "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", "Run the guarded after-live recovery, review, archive, and evidence packet workflow.");
   }
   if (!reports.postSession.exists) {
     return state("READY_TO_HOST", "hosting", "npm.cmd run trial:complete-session -- --session <session-folder>", "Host the session, fill records, then run completion check.");
+  }
+  if (reports.afterLive.exists && reports.afterLive.decision === "AFTER_LIVE_BLOCKED") {
+    return state("AFTER_LIVE_BLOCKED", "after-live", "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id> --force", "Fix the after-live blocker before inviting another tester.");
+  }
+  if (reports.postSession.decision === "READY_FOR_NEXT_TESTER" && !reports.afterLive.exists && (!reports.review.exists || !reports.archive.exists)) {
+    return state("NEEDS_AFTER_LIVE", "after-live", "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", "Run after-live to complete review, archive, status, and local evidence packaging.");
   }
   if (reports.postSession.decision !== "READY_FOR_NEXT_TESTER") {
     return state("POST_SESSION_REVIEW", "post-session", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Resolve post-session blockers or review items.");
@@ -200,6 +208,7 @@ function collectBlockers(reports) {
     if (key === "completion" && reports.postSession.exists) continue;
     if (key === "preLive" && reports.postSession.exists) continue;
     if (key === "liveCapture" && reports.postSession.exists) continue;
+    if (key === "afterLive" && !report.exists) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -248,11 +257,13 @@ function quickLinks(reports, artifacts) {
     intakeReviewDryRun: reports.intakeReviewDryRun.exists ? reports.intakeReviewDryRun.relativePath : "",
     preLiveReport: reports.preLive.exists ? reports.preLive.relativePath : "",
     liveCaptureReport: reports.liveCapture.exists ? reports.liveCapture.relativePath : "",
+    afterLiveReport: reports.afterLive.exists ? reports.afterLive.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
     latestPackage: artifacts.latestPackage?.relativePath || "",
     latestSessionPack: artifacts.latestSessionPack?.relativePath || "",
+    latestAfterLivePacket: artifacts.latestAfterLivePacket?.relativePath || "",
     latestArchive: artifacts.latestArchive?.relativePath || ""
   };
 }
@@ -270,6 +281,7 @@ function commandGuide(current, reports) {
     { step: "Intake-review dry run", command: "npm.cmd run trial:intake-review-dry-run", status: reports.intakeReviewDryRun.exists ? reports.intakeReviewDryRun.decision : "missing" },
     { step: "Pre-live gate", command: "npm.cmd run trial:pre-live", status: reports.preLive.exists ? reports.preLive.decision : "missing" },
     { step: "Live capture", command: "npm.cmd run trial:live-capture", status: reports.liveCapture.exists ? reports.liveCapture.decision : "missing" },
+    { step: "After-live", command: "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", status: reports.afterLive.exists ? reports.afterLive.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },

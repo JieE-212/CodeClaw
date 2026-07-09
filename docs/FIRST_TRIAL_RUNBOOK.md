@@ -84,6 +84,7 @@ Share these with the tester:
 - `docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md`.
 - `docs/TRIAL_PRE_LIVE.md`.
 - `docs/TRIAL_LIVE_CAPTURE.md`.
+- `docs/TRIAL_AFTER_LIVE.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -235,10 +236,8 @@ dist/trial-session-packs/tester-1/
 Then run:
 
 ```bash
-npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
-npm.cmd run trial:privacy-check -- dist/trial-session-packs/tester-1
-npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
-npm.cmd run trial:review-session
+npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
+npm.cmd run trial:status
 ```
 
 This writes:
@@ -260,6 +259,9 @@ dist/TRIAL_REVIEW_REPORT.md
 dist/TRIAL_REVIEW_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
+dist/TRIAL_AFTER_LIVE_REPORT.md
+dist/TRIAL_AFTER_LIVE_REPORT.json
+dist/trial-after-live/<tester-id>-<timestamp>/
 ```
 
 After at least two completed tester folders exist, run:
@@ -275,7 +277,7 @@ dist/TRIAL_COHORT_SUMMARY.md
 dist/TRIAL_COHORT_SUMMARY.json
 ```
 
-After privacy, post-session, and review reports are ready, create a local-only archive:
+After privacy, post-session, and review reports are ready, `trial:after-live` creates a local-only evidence packet. If you need to repair or recreate only the archive, run:
 
 ```bash
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1

@@ -36,6 +36,7 @@ const requiredDocs = [
   "docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md",
   "docs/TRIAL_PRE_LIVE.md",
   "docs/TRIAL_LIVE_CAPTURE.md",
+  "docs/TRIAL_AFTER_LIVE.md",
   "docs/TRIAL_RESULT_RECORD.md"
 ];
 
@@ -83,6 +84,7 @@ const report = {
     "Run npm.cmd run trial:intake-review-dry-run before filling the first real tester roster.",
     "Run npm.cmd run trial:pre-live before scheduling or starting the first real tester session.",
     "Run npm.cmd run trial:live-capture before the live call and use the generated capture files.",
+    "Run npm.cmd run trial:after-live after the call to complete recovery, review, archive, and evidence packaging.",
     "Run npm.cmd run trial:cohort-summary after at least two completed tester folders exist.",
     "Run npm.cmd run trial:archive-session after privacy and post-session reports are ready.",
     "Run npm.cmd run trial:intake before generating a real tester session pack.",

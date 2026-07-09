@@ -29,6 +29,7 @@ npm.cmd run trial:complete-session -- --session examples/trial-feedback-sample -
 npm.cmd run trial:privacy-check -- examples/trial-feedback-sample
 npm.cmd run trial:post-session -- --session examples/trial-feedback-sample --next-tester tester-2
 npm.cmd run trial:review-session -- --session examples/trial-feedback-sample --reports dist --tester tester-1
+npm.cmd run trial:after-live -- --session examples/trial-feedback-sample --tester tester-1 --next-tester tester-2 --out dist/trial-after-live/release-sample --force
 npm.cmd run trial:intake-review-dry-run -- --force
 npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
@@ -41,6 +42,7 @@ node --check scripts/review-trial-session.js
 node --check scripts/run-intake-review-dry-run.js
 node --check scripts/pre-live-gate.js
 node --check scripts/live-session-capture.js
+node --check scripts/after-live-recovery.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -66,6 +68,7 @@ Expected result:
 - `trial:privacy-check` passes on safe sample feedback and blocks unsafe session records.
 - `trial:post-session` writes a post-session decision report and next tester pack.
 - `trial:review-session` writes a host decision brief with owner, action, and verification command for P0/P1 items.
+- `trial:after-live` writes an after-live report and local-only evidence packet while excluding raw tester records.
 - `trial:intake-review-dry-run` writes `DRY_RUN_READY_FOR_REAL_INTAKE` before a real tester roster is filled.
 - `trial:pre-live` is syntax-checked and covered by automated tests; run it live only after real intake-session, host-ready, and host-run are aligned.
 - `trial:live-capture` is syntax-checked and covered by automated tests; run it live after pre-live and before the call.

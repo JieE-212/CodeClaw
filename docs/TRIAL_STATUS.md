@@ -42,9 +42,11 @@ PRE_LIVE_BLOCKED
 NEEDS_LIVE_CAPTURE
 LIVE_CAPTURE_BLOCKED
 READY_TO_HOST
-READY_FOR_POST_SESSION
+READY_FOR_AFTER_LIVE
 SESSION_COMPLETION_BLOCKED
 PRIVACY_HOLD
+NEEDS_AFTER_LIVE
+AFTER_LIVE_BLOCKED
 NEEDS_SESSION_REVIEW
 SESSION_REVIEW_BLOCKED
 POST_SESSION_REVIEW
@@ -124,7 +126,15 @@ After the hosted session records are filled, run:
 npm.cmd run trial:complete-session -- --session <session-folder>
 ```
 
-If the decision is `READY_FOR_POST_SESSION`, run `trial:post-session`.
+If the decision is `READY_FOR_AFTER_LIVE`, run:
+
+```bash
+npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
+```
+
+This runs completion, privacy, post-session, review, archive, status, and local evidence packaging in order.
+
+If the decision is `NEEDS_AFTER_LIVE` or `AFTER_LIVE_BLOCKED`, rerun `trial:after-live` after fixing the listed blocker.
 
 If the decision is `NEEDS_SESSION_REVIEW`, run:
 

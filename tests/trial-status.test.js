@@ -96,7 +96,7 @@ test("trial-status recognizes ready-to-host state after live capture", async () 
   assert.match(report.nextCommand, /trial:complete-session/);
 });
 
-test("trial-status recognizes ready-for-post-session after completion check", async () => {
+test("trial-status recognizes ready-for-after-live after completion check", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-complete-"));
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
@@ -111,9 +111,9 @@ test("trial-status recognizes ready-for-post-session after completion check", as
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
 
   assert.equal(result.code, 0);
-  assert.equal(report.decision, "READY_FOR_POST_SESSION");
+  assert.equal(report.decision, "READY_FOR_AFTER_LIVE");
   assert.equal(report.currentStage, "post-session");
-  assert.match(report.nextCommand, /trial:post-session/);
+  assert.match(report.nextCommand, /trial:after-live/);
 });
 
 test("trial-status blocks when completion check holds", async () => {
@@ -158,7 +158,7 @@ test("trial-status blocks on privacy hold", async () => {
   assert.match(report.nextCommand, /trial:privacy-check/);
 });
 
-test("trial-status asks for review after post-session", async () => {
+test("trial-status asks for after-live after post-session", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-review-"));
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
@@ -171,9 +171,47 @@ test("trial-status asks for review after post-session", async () => {
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
 
   assert.equal(result.code, 0);
-  assert.equal(report.decision, "NEEDS_SESSION_REVIEW");
-  assert.equal(report.currentStage, "review");
-  assert.match(report.nextCommand, /trial:review-session/);
+  assert.equal(report.decision, "NEEDS_AFTER_LIVE");
+  assert.equal(report.currentStage, "after-live");
+  assert.match(report.nextCommand, /trial:after-live/);
+});
+
+test("trial-status blocks when after-live blocks", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-after-live-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: false, mode: "trial-after-live", decision: "AFTER_LIVE_BLOCKED", blockers: ["review failed"] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "AFTER_LIVE_BLOCKED");
+  assert.equal(report.currentStage, "after-live");
+  assert.ok(report.blockers.some((item) => item.includes("review failed")));
+});
+
+test("trial-status asks for archive after after-live passes and archive is missing", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-after-live-ready-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_REVIEW_REPORT.json", { ok: true, mode: "trial-review-session", decision: "REVIEW_PROCEED", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: true, mode: "trial-after-live", decision: "AFTER_LIVE_READY", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_ARCHIVE");
+  assert.equal(report.currentStage, "archive");
 });
 
 test("trial-status recognizes archived expansion-ready state", async () => {

@@ -5,21 +5,26 @@ import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
-const distPath = path.join(rootPath, "dist");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const args = parseArgs(process.argv.slice(2));
+const distPath = path.resolve(rootPath, args.reports || "dist");
 const sessionPath = path.resolve(rootPath, args.session || path.join("dist", "trial-session-packs", "tester-1"));
 const nextTester = sanitizeTesterId(args.nextTester || "tester-2");
-const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_POST_SESSION_REPORT.json"));
-const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_POST_SESSION_REPORT.md"));
+const jsonPath = path.resolve(rootPath, args.json || path.join(relative(distPath), "TRIAL_POST_SESSION_REPORT.json"));
+const markdownPath = path.resolve(rootPath, args.markdown || path.join(relative(distPath), "TRIAL_POST_SESSION_REPORT.md"));
 
 const steps = [];
 let report;
 
 try {
-  const completionArgs = ["--", "--session", relative(sessionPath)];
+  const completionArgs = [
+    "--",
+    "--session", relative(sessionPath),
+    "--json", relative(path.join(distPath, "TRIAL_SESSION_COMPLETION_REPORT.json")),
+    "--markdown", relative(path.join(distPath, "TRIAL_SESSION_COMPLETION_REPORT.md"))
+  ];
   if (!isInside(sessionPath, path.join(distPath, "trial-session-packs"))) {
-    completionArgs.push("--checklist", path.join("dist", "TRIAL_SESSION_COMPLETION_CHECKLIST.md"));
+    completionArgs.push("--checklist", relative(path.join(distPath, "TRIAL_SESSION_COMPLETION_CHECKLIST.md")));
   }
   const completionStep = await runNpmStep({
     name: "session:complete",
@@ -32,7 +37,12 @@ try {
   const privacyStep = await runNpmStep({
     name: "privacy:check",
     script: "trial:privacy-check",
-    args: [relative(sessionPath)],
+    args: [
+      "--",
+      relative(sessionPath),
+      "--json", relative(path.join(distPath, "TRIAL_PRIVACY_REPORT.json")),
+      "--markdown", relative(path.join(distPath, "TRIAL_PRIVACY_REPORT.md"))
+    ],
     allowFailure: true
   });
   steps.push(privacyStep);
@@ -40,22 +50,46 @@ try {
   steps.push(await runNpmStep({
     name: "feedback:ingest",
     script: "trial:ingest-feedback",
-    args: [relative(sessionPath)]
+    args: [
+      "--",
+      relative(sessionPath),
+      "--json", relative(path.join(distPath, "TRIAL_FEEDBACK_SUMMARY.json")),
+      "--markdown", relative(path.join(distPath, "TRIAL_FEEDBACK_SUMMARY.md"))
+    ]
   }));
   steps.push(await runNpmStep({
     name: "feedback:fix-backlog",
     script: "trial:fix-backlog",
-    args: []
+    args: [
+      "--",
+      "--input", relative(path.join(distPath, "TRIAL_FEEDBACK_SUMMARY.json")),
+      "--json", relative(path.join(distPath, "TRIAL_FIX_BACKLOG.json")),
+      "--markdown", relative(path.join(distPath, "TRIAL_FIX_BACKLOG.md"))
+    ]
   }));
   steps.push(await runNpmStep({
     name: "next:session-pack",
     script: "trial:session-pack",
-    args: ["--", "--tester", nextTester, "--force"]
+    args: [
+      "--",
+      "--tester", nextTester,
+      "--out", relative(path.join(distPath, "trial-session-packs", nextTester)),
+      "--backlog", relative(path.join(distPath, "TRIAL_FIX_BACKLOG.json")),
+      "--force"
+    ]
   }));
   steps.push(await runNpmStep({
     name: "next:host-ready",
     script: "trial:host-ready",
-    args: ["--", "--tester", nextTester],
+    args: [
+      "--",
+      "--tester", nextTester,
+      "--dispatch", relative(path.join(distPath, "TRIAL_DISPATCH_NOTE.json")),
+      "--backlog", relative(path.join(distPath, "TRIAL_FIX_BACKLOG.json")),
+      "--session", relative(path.join(distPath, "trial-session-packs", nextTester, "SESSION_PACK_MANIFEST.json")),
+      "--json", relative(path.join(distPath, "TRIAL_HOST_READY_REPORT.json")),
+      "--markdown", relative(path.join(distPath, "TRIAL_HOST_READY_REPORT.md"))
+    ],
     allowFailure: true
   }));
 
@@ -293,7 +327,7 @@ function renderItems(items) {
 }
 
 function parseArgs(rawArgs) {
-  const parsed = { session: "", nextTester: "", json: "", markdown: "" };
+  const parsed = { session: "", nextTester: "", reports: "", json: "", markdown: "" };
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
     if (arg === "--session") {
@@ -315,7 +349,7 @@ function parseArgs(rawArgs) {
       continue;
     }
     let handled = false;
-    for (const key of ["json", "markdown"]) {
+    for (const key of ["reports", "json", "markdown"]) {
       if (arg === `--${key}`) {
         parsed[key] = rawArgs[index + 1] || "";
         index += 1;
