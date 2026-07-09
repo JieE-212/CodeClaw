@@ -48,6 +48,7 @@ async function buildReport() {
     afterLive: await readReport("TRIAL_AFTER_LIVE_REPORT.json"),
     nextLive: await readReport("TRIAL_NEXT_LIVE_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
+    cohortHandoff: await readReport("TRIAL_COHORT_HANDOFF.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
     intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
   };
@@ -193,17 +194,32 @@ function decideState(reports, blockers) {
     return state("NEEDS_TESTER_INTAKE", "intake", "npm.cmd run trial:intake", "Complete at least one tester intake entry before generating a session pack.");
   }
   const nextTester = nextTesterFromReports(reports);
-  if (reports.nextLive.exists && ["NEXT_LIVE_READY", "NEXT_LIVE_READY_WITH_REVIEW"].includes(reports.nextLive.decision)) {
+  if (!reports.cohort.exists && reports.nextLive.exists && ["NEXT_LIVE_READY", "NEXT_LIVE_READY_WITH_REVIEW"].includes(reports.nextLive.decision)) {
     return state("READY_TO_HOST_NEXT_LIVE", "next-live", "Open NEXT_LIVE_HOST_HANDOFF.md", "Use the next-live handoff and host only the selected anonymous tester.");
   }
-  if (reports.liveCapture.exists && ["LIVE_CAPTURE_READY", "LIVE_CAPTURE_READY_WITH_REVIEW"].includes(reports.liveCapture.decision) && reportTesterMatches(reports.liveCapture, nextTester)) {
+  if (!reports.cohort.exists && reports.liveCapture.exists && ["LIVE_CAPTURE_READY", "LIVE_CAPTURE_READY_WITH_REVIEW"].includes(reports.liveCapture.decision) && reportTesterMatches(reports.liveCapture, nextTester)) {
     return state("NEEDS_NEXT_LIVE", "next-live", "npm.cmd run trial:next-live -- --tester <tester-id> --accept-review", "Run the guarded next-live loop check before hosting the next tester.");
   }
   if (!reports.cohort.exists || reports.cohort.decision === "WAITING_FOR_MORE_SESSIONS") {
     return state("READY_FOR_NEXT_TESTER", "next-session", "npm.cmd run trial:intake-session -- --force", "Generate the next tester session pack from intake.");
   }
-  if (reports.cohort.decision === "HOLD_EXPANSION_FIX_FIRST" || reports.cohort.decision === "REVIEW_REPEATED_SAFETY") {
-    return state("COHORT_REVIEW", "cohort", "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", "Review repeated safety or expansion blockers.");
+  if (reports.cohortHandoff.exists && reports.cohortHandoff.decision === "COHORT_HANDOFF_HOLD") {
+    return state("COHORT_HANDOFF_BLOCKED", "cohort", "npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>", "Fix cohort handoff blockers before expanding.");
+  }
+  if (reports.cohortHandoff.exists && reports.cohortHandoff.decision === "COHORT_HANDOFF_REVIEW_REQUIRED") {
+    return state("COHORT_HANDOFF_REVIEW", "cohort", "npm.cmd run trial:cohort-handoff -- --accept-review --accepted-by <host-id>", "Review repeated safety themes before deciding whether to expand.");
+  }
+  if (reports.cohortHandoff.exists && ["COHORT_HANDOFF_READY_TO_EXPAND", "COHORT_HANDOFF_EXPAND_WITH_WATCH"].includes(reports.cohortHandoff.decision)) {
+    return state("READY_TO_EXPAND", "cohort", "Open COHORT_EXPANSION_HANDOFF.md", "Proceed with the next hosted tester batch under cohort handoff instructions.");
+  }
+  if (reports.cohort.decision === "HOLD_EXPANSION_FIX_FIRST") {
+    return state("COHORT_REVIEW", "cohort", "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", "Review and fix cohort expansion blockers.");
+  }
+  if (reports.cohort.decision === "REVIEW_REPEATED_SAFETY") {
+    return state("NEEDS_COHORT_HANDOFF", "cohort", "npm.cmd run trial:cohort-handoff -- --accept-review --accepted-by <host-id>", "Generate a cohort handoff for repeated safety review.");
+  }
+  if (["READY_TO_EXPAND_3_5", "EXPAND_WITH_WATCH"].includes(reports.cohort.decision)) {
+    return state("NEEDS_COHORT_HANDOFF", "cohort", "npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>", "Generate the cohort expansion handoff before inviting 3-5 testers.");
   }
   if (blockers.length) {
     return state("BLOCKED", "review", "npm.cmd run trial:status", "Review blockers in the status report.");
@@ -221,6 +237,7 @@ function collectBlockers(reports) {
     if (key === "liveCapture" && reports.postSession.exists) continue;
     if (key === "afterLive" && !report.exists) continue;
     if (key === "nextLive" && !report.exists) continue;
+    if (key === "cohortHandoff" && !report.exists) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -272,6 +289,7 @@ function quickLinks(reports, artifacts) {
     afterLiveReport: reports.afterLive.exists ? reports.afterLive.relativePath : "",
     nextLiveReport: reports.nextLive.exists ? reports.nextLive.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
+    cohortHandoff: reports.cohortHandoff.exists ? reports.cohortHandoff.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
     latestPackage: artifacts.latestPackage?.relativePath || "",
@@ -297,6 +315,7 @@ function commandGuide(current, reports) {
     { step: "After-live", command: "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", status: reports.afterLive.exists ? reports.afterLive.decision : "missing" },
     { step: "Next live gate", command: "npm.cmd run trial:next-live -- --tester <tester-id> --accept-review", status: reports.nextLive.exists ? reports.nextLive.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
+    { step: "Cohort handoff", command: "npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>", status: reports.cohortHandoff.exists ? reports.cohortHandoff.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },
     { step: "Intake session", command: "npm.cmd run trial:intake-session -- --force", status: "uses ready tester intake" },

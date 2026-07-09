@@ -74,3 +74,11 @@ After the cohort summary is reviewed, archive each completed tester session loca
 ```bash
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 ```
+
+After every completed tester has after-live evidence, generate the cohort handoff before inviting 3-5 testers:
+
+```bash
+npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>
+```
+
+Invite 3-5 testers only when `trial:cohort-handoff` says `COHORT_HANDOFF_READY_TO_EXPAND` or `COHORT_HANDOFF_EXPAND_WITH_WATCH`.

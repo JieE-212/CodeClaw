@@ -61,6 +61,50 @@ git pushall
 Completed:
 
 ```text
+Stage 3.0.1: two-tester cohort handoff hardening
+```
+
+3.0.1 added:
+
+- `trial:cohort-handoff` expansion handoff gate.
+- Reads `TRIAL_COHORT_SUMMARY.json` and after-live evidence under `dist/trial-after-live/`.
+- Blocks fewer than two completed testers, missing after-live evidence, blocked after-live reports, unaccepted repeated watch items, and unaccepted privacy warnings.
+- Converts repeated watch items, repeated safety themes, and privacy warnings into a clear hold/review/expand decision.
+- Generates:
+
+```text
+dist/TRIAL_COHORT_HANDOFF.md
+dist/TRIAL_COHORT_HANDOFF.json
+dist/COHORT_EXPANSION_HANDOFF.md
+```
+
+Important new files:
+
+```text
+scripts/cohort-handoff.js
+tests/cohort-handoff.test.js
+docs/TRIAL_COHORT_HANDOFF.md
+```
+
+Important updated files:
+
+```text
+package.json
+scripts/trial-status.js
+scripts/trial-readiness.js
+scripts/prepare-local-trial.js
+tests/trial-status.test.js
+docs/PROJECT_STATUS.md
+docs/HANDOFF_RESTART.md
+docs/LOCAL_TRIAL_PACKAGE.md
+docs/RELEASE_CHECKLIST.md
+docs/TRIAL_STATUS.md
+docs/TRIAL_COHORT_SUMMARY.md
+```
+
+Previous completed stage:
+
+```text
 Stage 2.9: next tester launch loop hardening
 ```
 
@@ -120,12 +164,12 @@ dist/trial-after-live/<tester-id>-<timestamp>/
 
 ## Verification Baseline
 
-Latest completed verification after 2.9:
+Latest completed verification after 3.0.1:
 
 ```powershell
-node --check scripts\next-live-gate.js
-node --test tests\next-live-gate.test.js
-node --test tests\trial-status.test.js tests\next-live-gate.test.js
+node --check scripts\cohort-handoff.js
+node --test tests\cohort-handoff.test.js
+node --test tests\trial-status.test.js tests\cohort-handoff.test.js
 npm.cmd run check
 npm.cmd test
 npm.cmd run health
@@ -135,11 +179,11 @@ npm.cmd run trial:status
 
 Results:
 
-- `node --check scripts\next-live-gate.js`: passed.
-- `node --test tests\next-live-gate.test.js`: passed.
-- `node --test tests\trial-status.test.js tests\next-live-gate.test.js`: passed.
+- `node --check scripts\cohort-handoff.js`: passed.
+- `node --test tests\cohort-handoff.test.js`: passed.
+- `node --test tests\trial-status.test.js tests\cohort-handoff.test.js`: passed.
 - `check`: passed.
-- `test`: passed, 98 tests.
+- `test`: passed, 104 tests.
 - `health`: passed.
 - `trial:ready`: passed in source and generated local trial package.
 - `trial:status`: `NEEDS_TESTER_INTAKE`.
@@ -156,12 +200,12 @@ Current expected product status:
 Next:
 
 ```text
-Stage 3.0: real tester-2 execution evidence and cohort handoff
+Stage 3.0.2: real tester-2 launch and after-live evidence
 ```
 
-Recommended 3.0 goal:
+Recommended 3.0.2 goal:
 
-Use the 2.9 next-live gate in the real tester-2 flow, then close tester 2 with after-live and generate a two-tester cohort decision.
+Use the 2.9 next-live gate in the real tester-2 flow, then close tester 2 with after-live and generate the two-tester cohort handoff.
 
 Planned order:
 
@@ -171,7 +215,8 @@ Planned order:
 4. Host tester 2 using `NEXT_LIVE_HOST_HANDOFF.md`.
 5. Run `trial:after-live` for tester 2 after records are filled.
 6. Run `trial:cohort-summary` across tester 1 and tester 2 evidence.
-7. Harden any cohort/status gaps found while moving toward 3-5 testers.
+7. Run `trial:cohort-handoff`.
+8. Use `COHORT_EXPANSION_HANDOFF.md` to decide whether to fix first or expand to 3-5 testers.
 
 Suggested verification for 3.0:
 
@@ -282,4 +327,4 @@ scripts/trial-status.js
 scripts/next-live-gate.js
 ```
 
-Then begin Stage 3.0 planning.
+Then begin Stage 3.0.2 planning.

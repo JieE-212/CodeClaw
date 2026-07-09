@@ -33,6 +33,7 @@ const requiredPackageEntries = [
   "docs/TRIAL_POST_SESSION.md",
   "docs/TRIAL_PRIVACY_CHECK.md",
   "docs/TRIAL_COHORT_SUMMARY.md",
+  "docs/TRIAL_COHORT_HANDOFF.md",
   "docs/TRIAL_ARCHIVE_SESSION.md",
   "docs/TRIAL_STATUS.md",
   "docs/TRIAL_TESTER_INTAKE.md",

@@ -214,7 +214,7 @@ test("trial-status asks for archive after after-live passes and archive is missi
   assert.equal(report.currentStage, "archive");
 });
 
-test("trial-status recognizes archived expansion-ready state", async () => {
+test("trial-status asks for cohort handoff before archived expansion-ready state", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-ready-"));
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
@@ -234,7 +234,7 @@ test("trial-status recognizes archived expansion-ready state", async () => {
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
 
   assert.equal(result.code, 0);
-  assert.equal(report.decision, "READY_TO_EXPAND");
+  assert.equal(report.decision, "NEEDS_COHORT_HANDOFF");
   assert.equal(report.currentStage, "cohort");
   assert.equal(report.quickLinks.latestArchive, path.relative(rootPath, archiveFolder).split(path.sep).join("/"));
 });
@@ -311,11 +311,64 @@ test("trial-status blocks when next-live blocks", async () => {
   assert.ok(report.blockers.some((item) => item.includes("watch item missing")));
 });
 
+test("trial-status asks for cohort handoff after cohort summary allows expansion", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-cohort-handoff-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeArchivedExpansionReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_COHORT_SUMMARY.json", { ok: true, mode: "trial-cohort-summary", decision: "EXPAND_WITH_WATCH", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_COHORT_HANDOFF");
+  assert.equal(report.currentStage, "cohort");
+  assert.match(report.nextCommand, /trial:cohort-handoff/);
+});
+
+test("trial-status recognizes cohort handoff ready to expand", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-cohort-ready-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeArchivedExpansionReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_COHORT_SUMMARY.json", { ok: true, mode: "trial-cohort-summary", decision: "EXPAND_WITH_WATCH", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_COHORT_HANDOFF.json", { ok: true, mode: "trial-cohort-handoff", decision: "COHORT_HANDOFF_EXPAND_WITH_WATCH", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "READY_TO_EXPAND");
+  assert.equal(report.currentStage, "cohort");
+  assert.match(report.nextCommand, /COHORT_EXPANSION_HANDOFF/);
+});
+
 async function writeReadyHostReports(folder) {
   await writeJson(folder, "TRIAL_READINESS_REPORT.json", { ok: true, mode: "trial-readiness", blockers: [] });
   await writeJson(folder, "TRIAL_FREEZE_REPORT.json", { ok: true, mode: "trial-freeze", decision: "GO_HOSTED_TRIAL", blockers: [] });
   await writeJson(folder, "TRIAL_DISPATCH_NOTE.json", { ok: true, mode: "trial-dispatch", decision: "READY_TO_SEND", blockers: [] });
   await writeJson(folder, "TRIAL_HOST_READY_REPORT.json", { ok: true, mode: "trial-host-ready", decision: "READY_TO_HOST", blockers: [] });
+}
+
+async function writeArchivedExpansionReports(folder) {
+  await writeReadyHostReports(folder);
+  await writeJson(folder, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(folder, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(folder, "TRIAL_REVIEW_REPORT.json", { ok: true, mode: "trial-review-session", decision: "REVIEW_PROCEED", blockers: [] });
+  await writeJson(folder, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
+  await writeJson(folder, "TRIAL_AFTER_LIVE_REPORT.json", { ok: true, mode: "trial-after-live", decision: "AFTER_LIVE_READY", testerId: "tester-2", blockers: [] });
+  await writeJson(folder, "TRIAL_TESTER_INTAKE_REPORT.json", {
+    ok: true,
+    mode: "trial-tester-intake",
+    decision: "READY_FOR_SESSION",
+    nextTester: { id: "tester-3", ready: true },
+    testers: [{ id: "tester-3", ready: true }],
+    blockers: []
+  });
+  await writeJson(folder, "TRIAL_NEXT_LIVE_REPORT.json", { ok: true, mode: "trial-next-live", decision: "NEXT_LIVE_READY", testerId: "tester-2", blockers: [] });
 }
 
 async function writeJson(folder, name, value) {

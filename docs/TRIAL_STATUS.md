@@ -58,6 +58,9 @@ NEEDS_TESTER_INTAKE
 TESTER_INTAKE_BLOCKED
 READY_FOR_NEXT_TESTER
 COHORT_REVIEW
+NEEDS_COHORT_HANDOFF
+COHORT_HANDOFF_BLOCKED
+COHORT_HANDOFF_REVIEW
 READY_TO_EXPAND
 ```
 
@@ -148,6 +151,16 @@ npm.cmd run trial:next-live -- --tester <tester-id> --accept-review --accepted-b
 This confirms the previous tester is closed and the next tester's intake, host-ready, host-run, pre-live, live-capture, and watch items all point to the same anonymous tester id.
 
 If the decision is `NEXT_LIVE_BLOCKED`, fix the listed blocker before hosting another tester.
+
+If the decision is `NEEDS_COHORT_HANDOFF`, run:
+
+```bash
+npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>
+```
+
+If the decision is `COHORT_HANDOFF_BLOCKED`, close missing after-live evidence or fix cohort blockers before expanding.
+
+If the decision is `READY_TO_EXPAND`, open `COHORT_EXPANSION_HANDOFF.md` and follow it for the next 3-5 testers.
 
 If the decision is `NEEDS_SESSION_REVIEW`, run:
 

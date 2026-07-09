@@ -62,6 +62,7 @@ docs/TRIAL_NEXT_LIVE.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
 docs/TRIAL_COHORT_SUMMARY.md
+docs/TRIAL_COHORT_HANDOFF.md
 docs/TRIAL_ARCHIVE_SESSION.md
 docs/TRIAL_STATUS.md
 docs/TRIAL_TESTER_INTAKE.md
@@ -241,6 +242,7 @@ npm.cmd run trial:live-capture
 npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
 npm.cmd run trial:next-live -- --tester <tester-id> --accept-review --accepted-by <host-id>
 npm.cmd run trial:cohort-summary -- <completed-trials-folder>
+npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 npm.cmd run trial:status
 npm.cmd run trial:intake
@@ -279,6 +281,9 @@ dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
 dist/TRIAL_COHORT_SUMMARY.md
 dist/TRIAL_COHORT_SUMMARY.json
+dist/TRIAL_COHORT_HANDOFF.md
+dist/TRIAL_COHORT_HANDOFF.json
+dist/COHORT_EXPANSION_HANDOFF.md
 dist/TRIAL_ARCHIVE_REPORT.md
 dist/TRIAL_ARCHIVE_REPORT.json
 dist/TRIAL_STATUS_REPORT.md
@@ -289,7 +294,7 @@ dist/TRIAL_INTAKE_SESSION_REPORT.md
 dist/TRIAL_INTAKE_SESSION_REPORT.json
 ```
 
-Proceed to tester 2 only when completion check is not `SESSION_COMPLETION_HOLD`, privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:host-run` writes `HOST_RUNBOOK.md`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, `trial:review-session` says `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`, `trial:after-live` says `AFTER_LIVE_READY` or `AFTER_LIVE_READY_WITH_REVIEW` with host acceptance, `trial:next-live` says `NEXT_LIVE_READY` or `NEXT_LIVE_READY_WITH_REVIEW`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
+Proceed to tester 2 only when completion check is not `SESSION_COMPLETION_HOLD`, privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:host-run` writes `HOST_RUNBOOK.md`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, `trial:review-session` says `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`, `trial:after-live` says `AFTER_LIVE_READY` or `AFTER_LIVE_READY_WITH_REVIEW` with host acceptance, `trial:next-live` says `NEXT_LIVE_READY` or `NEXT_LIVE_READY_WITH_REVIEW`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` allows expansion and `trial:cohort-handoff` says `COHORT_HANDOFF_READY_TO_EXPAND` or `COHORT_HANDOFF_EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
 
 Use `trial:after-live` after the call when the session records are filled. It runs completion, privacy, post-session, review, archive, status, and creates a local-only evidence packet. Use `trial:archive-session` separately only when you need to repair or recreate the archive. Archives and after-live packets are local-only by default and do not copy raw tester records.
 
@@ -407,6 +412,7 @@ docs/TRIAL_NEXT_LIVE.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
 docs/TRIAL_COHORT_SUMMARY.md
+docs/TRIAL_COHORT_HANDOFF.md
 docs/TRIAL_ARCHIVE_SESSION.md
 docs/TRIAL_STATUS.md
 docs/TRIAL_TESTER_INTAKE.md

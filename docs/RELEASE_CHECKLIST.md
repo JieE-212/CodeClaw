@@ -32,6 +32,8 @@ npm.cmd run trial:review-session -- --session examples/trial-feedback-sample --r
 npm.cmd run trial:after-live -- --session examples/trial-feedback-sample --tester tester-1 --next-tester tester-2 --out dist/trial-after-live/release-sample --force
 npm.cmd run trial:intake-review-dry-run -- --force
 npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
+node --check scripts/cohort-handoff.js
+node --test tests/cohort-handoff.test.js
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 npm.cmd run trial:status
 npm.cmd run trial:intake -- --init --force
@@ -76,6 +78,7 @@ Expected result:
 - `trial:pre-live` is syntax-checked and covered by automated tests; run it live only after real intake-session, host-ready, and host-run are aligned.
 - `trial:live-capture` is syntax-checked and covered by automated tests; run it live after pre-live and before the call.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.
+- `trial:cohort-handoff` verifies two-tester after-live evidence and turns watch, safety, and privacy signals into an expansion handoff.
 - `trial:archive-session` writes a local-only evidence archive and blocks privacy-hold sessions.
 - `trial:status` writes a current operator dashboard with the next recommended command.
 - `trial:intake -- --init` writes a local-only tester roster template and report.

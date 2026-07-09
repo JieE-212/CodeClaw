@@ -351,14 +351,44 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 3.0.1 is complete: two-tester cohort handoff hardening.
+
+Implemented and verified:
+
+- `trial:cohort-handoff` expansion handoff gate.
+- The command reads `TRIAL_COHORT_SUMMARY.json` and after-live evidence under `dist/trial-after-live/`.
+- It blocks fewer than two completed testers, missing after-live evidence, blocked after-live reports, unaccepted repeated watch items, and unaccepted privacy warnings.
+- It converts repeated watch items, repeated safety themes, and privacy warnings into one of:
+  - `COHORT_HANDOFF_HOLD`
+  - `COHORT_HANDOFF_REVIEW_REQUIRED`
+  - `COHORT_HANDOFF_EXPAND_WITH_WATCH`
+  - `COHORT_HANDOFF_READY_TO_EXPAND`
+- When allowed, it writes `dist/COHORT_EXPANSION_HANDOFF.md` for the next 3-5 testers.
+- `trial:status` now recommends `trial:cohort-handoff` after cohort summary and waits for it before `READY_TO_EXPAND`.
+- Local package, release checklist, cohort summary guide, status guide, package readiness, and package manifest text were updated.
+- Automated tests cover accepted watch expansion, missing host acceptance, missing after-live evidence, repeated safety review, and status transitions.
+
+Latest verification:
+
+- `node --check scripts\cohort-handoff.js`: passed.
+- `node --test tests\cohort-handoff.test.js`: passed.
+- `node --test tests\trial-status.test.js tests\cohort-handoff.test.js`: passed.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 104 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 3.0: real tester-2 execution evidence and cohort handoff.
+Stage 3.0.2: real tester-2 launch and after-live evidence.
 
 Planned order:
 
-1. Run the actual tester-2 launch loop using `trial:next-live` after a real tester-2 intake/session pack exists.
-2. Capture tester-2 after-call evidence with `trial:after-live`.
-3. Run `trial:cohort-summary` on tester 1 and tester 2 outputs.
-4. Harden cohort handoff so repeated watch items, safety concerns, and privacy warnings become a clear expand/fix decision.
-5. Update status and docs so the operator can move from two completed testers toward 3-5 testers without mixing raw records or stale session folders.
+1. The host fills a real anonymous tester-2 entry in `.codeclaw/trial-intake/TESTER_ROSTER.json`.
+2. Run `trial:intake`, `trial:intake-session`, `trial:host-ready`, `trial:host-run`, `trial:pre-live`, and `trial:live-capture` for tester 2.
+3. Run `trial:next-live -- --tester tester-2 --accept-review --accepted-by <host-id>`.
+4. Host tester 2 using `NEXT_LIVE_HOST_HANDOFF.md`.
+5. After the call, fill generated records and run `trial:after-live` for tester 2.
+6. Run `trial:cohort-summary` and `trial:cohort-handoff`.
+7. Use `COHORT_EXPANSION_HANDOFF.md` to decide whether to fix first or expand to 3-5 testers.
