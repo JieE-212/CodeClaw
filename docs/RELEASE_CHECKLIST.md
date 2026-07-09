@@ -47,6 +47,8 @@ node --check scripts/live-session-capture.js
 node --check scripts/after-live-recovery.js
 node --check scripts/next-live-gate.js
 node --test tests/next-live-gate.test.js
+node --check scripts/tester-launch-plan.js
+node --test tests/tester-launch-plan.test.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -83,6 +85,7 @@ Expected result:
 - `trial:status` writes a current operator dashboard with the next recommended command.
 - `trial:intake -- --init` writes a local-only tester roster template and report.
 - `trial:intake-session` is syntax-checked and covered by tests.
+- `trial:tester-launch-plan` is syntax-checked and covered by tests; use it before live tester-2 to see the next safe command without creating real tester data.
 - Smoke output includes `"ok": true`.
 - Pilot output includes `"ok": true` and `"sourceFilesUnchanged": true`.
 - Fixture pilot output includes `"ok": true`, `"verificationExitCode": 0`, and `"fixtureRestored": true`.

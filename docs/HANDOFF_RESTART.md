@@ -61,6 +61,48 @@ git pushall
 Completed:
 
 ```text
+Stage 3.0.2a: real tester-2 launch plan guard
+```
+
+3.0.2a added:
+
+- `trial:tester-launch-plan` privacy-safe tester launch planning report.
+- Reads existing trial reports and does not create real tester data or run a live session.
+- Safely waits at `TESTER_LAUNCH_WAITING_FOR_INTAKE` when the local roster has no tester entries.
+- Ignores stale downstream tester reports until the current intake/session step is ready.
+- Blocks dry-run tester ids, previous-tester reuse, and active downstream tester-id mismatches.
+- Generates:
+
+```text
+dist/TRIAL_TESTER_LAUNCH_PLAN.md
+dist/TRIAL_TESTER_LAUNCH_PLAN.json
+```
+
+Important new files:
+
+```text
+scripts/tester-launch-plan.js
+tests/tester-launch-plan.test.js
+docs/TRIAL_TESTER_LAUNCH_PLAN.md
+```
+
+Important updated files:
+
+```text
+package.json
+scripts/trial-status.js
+scripts/trial-readiness.js
+scripts/prepare-local-trial.js
+docs/PROJECT_STATUS.md
+docs/HANDOFF_RESTART.md
+docs/LOCAL_TRIAL_PACKAGE.md
+docs/RELEASE_CHECKLIST.md
+docs/TRIAL_STATUS.md
+```
+
+Previous completed stage:
+
+```text
 Stage 3.0.1: two-tester cohort handoff hardening
 ```
 
@@ -164,12 +206,12 @@ dist/trial-after-live/<tester-id>-<timestamp>/
 
 ## Verification Baseline
 
-Latest completed verification after 3.0.1:
+Latest completed verification after 3.0.2a:
 
 ```powershell
-node --check scripts\cohort-handoff.js
-node --test tests\cohort-handoff.test.js
-node --test tests\trial-status.test.js tests\cohort-handoff.test.js
+node --check scripts\tester-launch-plan.js
+node --test tests\tester-launch-plan.test.js
+npm.cmd run trial:tester-launch-plan -- --tester tester-2
 npm.cmd run check
 npm.cmd test
 npm.cmd run health
@@ -179,11 +221,11 @@ npm.cmd run trial:status
 
 Results:
 
-- `node --check scripts\cohort-handoff.js`: passed.
-- `node --test tests\cohort-handoff.test.js`: passed.
-- `node --test tests\trial-status.test.js tests\cohort-handoff.test.js`: passed.
+- `node --check scripts\tester-launch-plan.js`: passed.
+- `node --test tests\tester-launch-plan.test.js`: passed.
+- `trial:tester-launch-plan -- --tester tester-2`: `TESTER_LAUNCH_WAITING_FOR_INTAKE`.
 - `check`: passed.
-- `test`: passed, 104 tests.
+- `test`: passed, 108 tests.
 - `health`: passed.
 - `trial:ready`: passed in source and generated local trial package.
 - `trial:status`: `NEEDS_TESTER_INTAKE`.
@@ -200,18 +242,18 @@ Current expected product status:
 Next:
 
 ```text
-Stage 3.0.2: real tester-2 launch and after-live evidence
+Stage 3.0.2b: real tester-2 launch and after-live evidence
 ```
 
-Recommended 3.0.2 goal:
+Recommended 3.0.2b goal:
 
 Use the 2.9 next-live gate in the real tester-2 flow, then close tester 2 with after-live and generate the two-tester cohort handoff.
 
 Planned order:
 
 1. Fill a real anonymous tester-2 intake roster entry locally.
-2. Generate tester-2 intake-session, host-ready, host-run, pre-live, and live-capture.
-3. Run `trial:next-live -- --tester tester-2 --accept-review`.
+2. Run `trial:intake` and `trial:tester-launch-plan -- --tester tester-2`.
+3. Follow the launch plan through tester-2 intake-session, host-ready, host-run, pre-live, live-capture, and next-live.
 4. Host tester 2 using `NEXT_LIVE_HOST_HANDOFF.md`.
 5. Run `trial:after-live` for tester 2 after records are filled.
 6. Run `trial:cohort-summary` across tester 1 and tester 2 evidence.
@@ -327,4 +369,4 @@ scripts/trial-status.js
 scripts/next-live-gate.js
 ```
 
-Then begin Stage 3.0.2 planning.
+Then begin Stage 3.0.2b planning.

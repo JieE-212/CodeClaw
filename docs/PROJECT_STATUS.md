@@ -379,15 +379,41 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 3.0.2a is complete: real tester-2 launch plan guard.
+
+Implemented and verified:
+
+- `trial:tester-launch-plan` privacy-safe tester launch planning report.
+- The command reads existing trial reports and does not create real tester data or run a live session.
+- It emits the next safe command for tester-2 launch prep.
+- It safely waits at `TESTER_LAUNCH_WAITING_FOR_INTAKE` when `.codeclaw/trial-intake/TESTER_ROSTER.json` has no tester entries.
+- It ignores stale downstream tester reports until the current intake/session step is ready, avoiding false blockers from old dry-run or tester-1 outputs.
+- It blocks dry-run tester ids, previous-tester reuse, and relevant downstream tester-id mismatches once those stages become active.
+- It writes `dist/TRIAL_TESTER_LAUNCH_PLAN.md` and `dist/TRIAL_TESTER_LAUNCH_PLAN.json`.
+- Trial status links the tester launch plan report when present.
+- Local package, release checklist, status guide, package readiness, package manifest text, and tester launch plan docs were updated.
+- Automated tests cover waiting for intake, ready for intake-session, ready-to-host, and mismatched tester ids.
+
+Latest verification:
+
+- `node --check scripts\tester-launch-plan.js`: passed.
+- `node --test tests\tester-launch-plan.test.js`: passed.
+- `npm.cmd run trial:tester-launch-plan -- --tester tester-2`: `TESTER_LAUNCH_WAITING_FOR_INTAKE`.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 108 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 3.0.2: real tester-2 launch and after-live evidence.
+Stage 3.0.2b: real tester-2 launch and after-live evidence.
 
 Planned order:
 
 1. The host fills a real anonymous tester-2 entry in `.codeclaw/trial-intake/TESTER_ROSTER.json`.
-2. Run `trial:intake`, `trial:intake-session`, `trial:host-ready`, `trial:host-run`, `trial:pre-live`, and `trial:live-capture` for tester 2.
-3. Run `trial:next-live -- --tester tester-2 --accept-review --accepted-by <host-id>`.
+2. Run `trial:intake` and `trial:tester-launch-plan -- --tester tester-2`.
+3. Follow the launch plan through intake-session, host-ready, host-run, pre-live, live-capture, and next-live.
 4. Host tester 2 using `NEXT_LIVE_HOST_HANDOFF.md`.
 5. After the call, fill generated records and run `trial:after-live` for tester 2.
 6. Run `trial:cohort-summary` and `trial:cohort-handoff`.

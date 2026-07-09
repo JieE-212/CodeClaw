@@ -96,6 +96,12 @@ npm.cmd run trial:intake -- --init
 
 Then fill the local roster and rerun `npm.cmd run trial:intake`.
 
+To see a privacy-safe tester-2 launch checklist before or after filling the roster, run:
+
+```bash
+npm.cmd run trial:tester-launch-plan -- --tester tester-2
+```
+
 If intake is ready, the next command should be:
 
 ```bash

@@ -50,7 +50,8 @@ async function buildReport() {
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     cohortHandoff: await readReport("TRIAL_COHORT_HANDOFF.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
-    intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
+    intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json"),
+    testerLaunchPlan: await readReport("TRIAL_TESTER_LAUNCH_PLAN.json")
   };
   const artifacts = await collectArtifacts();
   const blockers = collectBlockers(reports);
@@ -292,6 +293,7 @@ function quickLinks(reports, artifacts) {
     cohortHandoff: reports.cohortHandoff.exists ? reports.cohortHandoff.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
+    testerLaunchPlan: reports.testerLaunchPlan.exists ? reports.testerLaunchPlan.relativePath : "",
     latestPackage: artifacts.latestPackage?.relativePath || "",
     latestSessionPack: artifacts.latestSessionPack?.relativePath || "",
     latestAfterLivePacket: artifacts.latestAfterLivePacket?.relativePath || "",
@@ -319,6 +321,7 @@ function commandGuide(current, reports) {
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },
     { step: "Intake session", command: "npm.cmd run trial:intake-session -- --force", status: "uses ready tester intake" },
+    { step: "Tester launch plan", command: "npm.cmd run trial:tester-launch-plan -- --tester <tester-id>", status: reports.testerLaunchPlan.exists ? reports.testerLaunchPlan.decision : "missing" },
     { step: "Current recommendation", command: current.nextCommand, status: current.decision }
   ];
 }
