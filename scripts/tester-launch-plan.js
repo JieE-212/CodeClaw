@@ -132,11 +132,11 @@ function inspectAlignedReport({ label, report, testerId, readyDecisions, blocker
     if (!optional) warnings.push(`${label} report is missing.`);
     return;
   }
-  if (report.data?.ok === false) blockers.push(`${label} report is not ok.`);
+  if (report.data?.ok === false) warnings.push(`${label} report is not ok yet; rerun the ${label} command when this step is current.`);
   const decision = report.data?.decision || "MISSING";
   if (!readyDecisions.includes(decision)) {
     if (optional && decision === "MISSING") return;
-    blockers.push(`${label} decision is ${decision}.`);
+    warnings.push(`${label} decision is ${decision}; rerun this step when it becomes current.`);
   }
   if (testerId && report.data?.testerId && sanitizeTesterId(report.data.testerId) !== testerId) {
     blockers.push(`${label} tester ${report.data.testerId} does not match target tester ${testerId}.`);

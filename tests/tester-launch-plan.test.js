@@ -43,6 +43,27 @@ test("tester-launch-plan recommends intake-session after ready intake", async ()
   assert.match(report.nextCommand, /trial:intake-session/);
 });
 
+test("tester-launch-plan treats stale current-step holds as rerun warnings", async () => {
+  const fixture = await makeFixture();
+  await writeReadyIntake(fixture.reportsPath, "tester-2");
+  await writeJson(path.join(fixture.reportsPath, "TRIAL_INTAKE_SESSION_REPORT.json"), {
+    ok: false,
+    mode: "trial-intake-session",
+    decision: "INTAKE_SESSION_HOLD",
+    testerId: "tester-2",
+    blockers: ["old hold"],
+    warnings: []
+  });
+
+  const result = await runPlan(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "TESTER_LAUNCH_READY_FOR_INTAKE_SESSION");
+  assert.ok(report.warnings.some((item) => item.includes("intake-session report is not ok yet")));
+  assert.ok(report.warnings.some((item) => item.includes("INTAKE_SESSION_HOLD")));
+});
+
 test("tester-launch-plan reaches ready-to-host after next-live passes", async () => {
   const fixture = await makeFixture();
   await writeFullLaunchReports(fixture.reportsPath, "tester-2");
