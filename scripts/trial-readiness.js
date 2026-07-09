@@ -44,6 +44,7 @@ const requiredPackageEntries = [
   "docs/TRIAL_PRE_LIVE.md",
   "docs/TRIAL_LIVE_CAPTURE.md",
   "docs/TRIAL_AFTER_LIVE.md",
+  "docs/TRIAL_NEXT_LIVE.md",
   "docs/TRIAL_HOST_BRIEF.md",
   "docs/TRIAL_GO_NO_GO.md",
   "docs/TRIAL_5_MIN_PRECHECK.md",

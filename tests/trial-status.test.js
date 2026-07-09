@@ -259,6 +259,58 @@ test("trial-status asks for tester intake before the next session pack", async (
   assert.match(report.nextCommand, /trial:intake/);
 });
 
+test("trial-status recommends next-live after next tester live capture is ready", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-next-live-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_REVIEW_REPORT.json", { ok: true, mode: "trial-review-session", decision: "REVIEW_PROCEED", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: true, mode: "trial-after-live", decision: "AFTER_LIVE_READY", testerId: "tester-1", nextTester: "tester-2", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json", {
+    ok: true,
+    mode: "trial-tester-intake",
+    decision: "READY_FOR_SESSION",
+    nextTester: { id: "tester-2", ready: true },
+    testers: [{ id: "tester-2", ready: true }],
+    blockers: []
+  });
+  await writeJson(tempRoot, "TRIAL_LIVE_CAPTURE_REPORT.json", { ok: true, mode: "trial-live-capture", decision: "LIVE_CAPTURE_READY", testerId: "tester-2", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_NEXT_LIVE");
+  assert.equal(report.currentStage, "next-live");
+  assert.match(report.nextCommand, /trial:next-live/);
+});
+
+test("trial-status blocks when next-live blocks", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-next-live-blocked-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_REVIEW_REPORT.json", { ok: true, mode: "trial-review-session", decision: "REVIEW_PROCEED", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: true, mode: "trial-after-live", decision: "AFTER_LIVE_READY", testerId: "tester-1", nextTester: "tester-2", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_NEXT_LIVE_REPORT.json", { ok: false, mode: "trial-next-live", decision: "NEXT_LIVE_HOLD", blockers: ["watch item missing"] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "NEXT_LIVE_BLOCKED");
+  assert.equal(report.currentStage, "next-live");
+  assert.ok(report.blockers.some((item) => item.includes("watch item missing")));
+});
+
 async function writeReadyHostReports(folder) {
   await writeJson(folder, "TRIAL_READINESS_REPORT.json", { ok: true, mode: "trial-readiness", blockers: [] });
   await writeJson(folder, "TRIAL_FREEZE_REPORT.json", { ok: true, mode: "trial-freeze", decision: "GO_HOSTED_TRIAL", blockers: [] });

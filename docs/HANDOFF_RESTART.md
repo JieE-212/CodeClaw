@@ -9,7 +9,7 @@ Updated: 2026-07-09
 After restarting, open Codex in this project and send:
 
 ```text
-请先读取 docs/HANDOFF_RESTART.md 和 docs/PROJECT_STATUS.md，接上 CodeClaw 当前进度。当前 2.8 已完成，下一轮按规划进入 2.9。请先深入规划，再开始执行；每轮结束后继续规划下一轮任务。
+请先读取 docs/HANDOFF_RESTART.md 和 docs/PROJECT_STATUS.md，接上 CodeClaw 当前进度。当前 2.9 已完成，下一轮按规划进入 3.0。请先深入规划，再开始执行；每轮结束后继续规划下一轮任务。
 ```
 
 ## Project Location
@@ -26,22 +26,14 @@ Outer workspace:
 C:\Users\ZFJJi\Desktop\AI Agent\码爪 CodeClaw
 ```
 
-If PowerShell displays the Chinese path as mojibake, still use the actual folder shown above in Explorer.
+If PowerShell displays the Chinese path as mojibake, still use the actual folder shown in Explorer.
 
 ## Current Git State
 
-Latest commit:
+Latest known commit before 2.9 work:
 
 ```text
 2714e05 Add after-live recovery workflow
-```
-
-Recent commits:
-
-```text
-2714e05 Add after-live recovery workflow
-1e1ba1a Add live session capture workflow
-e0dd3d8 Add pre-live gate for real tester launch
 ```
 
 Current branch:
@@ -58,7 +50,7 @@ git status --short --branch
 git log -3 --oneline
 ```
 
-If the user has not pushed after 2.8, they can push with:
+If the user has not pushed after 2.9, they can push with:
 
 ```powershell
 git pushall
@@ -69,66 +61,71 @@ git pushall
 Completed:
 
 ```text
-Stage 2.8: first real tester after-call recovery and evidence packaging
+Stage 2.9: next tester launch loop hardening
 ```
 
-What 2.8 added:
+What 2.9 added:
 
-- `trial:after-live` guarded after-call workflow.
-- Runs completion, privacy, post-session, review, archive, and status in order.
-- Stops on incomplete records, privacy hold, post-session failure, review fix-now/block, or archive hold.
-- Generates:
-
-```text
-dist/TRIAL_AFTER_LIVE_REPORT.md
-dist/TRIAL_AFTER_LIVE_REPORT.json
-dist/trial-after-live/<tester-id>-<timestamp>/
-```
-
-- Evidence packets copy generated reports and safe context such as `LIVE_SESSION_HOST_SUMMARY.md`.
-- Evidence packets exclude raw tester records, screenshots, logs, source files, contact data, and secret tokens.
-- `trial:post-session` now supports `--reports` for isolated report directories.
+- `trial:next-live` guarded next-live launch gate.
+- Confirms the previous tester passed `trial:after-live`.
+- Confirms intake, intake-session, host-ready, host-run, pre-live, live-capture, session manifest, and session folder all point to the same next anonymous tester id.
+- Blocks previous-tester reuse, dry-run tester ids, stale previous session folders, missing after-live, missing host acceptance, and stale accepted watch items.
+- Generates a next tester host handoff note with accepted watch items, launch files, stop conditions, and after-call command.
 - `trial:status` now recognizes:
 
 ```text
-READY_FOR_AFTER_LIVE
-NEEDS_AFTER_LIVE
-AFTER_LIVE_BLOCKED
+NEEDS_NEXT_LIVE
+NEXT_LIVE_BLOCKED
+READY_TO_HOST_NEXT_LIVE
+```
+
+Generated outputs:
+
+```text
+dist/TRIAL_NEXT_LIVE_REPORT.md
+dist/TRIAL_NEXT_LIVE_REPORT.json
+dist/trial-session-packs/<tester-id>/NEXT_LIVE_HOST_HANDOFF.md
 ```
 
 Important new files:
 
 ```text
-scripts/after-live-recovery.js
-tests/after-live-recovery.test.js
-docs/TRIAL_AFTER_LIVE.md
+scripts/next-live-gate.js
+tests/next-live-gate.test.js
+docs/TRIAL_NEXT_LIVE.md
 ```
 
 Important updated files:
 
 ```text
 package.json
-scripts/post-session-recovery.js
 scripts/trial-status.js
 scripts/trial-readiness.js
-scripts/freeze-trial-candidate.js
-scripts/generate-trial-dispatch.js
 scripts/prepare-local-trial.js
-scripts/run-intake-review-dry-run.js
 tests/trial-status.test.js
 docs/PROJECT_STATUS.md
-docs/FIRST_TRIAL_RUNBOOK.md
+docs/HANDOFF_RESTART.md
 docs/LOCAL_TRIAL_PACKAGE.md
 docs/RELEASE_CHECKLIST.md
 docs/TRIAL_STATUS.md
-docs/TRIAL_LIVE_CAPTURE.md
+```
+
+2.8 remains complete and still provides the after-call workflow:
+
+```text
+trial:after-live
+dist/TRIAL_AFTER_LIVE_REPORT.md
+dist/trial-after-live/<tester-id>-<timestamp>/
 ```
 
 ## Verification Baseline
 
-Latest completed verification after 2.8:
+Latest completed verification after 2.9:
 
 ```powershell
+node --check scripts\next-live-gate.js
+node --test tests\next-live-gate.test.js
+node --test tests\trial-status.test.js tests\next-live-gate.test.js
 npm.cmd run check
 npm.cmd test
 npm.cmd run health
@@ -138,15 +135,19 @@ npm.cmd run trial:status
 
 Results:
 
+- `node --check scripts\next-live-gate.js`: passed.
+- `node --test tests\next-live-gate.test.js`: passed.
+- `node --test tests\trial-status.test.js tests\next-live-gate.test.js`: passed.
 - `check`: passed.
-- `test`: passed, 92 tests.
+- `test`: passed, 98 tests.
 - `health`: passed.
 - `trial:ready`: passed in source and generated local trial package.
 - `trial:status`: `NEEDS_TESTER_INTAKE`.
 
-Current product status:
+Current expected product status:
 
 - The code is ready for the next local real tester intake/session cycle.
+- `trial:status` should still be `NEEDS_TESTER_INTAKE` until a real anonymous tester roster is filled.
 - There is no long-running server or background task that must be preserved across reboot.
 - Generated/local output remains under ignored `dist/`, `.codeclaw/`, and `server-bg.log`.
 
@@ -155,26 +156,24 @@ Current product status:
 Next:
 
 ```text
-Stage 2.9: next tester launch loop hardening
+Stage 3.0: real tester-2 execution evidence and cohort handoff
 ```
 
-Recommended 2.9 goal:
+Recommended 3.0 goal:
 
-Build a guarded tester-2 launch loop check that confirms the project is ready to move from tester 1 after-live recovery into tester 2 hosting.
+Use the 2.9 next-live gate in the real tester-2 flow, then close tester 2 with after-live and generate a two-tester cohort decision.
 
 Planned order:
 
-1. Add a command such as `trial:next-live` or `trial:next-tester-ready`.
-2. Confirm `trial:after-live` passed for the previous tester.
-3. Confirm current tester intake is ready and anonymous.
-4. Confirm next session pack, host-ready, host-run, pre-live, and live-capture are aligned to the same tester id.
-5. Block stale tester 1 session folders, stale watch items, dry-run ids, or missing host acceptance.
-6. Generate a concise tester-2 host handoff note with accepted watch items and stop conditions.
-7. Update `trial:status` to recommend the new loop check after 2.8 passes.
-8. Add tests for ready, stale tester id, missing after-live, and stale watch item cases.
-9. Update docs and package/readiness required docs.
+1. Fill a real anonymous tester-2 intake roster entry locally.
+2. Generate tester-2 intake-session, host-ready, host-run, pre-live, and live-capture.
+3. Run `trial:next-live -- --tester tester-2 --accept-review`.
+4. Host tester 2 using `NEXT_LIVE_HOST_HANDOFF.md`.
+5. Run `trial:after-live` for tester 2 after records are filled.
+6. Run `trial:cohort-summary` across tester 1 and tester 2 evidence.
+7. Harden any cohort/status gaps found while moving toward 3-5 testers.
 
-Suggested verification for 2.9:
+Suggested verification for 3.0:
 
 ```powershell
 npm.cmd run check
@@ -221,7 +220,7 @@ Do not use destructive git commands. Do not reset or checkout user changes unles
 - Never commit real tester rosters.
 - Never commit raw real tester feedback/session records.
 - Keep `.codeclaw/`, `dist/`, and `server-bg.log` ignored/local.
-- Keep after-live packets local-only unless a human privacy review approves a summary.
+- Keep after-live packets and next-live handoffs local-only unless a human privacy review approves a summary.
 - Do not copy screenshots, logs, source files, contact details, project paths, or secrets into shareable packets.
 
 ## Useful Commands
@@ -236,6 +235,12 @@ After a live tester session:
 
 ```powershell
 npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
+```
+
+Before the next live tester:
+
+```powershell
+npm.cmd run trial:next-live -- --tester tester-2 --accept-review --accepted-by <host-id>
 ```
 
 Real tester intake:
@@ -274,7 +279,7 @@ docs/HANDOFF_RESTART.md
 docs/PROJECT_STATUS.md
 package.json
 scripts/trial-status.js
-scripts/after-live-recovery.js
+scripts/next-live-gate.js
 ```
 
-Then begin Stage 2.9 planning.
+Then begin Stage 3.0 planning.

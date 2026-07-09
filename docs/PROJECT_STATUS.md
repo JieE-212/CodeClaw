@@ -326,14 +326,39 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 2.9 is complete: next tester launch loop hardening.
+
+Implemented and verified:
+
+- `trial:next-live` guarded next-live launch gate.
+- The gate confirms the previous tester passed `trial:after-live`.
+- It confirms intake, intake-session, host-ready, host-run, pre-live, live-capture, session manifest, and session folder all point to the same next anonymous tester id.
+- It blocks previous-tester reuse, dry-run tester ids, stale previous session folders, missing after-live, missing host acceptance, and accepted watch items that were not copied into the next session brief, host runbook, observation checklist, manifest, host-ready report, or host-run report.
+- It writes `dist/TRIAL_NEXT_LIVE_REPORT.md` and `dist/TRIAL_NEXT_LIVE_REPORT.json`.
+- When ready, it writes `NEXT_LIVE_HOST_HANDOFF.md` into the next tester session folder with accepted watch items, launch files, stop conditions, and after-call command.
+- `trial:status` now recognizes `NEEDS_NEXT_LIVE`, `NEXT_LIVE_BLOCKED`, and `READY_TO_HOST_NEXT_LIVE`.
+- Trial status, local package, release checklist, package readiness, package manifest text, and next-live docs were updated.
+- Automated tests cover ready next-live, stale tester id, missing after-live, stale watch item, and status transitions.
+
+Latest verification:
+
+- `node --check scripts\next-live-gate.js`: passed.
+- `node --test tests\next-live-gate.test.js`: passed.
+- `node --test tests\trial-status.test.js tests\next-live-gate.test.js`: passed.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 98 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 2.9: next tester launch loop hardening.
+Stage 3.0: real tester-2 execution evidence and cohort handoff.
 
 Planned order:
 
-1. Add a guarded next-tester loop check that confirms after-live, intake, next session pack, host-ready, host-run, pre-live, and live-capture are aligned.
-2. Prevent accidentally reusing tester 1 records or stale watch items for tester 2.
-3. Generate a concise host handoff note for tester 2 with accepted watch items and stop conditions.
-4. Update `trial:status` so the operator sees a clear tester-2 launch path after 2.8 passes.
-5. Keep tester roster and raw session records local-only.
+1. Run the actual tester-2 launch loop using `trial:next-live` after a real tester-2 intake/session pack exists.
+2. Capture tester-2 after-call evidence with `trial:after-live`.
+3. Run `trial:cohort-summary` on tester 1 and tester 2 outputs.
+4. Harden cohort handoff so repeated watch items, safety concerns, and privacy warnings become a clear expand/fix decision.
+5. Update status and docs so the operator can move from two completed testers toward 3-5 testers without mixing raw records or stale session folders.

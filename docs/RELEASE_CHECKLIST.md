@@ -43,6 +43,8 @@ node --check scripts/run-intake-review-dry-run.js
 node --check scripts/pre-live-gate.js
 node --check scripts/live-session-capture.js
 node --check scripts/after-live-recovery.js
+node --check scripts/next-live-gate.js
+node --test tests/next-live-gate.test.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -69,6 +71,7 @@ Expected result:
 - `trial:post-session` writes a post-session decision report and next tester pack.
 - `trial:review-session` writes a host decision brief with owner, action, and verification command for P0/P1 items.
 - `trial:after-live` writes an after-live report and local-only evidence packet while excluding raw tester records.
+- `trial:next-live` blocks stale tester ids, missing after-live, missing host acceptance, and stale watch items before the next live launch.
 - `trial:intake-review-dry-run` writes `DRY_RUN_READY_FOR_REAL_INTAKE` before a real tester roster is filled.
 - `trial:pre-live` is syntax-checked and covered by automated tests; run it live only after real intake-session, host-ready, and host-run are aligned.
 - `trial:live-capture` is syntax-checked and covered by automated tests; run it live after pre-live and before the call.

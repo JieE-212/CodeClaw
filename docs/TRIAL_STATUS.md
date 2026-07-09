@@ -47,6 +47,9 @@ SESSION_COMPLETION_BLOCKED
 PRIVACY_HOLD
 NEEDS_AFTER_LIVE
 AFTER_LIVE_BLOCKED
+NEEDS_NEXT_LIVE
+NEXT_LIVE_BLOCKED
+READY_TO_HOST_NEXT_LIVE
 NEEDS_SESSION_REVIEW
 SESSION_REVIEW_BLOCKED
 POST_SESSION_REVIEW
@@ -135,6 +138,16 @@ npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
 This runs completion, privacy, post-session, review, archive, status, and local evidence packaging in order.
 
 If the decision is `NEEDS_AFTER_LIVE` or `AFTER_LIVE_BLOCKED`, rerun `trial:after-live` after fixing the listed blocker.
+
+If the decision is `NEEDS_NEXT_LIVE`, run:
+
+```bash
+npm.cmd run trial:next-live -- --tester <tester-id> --accept-review --accepted-by <host-id>
+```
+
+This confirms the previous tester is closed and the next tester's intake, host-ready, host-run, pre-live, live-capture, and watch items all point to the same anonymous tester id.
+
+If the decision is `NEXT_LIVE_BLOCKED`, fix the listed blocker before hosting another tester.
 
 If the decision is `NEEDS_SESSION_REVIEW`, run:
 

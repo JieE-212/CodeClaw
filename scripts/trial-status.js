@@ -46,6 +46,7 @@ async function buildReport() {
     preLive: await readReport("TRIAL_PRE_LIVE_REPORT.json"),
     liveCapture: await readReport("TRIAL_LIVE_CAPTURE_REPORT.json"),
     afterLive: await readReport("TRIAL_AFTER_LIVE_REPORT.json"),
+    nextLive: await readReport("TRIAL_NEXT_LIVE_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
     intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
@@ -179,6 +180,9 @@ function decideState(reports, blockers) {
   if (reports.archive.decision === "ARCHIVE_HOLD") {
     return state("ARCHIVE_BLOCKED", "archive", "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", "Fix archive blockers before closing the session.");
   }
+  if (reports.nextLive.exists && reports.nextLive.decision === "NEXT_LIVE_HOLD") {
+    return state("NEXT_LIVE_BLOCKED", "next-live", "npm.cmd run trial:next-live -- --tester <tester-id> --accept-review", "Fix next-live launch loop blockers before hosting another tester.");
+  }
   if (!reports.intake.exists) {
     return state("NEEDS_TESTER_INTAKE", "intake", "npm.cmd run trial:intake -- --init", "Create and fill the local tester intake roster before generating the next session pack.");
   }
@@ -187,6 +191,13 @@ function decideState(reports, blockers) {
   }
   if (reports.intake.decision === "WAITING_FOR_TESTER_INTAKE") {
     return state("NEEDS_TESTER_INTAKE", "intake", "npm.cmd run trial:intake", "Complete at least one tester intake entry before generating a session pack.");
+  }
+  const nextTester = nextTesterFromReports(reports);
+  if (reports.nextLive.exists && ["NEXT_LIVE_READY", "NEXT_LIVE_READY_WITH_REVIEW"].includes(reports.nextLive.decision)) {
+    return state("READY_TO_HOST_NEXT_LIVE", "next-live", "Open NEXT_LIVE_HOST_HANDOFF.md", "Use the next-live handoff and host only the selected anonymous tester.");
+  }
+  if (reports.liveCapture.exists && ["LIVE_CAPTURE_READY", "LIVE_CAPTURE_READY_WITH_REVIEW"].includes(reports.liveCapture.decision) && reportTesterMatches(reports.liveCapture, nextTester)) {
+    return state("NEEDS_NEXT_LIVE", "next-live", "npm.cmd run trial:next-live -- --tester <tester-id> --accept-review", "Run the guarded next-live loop check before hosting the next tester.");
   }
   if (!reports.cohort.exists || reports.cohort.decision === "WAITING_FOR_MORE_SESSIONS") {
     return state("READY_FOR_NEXT_TESTER", "next-session", "npm.cmd run trial:intake-session -- --force", "Generate the next tester session pack from intake.");
@@ -209,6 +220,7 @@ function collectBlockers(reports) {
     if (key === "preLive" && reports.postSession.exists) continue;
     if (key === "liveCapture" && reports.postSession.exists) continue;
     if (key === "afterLive" && !report.exists) continue;
+    if (key === "nextLive" && !report.exists) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -258,6 +270,7 @@ function quickLinks(reports, artifacts) {
     preLiveReport: reports.preLive.exists ? reports.preLive.relativePath : "",
     liveCaptureReport: reports.liveCapture.exists ? reports.liveCapture.relativePath : "",
     afterLiveReport: reports.afterLive.exists ? reports.afterLive.relativePath : "",
+    nextLiveReport: reports.nextLive.exists ? reports.nextLive.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
@@ -282,6 +295,7 @@ function commandGuide(current, reports) {
     { step: "Pre-live gate", command: "npm.cmd run trial:pre-live", status: reports.preLive.exists ? reports.preLive.decision : "missing" },
     { step: "Live capture", command: "npm.cmd run trial:live-capture", status: reports.liveCapture.exists ? reports.liveCapture.decision : "missing" },
     { step: "After-live", command: "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", status: reports.afterLive.exists ? reports.afterLive.decision : "missing" },
+    { step: "Next live gate", command: "npm.cmd run trial:next-live -- --tester <tester-id> --accept-review", status: reports.nextLive.exists ? reports.nextLive.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },
@@ -300,6 +314,20 @@ function nextSteps(current) {
 
 function state(decision, currentStage, nextCommand, nextAction) {
   return { decision, currentStage, nextCommand, nextAction };
+}
+
+function nextTesterFromReports(reports) {
+  return sanitizeTesterId(
+    reports.afterLive.data?.nextTester
+    || reports.intake.data?.nextTester?.id
+    || reports.intake.data?.testers?.find?.((tester) => tester.ready)?.id
+    || ""
+  );
+}
+
+function reportTesterMatches(report, testerId) {
+  if (!testerId) return false;
+  return sanitizeTesterId(report.data?.testerId || "") === testerId;
 }
 
 async function latestDirectory(pattern) {
@@ -420,6 +448,10 @@ function relative(targetPath) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function sanitizeTesterId(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 async function readJson(filePath) {
