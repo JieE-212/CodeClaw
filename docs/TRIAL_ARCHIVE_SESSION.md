@@ -84,3 +84,10 @@ Default stance: keep the archive local.
 
 Only share high-level summaries after a human review removes tester names, personal paths, source code, screenshots, logs, and secrets.
 
+After archiving, run:
+
+```bash
+npm.cmd run trial:status
+```
+
+Use the status report to decide whether to host the next tester, expand the cohort, or fix blockers.

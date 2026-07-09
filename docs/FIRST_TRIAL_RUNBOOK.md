@@ -78,6 +78,7 @@ Share these with the tester:
 - `docs/TRIAL_SESSION_PACK.md`.
 - `docs/TRIAL_COHORT_SUMMARY.md`.
 - `docs/TRIAL_ARCHIVE_SESSION.md`.
+- `docs/TRIAL_STATUS.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -88,6 +89,14 @@ npm.cmd run trial:host-ready
 ```
 
 Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `Decision: READY_TO_HOST`. Use the generated `dist/trial-session-packs/tester-1/SESSION_BRIEF.md` as the live host brief.
+
+At any point, run:
+
+```bash
+npm.cmd run trial:status
+```
+
+Use `dist/TRIAL_STATUS_REPORT.md` for the current stage, next command, latest package, latest session pack, latest archive, blockers, and warnings.
 
 ## Tester Requirements
 

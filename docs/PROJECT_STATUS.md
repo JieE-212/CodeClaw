@@ -65,13 +65,35 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 1.6 is complete: hosted trial operator dashboard and command guide.
+
+Implemented and verified:
+
+- `trial:status` operator dashboard.
+- `dist/TRIAL_STATUS_REPORT.md` and `dist/TRIAL_STATUS_REPORT.json` outputs.
+- Current stage, next command, next action, quick links, report matrix, blockers, warnings, and command guide.
+- Latest package, session pack, and archive detection.
+- Empty-state, ready-to-host, privacy-hold, and archived expansion-ready tests.
+- Trial runbook, go/no-go checklist, release checklist, session-pack guide, post-session guide, archive guide, dispatch docs, and trial package readiness were updated.
+
+Latest verification:
+
+- `npm.cmd run test`: passed, 63 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+- `npm.cmd run trial:status`: `READY_TO_EXPAND`.
+
 ## Next Planned Phase
 
-Stage 1.6: hosted trial operator dashboard and command guide.
+Stage 2.0: real tester intake and first external session preparation.
 
 Planned order:
 
-1. Add a concise operator dashboard report that reads readiness, dispatch, host-ready, post-session, cohort, and archive reports.
-2. Generate one current status page with next command, current blocker, latest package path, latest session pack, and latest archive path.
-3. Add `trial:status` as the single command to orient the host before or after each trial step.
-4. Add tests for empty-state, ready-to-host, post-session-ready, and archive-ready states.
+1. Prepare a tester intake checklist with consent, allowed project scope, language preference, and privacy expectations.
+2. Add a short tester roster template that stays local and is excluded from packages.
+3. Generate tester-specific session folder names from roster entries without exposing personal info.
+4. Run the full status-guided hosted trial sequence for tester 1.

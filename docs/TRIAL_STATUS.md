@@ -1,0 +1,63 @@
+# CodeClaw Trial Status
+
+Use this whenever you are unsure what the next hosted-trial command should be.
+
+## Run
+
+```bash
+npm.cmd run trial:status
+```
+
+The command reads the current `dist/` reports and writes:
+
+```text
+dist/TRIAL_STATUS_REPORT.md
+dist/TRIAL_STATUS_REPORT.json
+```
+
+It summarizes:
+
+- current trial stage
+- next recommended command
+- latest package folder
+- latest session pack
+- latest archive folder
+- report decisions
+- blockers and warnings
+
+## Decisions
+
+Common status decisions:
+
+```text
+NEEDS_READINESS
+NEEDS_FREEZE
+NEEDS_DISPATCH
+NEEDS_HOST_READY
+READY_TO_HOST
+PRIVACY_HOLD
+POST_SESSION_REVIEW
+NEEDS_ARCHIVE
+READY_FOR_NEXT_TESTER
+COHORT_REVIEW
+READY_TO_EXPAND
+```
+
+When the status report lists blockers, fix those before hosting or expanding.
+
+When there are no blockers, run the `Next command` shown at the top of `TRIAL_STATUS_REPORT.md`.
+
+## Examples
+
+Use an alternate report folder:
+
+```bash
+npm.cmd run trial:status -- --dist dist
+```
+
+After running any trial command, rerun:
+
+```bash
+npm.cmd run trial:status
+```
+

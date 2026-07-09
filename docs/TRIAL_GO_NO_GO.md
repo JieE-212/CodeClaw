@@ -74,6 +74,7 @@ Proceed to tester 2 only if:
 - After a completed session, `npm.cmd run trial:post-session -- --session <session-folder>` says `READY_FOR_NEXT_TESTER` before inviting another tester.
 - After at least two completed sessions, `npm.cmd run trial:cohort-summary -- <completed-trials-folder>` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH` before expanding to 3-5 testers.
 - `npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>` creates a local-only archive without raw tester records.
+- `npm.cmd run trial:status` has no blockers and shows a next command the host accepts.
 - The next product fix is clear and not a safety blocker.
 
 Do not proceed to tester 2 if:

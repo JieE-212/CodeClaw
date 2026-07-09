@@ -65,6 +65,8 @@ Create a local-only archive after privacy and post-session reports are ready:
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 ```
 
+Then run `npm.cmd run trial:status` to confirm the next command.
+
 ## Notes
 
 `trial:post-session` intentionally allows the final host-ready step to produce `HOLD` without hiding the report. A real tester can reveal blockers; the command should preserve that decision rather than crash before writing the summary.

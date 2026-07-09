@@ -72,6 +72,12 @@ Create a local-only archive after privacy passes:
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1
 ```
 
+If the next step is unclear, run:
+
+```bash
+npm.cmd run trial:status
+```
+
 Then review:
 
 ```text
@@ -81,6 +87,7 @@ dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_COHORT_SUMMARY.md
 dist/TRIAL_ARCHIVE_REPORT.md
+dist/TRIAL_STATUS_REPORT.md
 ```
 
 Before the next hosted session, run:
