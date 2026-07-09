@@ -10,6 +10,8 @@ Generate the default tester 1 session pack:
 npm.cmd run trial:session-pack
 ```
 
+For a real external tester, run `npm.cmd run trial:intake` first and proceed only when intake says `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
+
 This writes:
 
 ```text

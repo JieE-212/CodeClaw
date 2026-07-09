@@ -68,6 +68,7 @@ test("trial-status recognizes archived expansion-ready state", async () => {
   await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
   await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
   await writeJson(tempRoot, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json", { ok: true, mode: "trial-tester-intake", decision: "READY_FOR_SESSION", blockers: [] });
   await writeJson(tempRoot, "TRIAL_COHORT_SUMMARY.json", { ok: true, mode: "trial-cohort-summary", decision: "EXPAND_WITH_WATCH", blockers: [] });
 
   const archiveFolder = path.join(tempRoot, "trial-archives", "tester-1-20260709-120000");
@@ -80,6 +81,25 @@ test("trial-status recognizes archived expansion-ready state", async () => {
   assert.equal(report.decision, "READY_TO_EXPAND");
   assert.equal(report.currentStage, "cohort");
   assert.equal(report.quickLinks.latestArchive, path.relative(rootPath, archiveFolder).split(path.sep).join("/"));
+});
+
+test("trial-status asks for tester intake before the next session pack", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-intake-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_TESTER_INTAKE");
+  assert.equal(report.currentStage, "intake");
+  assert.match(report.nextCommand, /trial:intake/);
 });
 
 async function writeReadyHostReports(folder) {

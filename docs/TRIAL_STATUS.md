@@ -38,6 +38,8 @@ READY_TO_HOST
 PRIVACY_HOLD
 POST_SESSION_REVIEW
 NEEDS_ARCHIVE
+NEEDS_TESTER_INTAKE
+TESTER_INTAKE_BLOCKED
 READY_FOR_NEXT_TESTER
 COHORT_REVIEW
 READY_TO_EXPAND
@@ -61,3 +63,10 @@ After running any trial command, rerun:
 npm.cmd run trial:status
 ```
 
+If the decision is `NEEDS_TESTER_INTAKE`, run:
+
+```bash
+npm.cmd run trial:intake -- --init
+```
+
+Then fill the local roster and rerun `npm.cmd run trial:intake`.

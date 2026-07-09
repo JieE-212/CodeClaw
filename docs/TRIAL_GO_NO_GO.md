@@ -71,6 +71,7 @@ Proceed to tester 2 only if:
 - `npm.cmd run trial:session-pack` has generated the current tester folder.
 - `npm.cmd run trial:host-ready` says `READY_TO_HOST`.
 - Completed session records pass `npm.cmd run trial:privacy-check -- <session-folder>`.
+- Real external testers have a local `trial:intake` report with `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
 - After a completed session, `npm.cmd run trial:post-session -- --session <session-folder>` says `READY_FOR_NEXT_TESTER` before inviting another tester.
 - After at least two completed sessions, `npm.cmd run trial:cohort-summary -- <completed-trials-folder>` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH` before expanding to 3-5 testers.
 - `npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>` creates a local-only archive without raw tester records.

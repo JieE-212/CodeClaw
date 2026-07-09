@@ -40,7 +40,8 @@ async function buildReport() {
     backlog: await readReport("TRIAL_FIX_BACKLOG.json"),
     postSession: await readReport("TRIAL_POST_SESSION_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
-    archive: await readReport("TRIAL_ARCHIVE_REPORT.json")
+    archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
+    intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
   };
   const artifacts = await collectArtifacts();
   const blockers = collectBlockers(reports);
@@ -134,6 +135,15 @@ function decideState(reports, blockers) {
   if (reports.archive.decision === "ARCHIVE_HOLD") {
     return state("ARCHIVE_BLOCKED", "archive", "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", "Fix archive blockers before closing the session.");
   }
+  if (!reports.intake.exists) {
+    return state("NEEDS_TESTER_INTAKE", "intake", "npm.cmd run trial:intake -- --init", "Create and fill the local tester intake roster before generating the next session pack.");
+  }
+  if (reports.intake.decision === "INTAKE_HOLD") {
+    return state("TESTER_INTAKE_BLOCKED", "intake", "npm.cmd run trial:intake", "Fix tester consent, privacy, language, or scope blockers.");
+  }
+  if (reports.intake.decision === "WAITING_FOR_TESTER_INTAKE") {
+    return state("NEEDS_TESTER_INTAKE", "intake", "npm.cmd run trial:intake", "Complete at least one tester intake entry before generating a session pack.");
+  }
   if (!reports.cohort.exists || reports.cohort.decision === "WAITING_FOR_MORE_SESSIONS") {
     return state("READY_FOR_NEXT_TESTER", "next-session", "npm.cmd run trial:session-pack -- --tester <tester-id> --force", "Invite the next tester and keep collecting comparable records.");
   }
@@ -193,6 +203,7 @@ function quickLinks(reports, artifacts) {
     postSessionReport: reports.postSession.exists ? reports.postSession.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
+    intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
     latestPackage: artifacts.latestPackage?.relativePath || "",
     latestSessionPack: artifacts.latestSessionPack?.relativePath || "",
     latestArchive: artifacts.latestArchive?.relativePath || ""
@@ -208,6 +219,7 @@ function commandGuide(current, reports) {
     { step: "Post-session", command: "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", status: reports.postSession.exists ? reports.postSession.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
+    { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },
     { step: "Current recommendation", command: current.nextCommand, status: current.decision }
   ];
 }

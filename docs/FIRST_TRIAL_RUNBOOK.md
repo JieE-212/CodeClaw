@@ -79,6 +79,7 @@ Share these with the tester:
 - `docs/TRIAL_COHORT_SUMMARY.md`.
 - `docs/TRIAL_ARCHIVE_SESSION.md`.
 - `docs/TRIAL_STATUS.md`.
+- `docs/TRIAL_TESTER_INTAKE.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -97,6 +98,15 @@ npm.cmd run trial:status
 ```
 
 Use `dist/TRIAL_STATUS_REPORT.md` for the current stage, next command, latest package, latest session pack, latest archive, blockers, and warnings.
+
+Before creating a session pack for a real external tester, run:
+
+```bash
+npm.cmd run trial:intake -- --init
+npm.cmd run trial:intake
+```
+
+Keep `.codeclaw/trial-intake/TESTER_ROSTER.json` local-only and anonymous.
 
 ## Tester Requirements
 

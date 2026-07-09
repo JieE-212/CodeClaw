@@ -7,6 +7,7 @@ build/
 coverage/
 .codeclaw/cache/
 .codeclaw/logs/
+.codeclaw/trial-intake/
 .codeclaw/audit.jsonl
 .codeclaw/tasks.json
 .codeclaw/model.json

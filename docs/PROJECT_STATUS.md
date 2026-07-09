@@ -87,13 +87,39 @@ Latest verification:
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 - `npm.cmd run trial:status`: `READY_TO_EXPAND`.
 
+Stage 2.0 is complete: real tester intake and first external session preparation.
+
+Implemented and verified:
+
+- `trial:intake` local-only tester intake workflow.
+- `.codeclaw/trial-intake/TESTER_ROSTER.json` local roster template.
+- `dist/TRIAL_TESTER_INTAKE_REPORT.md` and `dist/TRIAL_TESTER_INTAKE_REPORT.json` outputs.
+- Anonymous tester id, language, consent, privacy acceptance, allowed scope, and project permission validation.
+- Personal fields such as real name, email, phone, company, GitHub, Gitee, and private project names are blocked.
+- `.codeclaw/trial-intake/` is ignored by Git and excluded from local trial packages.
+- `trial:status` now requires tester intake before recommending the next real session pack.
+- Trial runbook, go/no-go checklist, release checklist, status guide, session-pack guide, dispatch docs, and trial package readiness were updated.
+
+Latest verification:
+
+- `npm.cmd run test`: passed, 68 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:intake -- --init --force`: `WAITING_FOR_TESTER_INTAKE`.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+
 ## Next Planned Phase
 
-Stage 2.0: real tester intake and first external session preparation.
+Stage 2.1: first real tester session pack from intake.
 
 Planned order:
 
-1. Prepare a tester intake checklist with consent, allowed project scope, language preference, and privacy expectations.
-2. Add a short tester roster template that stays local and is excluded from packages.
-3. Generate tester-specific session folder names from roster entries without exposing personal info.
-4. Run the full status-guided hosted trial sequence for tester 1.
+1. Fill the local tester roster for the first real tester using an anonymous id.
+2. Run `trial:intake` until it says `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
+3. Generate a tester-specific session pack from the intake id.
+4. Run `trial:host-ready` and `trial:status` immediately before hosting.
+5. Record the first real session using the generated observation, feedback, and result files.
