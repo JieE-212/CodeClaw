@@ -74,6 +74,7 @@ Proceed to tester 2 only if:
 - Completed session records pass `npm.cmd run trial:privacy-check -- <session-folder>`.
 - Real external testers have a local `trial:intake` report with `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
 - After a completed session, `npm.cmd run trial:post-session -- --session <session-folder>` says `READY_FOR_NEXT_TESTER` before inviting another tester.
+- After post-session, `npm.cmd run trial:review-session` says `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`.
 - After at least two completed sessions, `npm.cmd run trial:cohort-summary -- <completed-trials-folder>` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH` before expanding to 3-5 testers.
 - `npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>` creates a local-only archive without raw tester records.
 - `npm.cmd run trial:status` has no blockers and shows a next command the host accepts.
@@ -92,4 +93,5 @@ Do not proceed to tester 2 if:
 - `TRIAL_HOST_READY_REPORT.md` says `HOLD`.
 - `TRIAL_PRIVACY_REPORT.md` says `PRIVACY_HOLD`.
 - `TRIAL_POST_SESSION_REPORT.md` says `FIX_BEFORE_NEXT_TESTER`, `HOST_READY_HOLD`, or `POST_SESSION_PIPELINE_FAILED`.
+- `TRIAL_REVIEW_REPORT.md` says `REVIEW_BLOCKED`, `REVIEW_FIX_NOW`, or `REVIEW_WAITING_FOR_REPORTS`.
 - `TRIAL_COHORT_SUMMARY.md` says `REVIEW_REPEATED_SAFETY` or `HOLD_EXPANSION_FIX_FIRST`.

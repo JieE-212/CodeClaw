@@ -1,6 +1,6 @@
 # CodeClaw Trial Archive Session
 
-Use this after `trial:post-session` and, when applicable, `trial:cohort-summary`.
+Use this after `trial:post-session`, `trial:review-session`, and, when applicable, `trial:cohort-summary`.
 
 The archive workflow creates a local evidence package for one completed tester session. It intentionally does not copy raw tester records by default.
 

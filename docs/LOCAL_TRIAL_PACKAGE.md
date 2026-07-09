@@ -53,6 +53,7 @@ docs/TRIAL_SESSION_PACK.md
 docs/TRIAL_HOST_READY.md
 docs/TRIAL_HOST_RUN.md
 docs/TRIAL_SESSION_COMPLETION.md
+docs/TRIAL_SESSION_REVIEW.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
 docs/TRIAL_COHORT_SUMMARY.md
@@ -228,6 +229,7 @@ npm.cmd run trial:host-run
 npm.cmd run trial:privacy-check
 npm.cmd run trial:complete-session
 npm.cmd run trial:post-session
+npm.cmd run trial:review-session
 npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 npm.cmd run trial:status
@@ -249,6 +251,8 @@ dist/TRIAL_HOST_RUN_REPORT.md
 dist/TRIAL_HOST_RUN_REPORT.json
 dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.json
+dist/TRIAL_REVIEW_REPORT.md
+dist/TRIAL_REVIEW_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
 dist/TRIAL_COHORT_SUMMARY.md
@@ -263,7 +267,7 @@ dist/TRIAL_INTAKE_SESSION_REPORT.md
 dist/TRIAL_INTAKE_SESSION_REPORT.json
 ```
 
-Proceed to tester 2 only when completion check is not `SESSION_COMPLETION_HOLD`, privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:host-run` writes `HOST_RUNBOOK.md`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
+Proceed to tester 2 only when completion check is not `SESSION_COMPLETION_HOLD`, privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:host-run` writes `HOST_RUNBOOK.md`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, `trial:review-session` says `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
 
 Use `trial:archive-session` after privacy and post-session reports are ready. Archives are local-only by default and do not copy raw tester records.
 
@@ -372,6 +376,7 @@ docs/TRIAL_SESSION_PACK.md
 docs/TRIAL_HOST_READY.md
 docs/TRIAL_HOST_RUN.md
 docs/TRIAL_SESSION_COMPLETION.md
+docs/TRIAL_SESSION_REVIEW.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
 docs/TRIAL_COHORT_SUMMARY.md

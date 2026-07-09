@@ -196,14 +196,41 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 2.4 is complete: first real tester artifact review and fix selection.
+
+Implemented and verified:
+
+- `trial:review-session` combines completion, privacy, feedback, backlog, post-session, and archive evidence into one host decision brief.
+- `dist/TRIAL_REVIEW_REPORT.md` and `dist/TRIAL_REVIEW_REPORT.json` record fix-now, watch-next-tester, or proceed decisions.
+- Review decisions include `REVIEW_WAITING_FOR_REPORTS`, `REVIEW_BLOCKED`, `REVIEW_FIX_NOW`, `REVIEW_WATCH_NEXT_TESTER`, and `REVIEW_PROCEED`.
+- Every generated P0/P1 action item includes owner, action, verification command, and evidence.
+- `trial:status` now requires session review after post-session and before archive/next-tester flow.
+- Local archives copy review reports as evidence.
+- Trial runbook, local package guide, release checklist, go/no-go guide, status guide, post-session guide, archive guide, dispatch docs, and package readiness were updated.
+- Automated tests cover clean proceed, P1 watch with ownership and verification, P0 fix-now blocking, and the new status transition.
+
+Latest verification:
+
+- `node --check scripts\review-trial-session.js`: passed.
+- `node --check scripts\trial-status.js`: passed.
+- `npm.cmd run test`: passed, 81 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:review-session -- --session examples\trial-feedback-sample --reports dist --tester tester-1`: `REVIEW_WATCH_NEXT_TESTER`.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+
 ## Next Planned Phase
 
-Stage 2.4: first real tester artifact review and fix selection.
+Stage 2.5: real tester intake-to-review dry run.
 
 Planned order:
 
-1. Add a review command that reads completion, privacy, feedback, backlog, post-session, and archive reports for one tester.
-2. Produce a concise host decision brief: fix now, watch next tester, or proceed.
-3. Require every P0/P1 item to have an owner, action, and next verification command.
-4. Connect the review summary into `trial:status`.
-5. Verify with sample safe, watch, and fix-first sessions.
+1. Add a non-private fixture that simulates one anonymous ready tester from intake through review.
+2. Run the whole scripted path: intake, intake-session, host-ready, host-run, completion, post-session, review, status.
+3. Ensure generated live artifacts stay in ignored folders.
+4. Ensure no local roster or raw real tester data can enter the package.
+5. Use the dry run as the final rehearsal before filling the real tester roster.

@@ -66,6 +66,7 @@ Use `TRIAL_COHORT_SUMMARY.md` before expanding to 3-5 testers.
 Create a local-only archive after privacy and post-session reports are ready:
 
 ```bash
+npm.cmd run trial:review-session
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 ```
 

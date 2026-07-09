@@ -40,6 +40,8 @@ READY_TO_HOST
 READY_FOR_POST_SESSION
 SESSION_COMPLETION_BLOCKED
 PRIVACY_HOLD
+NEEDS_SESSION_REVIEW
+SESSION_REVIEW_BLOCKED
 POST_SESSION_REVIEW
 NEEDS_ARCHIVE
 NEEDS_TESTER_INTAKE
@@ -96,3 +98,11 @@ npm.cmd run trial:complete-session -- --session <session-folder>
 ```
 
 If the decision is `READY_FOR_POST_SESSION`, run `trial:post-session`.
+
+If the decision is `NEEDS_SESSION_REVIEW`, run:
+
+```bash
+npm.cmd run trial:review-session
+```
+
+Proceed only when the review decision is `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`.

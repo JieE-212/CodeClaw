@@ -229,6 +229,7 @@ Then run:
 npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:privacy-check -- dist/trial-session-packs/tester-1
 npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
+npm.cmd run trial:review-session
 ```
 
 This writes:
@@ -246,6 +247,8 @@ dist/TRIAL_SESSION_COMPLETION_REPORT.md
 dist/TRIAL_SESSION_COMPLETION_REPORT.json
 dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.json
+dist/TRIAL_REVIEW_REPORT.md
+dist/TRIAL_REVIEW_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
 ```
@@ -263,7 +266,7 @@ dist/TRIAL_COHORT_SUMMARY.md
 dist/TRIAL_COHORT_SUMMARY.json
 ```
 
-After privacy and post-session reports are ready, create a local-only archive:
+After privacy, post-session, and review reports are ready, create a local-only archive:
 
 ```bash
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1

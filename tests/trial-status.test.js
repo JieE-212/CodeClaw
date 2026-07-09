@@ -117,6 +117,24 @@ test("trial-status blocks on privacy hold", async () => {
   assert.match(report.nextCommand, /trial:privacy-check/);
 });
 
+test("trial-status asks for review after post-session", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-review-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_SESSION_REVIEW");
+  assert.equal(report.currentStage, "review");
+  assert.match(report.nextCommand, /trial:review-session/);
+});
+
 test("trial-status recognizes archived expansion-ready state", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-ready-"));
   const jsonPath = path.join(tempRoot, "status.json");
@@ -125,6 +143,7 @@ test("trial-status recognizes archived expansion-ready state", async () => {
   await writeReadyHostReports(tempRoot);
   await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
   await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_REVIEW_REPORT.json", { ok: true, mode: "trial-review-session", decision: "REVIEW_WATCH_NEXT_TESTER", blockers: [] });
   await writeJson(tempRoot, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
   await writeJson(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json", { ok: true, mode: "trial-tester-intake", decision: "READY_FOR_SESSION", blockers: [] });
   await writeJson(tempRoot, "TRIAL_COHORT_SUMMARY.json", { ok: true, mode: "trial-cohort-summary", decision: "EXPAND_WITH_WATCH", blockers: [] });
@@ -149,6 +168,7 @@ test("trial-status asks for tester intake before the next session pack", async (
   await writeReadyHostReports(tempRoot);
   await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
   await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_REVIEW_REPORT.json", { ok: true, mode: "trial-review-session", decision: "REVIEW_PROCEED", blockers: [] });
   await writeJson(tempRoot, "TRIAL_ARCHIVE_REPORT.json", { ok: true, mode: "trial-archive-session", decision: "ARCHIVE_READY_LOCAL", blockers: [] });
 
   const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);

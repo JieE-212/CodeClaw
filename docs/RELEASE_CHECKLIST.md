@@ -28,6 +28,7 @@ npm.cmd run trial:host-ready
 npm.cmd run trial:complete-session -- --session examples/trial-feedback-sample --checklist dist/TRIAL_SAMPLE_COMPLETION_CHECKLIST.md
 npm.cmd run trial:privacy-check -- examples/trial-feedback-sample
 npm.cmd run trial:post-session -- --session examples/trial-feedback-sample --next-tester tester-2
+npm.cmd run trial:review-session -- --session examples/trial-feedback-sample --reports dist --tester tester-1
 npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 npm.cmd run trial:status
@@ -35,6 +36,7 @@ npm.cmd run trial:intake -- --init --force
 node --check scripts/generate-intake-session.js
 node --check scripts/generate-host-run.js
 node --check scripts/session-completion-check.js
+node --check scripts/review-trial-session.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -59,6 +61,7 @@ Expected result:
 - `trial:complete-session` passes on completed sample records and blocks empty or personally identifying records.
 - `trial:privacy-check` passes on safe sample feedback and blocks unsafe session records.
 - `trial:post-session` writes a post-session decision report and next tester pack.
+- `trial:review-session` writes a host decision brief with owner, action, and verification command for P0/P1 items.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.
 - `trial:archive-session` writes a local-only evidence archive and blocks privacy-hold sessions.
 - `trial:status` writes a current operator dashboard with the next recommended command.

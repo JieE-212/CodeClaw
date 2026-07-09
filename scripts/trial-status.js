@@ -41,6 +41,7 @@ async function buildReport() {
     feedback: await readReport("TRIAL_FEEDBACK_SUMMARY.json"),
     backlog: await readReport("TRIAL_FIX_BACKLOG.json"),
     postSession: await readReport("TRIAL_POST_SESSION_REPORT.json"),
+    review: await readReport("TRIAL_REVIEW_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
     intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
@@ -143,6 +144,12 @@ function decideState(reports, blockers) {
   if (reports.postSession.decision !== "READY_FOR_NEXT_TESTER") {
     return state("POST_SESSION_REVIEW", "post-session", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Resolve post-session blockers or review items.");
   }
+  if (!reports.review.exists) {
+    return state("NEEDS_SESSION_REVIEW", "review", "npm.cmd run trial:review-session", "Review completed tester evidence before archiving or inviting another tester.");
+  }
+  if (reports.review.decision === "REVIEW_BLOCKED" || reports.review.decision === "REVIEW_FIX_NOW" || reports.review.decision === "REVIEW_WAITING_FOR_REPORTS") {
+    return state("SESSION_REVIEW_BLOCKED", "review", "npm.cmd run trial:review-session", "Resolve review blockers or fix-now items before proceeding.");
+  }
   if (!reports.archive.exists) {
     return state("NEEDS_ARCHIVE", "archive", "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", "Archive the privacy-passed session evidence locally.");
   }
@@ -219,6 +226,7 @@ function quickLinks(reports, artifacts) {
     hostRunReport: reports.hostRun.exists ? reports.hostRun.relativePath : "",
     completionReport: reports.completion.exists ? reports.completion.relativePath : "",
     postSessionReport: reports.postSession.exists ? reports.postSession.relativePath : "",
+    reviewReport: reports.review.exists ? reports.review.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
@@ -237,6 +245,7 @@ function commandGuide(current, reports) {
     { step: "Host runbook", command: "npm.cmd run trial:host-run", status: reports.hostRun.exists ? reports.hostRun.decision : "missing" },
     { step: "Session completion", command: "npm.cmd run trial:complete-session -- --session <session-folder>", status: reports.completion.exists ? reports.completion.decision : "missing" },
     { step: "Post-session", command: "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", status: reports.postSession.exists ? reports.postSession.decision : "missing" },
+    { step: "Session review", command: "npm.cmd run trial:review-session", status: reports.review.exists ? reports.review.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },
