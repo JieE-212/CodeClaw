@@ -66,6 +66,12 @@ After at least two completed tester folders exist, run:
 npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 ```
 
+Create a local-only archive after privacy passes:
+
+```bash
+npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1
+```
+
 Then review:
 
 ```text
@@ -74,6 +80,7 @@ dist/TRIAL_FIX_BACKLOG.md
 dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_COHORT_SUMMARY.md
+dist/TRIAL_ARCHIVE_REPORT.md
 ```
 
 Before the next hosted session, run:

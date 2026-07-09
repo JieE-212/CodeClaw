@@ -28,6 +28,7 @@ npm.cmd run trial:host-ready
 npm.cmd run trial:privacy-check -- examples/trial-feedback-sample
 npm.cmd run trial:post-session -- --session examples/trial-feedback-sample --next-tester tester-2
 npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
+npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -51,6 +52,7 @@ Expected result:
 - `trial:privacy-check` passes on safe sample feedback and blocks unsafe session records.
 - `trial:post-session` writes a post-session decision report and next tester pack.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.
+- `trial:archive-session` writes a local-only evidence archive and blocks privacy-hold sessions.
 - Smoke output includes `"ok": true`.
 - Pilot output includes `"ok": true` and `"sourceFilesUnchanged": true`.
 - Fixture pilot output includes `"ok": true`, `"verificationExitCode": 0`, and `"fixtureRestored": true`.

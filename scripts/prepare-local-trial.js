@@ -124,7 +124,7 @@ async function writeManifest(copied) {
     "## Tester Start",
     "",
     "Double-click `start-codeclaw.cmd`, then follow `docs/START_GUIDE.md`.",
-    "For hosted first trials, keep `docs/TRIAL_HOST_BRIEF.md`, `docs/TRIAL_GO_NO_GO.md`, `docs/TRIAL_5_MIN_PRECHECK.md`, and a generated `trial:session-pack` folder open. Run `npm.cmd run trial:host-ready` immediately before hosting. Ask testers to fill the generated feedback files afterward, then run `npm.cmd run trial:ingest-feedback` plus `npm.cmd run trial:fix-backlog` before inviting tester 2. After at least two completed tester folders exist, run `npm.cmd run trial:cohort-summary` before expanding to 3-5 testers.",
+    "For hosted first trials, keep `docs/TRIAL_HOST_BRIEF.md`, `docs/TRIAL_GO_NO_GO.md`, `docs/TRIAL_5_MIN_PRECHECK.md`, and a generated `trial:session-pack` folder open. Run `npm.cmd run trial:host-ready` immediately before hosting. Ask testers to fill the generated feedback files afterward, then run `npm.cmd run trial:ingest-feedback` plus `npm.cmd run trial:fix-backlog` before inviting tester 2. After at least two completed tester folders exist, run `npm.cmd run trial:cohort-summary` before expanding to 3-5 testers. Run `npm.cmd run trial:archive-session` to create a local-only evidence archive after privacy passes.",
     "",
     "## Exclusions",
     "",

@@ -59,6 +59,12 @@ npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 
 Use `TRIAL_COHORT_SUMMARY.md` before expanding to 3-5 testers.
 
+Create a local-only archive after privacy and post-session reports are ready:
+
+```bash
+npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
+```
+
 ## Notes
 
 `trial:post-session` intentionally allows the final host-ready step to produce `HOLD` without hiding the report. A real tester can reveal blockers; the command should preserve that decision rather than crash before writing the summary.

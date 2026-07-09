@@ -69,3 +69,8 @@ Use the sample cohort fixture to verify the report shape:
 npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
 ```
 
+After the cohort summary is reviewed, archive each completed tester session locally:
+
+```bash
+npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
+```

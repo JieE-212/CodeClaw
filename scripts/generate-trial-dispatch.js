@@ -26,6 +26,7 @@ const requiredDocs = [
   "docs/TRIAL_POST_SESSION.md",
   "docs/TRIAL_PRIVACY_CHECK.md",
   "docs/TRIAL_COHORT_SUMMARY.md",
+  "docs/TRIAL_ARCHIVE_SESSION.md",
   "docs/TRIAL_RESULT_RECORD.md"
 ];
 
@@ -67,7 +68,8 @@ const report = {
     "Run npm.cmd run trial:host-ready immediately before hosting.",
     "Run npm.cmd run trial:privacy-check before ingesting completed records.",
     "Run npm.cmd run trial:post-session after the hosted records are filled.",
-    "Run npm.cmd run trial:cohort-summary after at least two completed tester folders exist."
+    "Run npm.cmd run trial:cohort-summary after at least two completed tester folders exist.",
+    "Run npm.cmd run trial:archive-session after privacy and post-session reports are ready."
   ],
   testerScope: [
     "Start with Demo.",

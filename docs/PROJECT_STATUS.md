@@ -1,6 +1,6 @@
 # CodeClaw Project Status
 
-Updated: 2026-07-08
+Updated: 2026-07-09
 
 ## Completed Phase
 
@@ -42,14 +42,36 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 1.5 is complete: local trial archive workflow and evidence packaging.
+
+Implemented and verified:
+
+- `trial:archive-session` local-only archive workflow.
+- Privacy gate blocks missing privacy reports and `PRIVACY_HOLD` sessions.
+- `PRIVACY_REVIEW` archives are marked local-only and require host review.
+- Archives copy report evidence and session context only.
+- Raw tester records, screenshots, logs, and source files are excluded by default.
+- Archive manifest and sharing checklist are generated inside `dist/trial-archives/<tester-id>-<timestamp>/`.
+- Automated archive tests cover safe archive creation and privacy-hold blocking.
+
+Latest verification:
+
+- `npm.cmd run test`: passed, 59 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:archive-session`: `ARCHIVE_READY_LOCAL`.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+
 ## Next Planned Phase
 
-Stage 1.5: hosted trial archive workflow and evidence packaging.
+Stage 1.6: hosted trial operator dashboard and command guide.
 
 Planned order:
 
-1. Add a local-only `trial:archive-session` workflow for completed tester folders.
-2. Copy only privacy-passed reports into a dated archive under `dist/trial-archives`.
-3. Generate an archive manifest with tester id, package version/date, report decisions, and redaction status.
-4. Add a checklist for what can be shared publicly, what stays local, and what must be deleted or redacted.
-5. Add tests for privacy-hold archive blocking and safe archive manifest creation.
+1. Add a concise operator dashboard report that reads readiness, dispatch, host-ready, post-session, cohort, and archive reports.
+2. Generate one current status page with next command, current blocker, latest package path, latest session pack, and latest archive path.
+3. Add `trial:status` as the single command to orient the host before or after each trial step.
+4. Add tests for empty-state, ready-to-host, post-session-ready, and archive-ready states.

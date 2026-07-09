@@ -52,6 +52,7 @@ const report = {
     "docs/TRIAL_POST_SESSION.md",
     "docs/TRIAL_PRIVACY_CHECK.md",
     "docs/TRIAL_COHORT_SUMMARY.md",
+    "docs/TRIAL_ARCHIVE_SESSION.md",
     "docs/TRIAL_HOST_BRIEF.md",
     "docs/TRIAL_GO_NO_GO.md"
   ],

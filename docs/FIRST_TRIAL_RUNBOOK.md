@@ -77,6 +77,7 @@ Share these with the tester:
 - `docs/TRIAL_FIX_BACKLOG.md`.
 - `docs/TRIAL_SESSION_PACK.md`.
 - `docs/TRIAL_COHORT_SUMMARY.md`.
+- `docs/TRIAL_ARCHIVE_SESSION.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -233,6 +234,20 @@ This writes:
 ```text
 dist/TRIAL_COHORT_SUMMARY.md
 dist/TRIAL_COHORT_SUMMARY.json
+```
+
+After privacy and post-session reports are ready, create a local-only archive:
+
+```bash
+npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1
+```
+
+This writes:
+
+```text
+dist/TRIAL_ARCHIVE_REPORT.md
+dist/TRIAL_ARCHIVE_REPORT.json
+dist/trial-archives/<tester-id>-<timestamp>/
 ```
 
 Create a short follow-up note if you need a lightweight human summary:
