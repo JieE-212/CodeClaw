@@ -1,290 +1,280 @@
 # CodeClaw Restart Handoff
 
-Use this document after restarting Codex to resume the current work without rediscovering context.
+Use this document after restarting the computer or Codex to resume work without rediscovering context.
 
-## Current Status
+Updated: 2026-07-09
 
-Stage: Stage 4 productization / local trial readiness.
+## Restart Prompt
 
-Current product route:
-
-- First release path is local Web workspace.
-- Desktop shell comes later.
-- WeChat mini program/cloud SaaS are not first core product surfaces.
-- Default model policy is DeepSeek V4 Flash for normal use, Pro only for complex/high-risk/review.
-
-Current work state:
-
-- No long-running task needs to be resumed.
-- The requested 2-hour long Codex-run nightly task has completed successfully.
-- The next product work should start from the two UX improvements listed below.
-
-## Last Long Run
-
-Command actually run by Codex:
-
-```bash
-npm.cmd run nightly:trial -- --hours 2 --interval-minutes 10 --ready-every 3
-```
-
-Result:
-
-- Overall: Pass.
-- Run ID: `20260708-005333`.
-- Duration: about 2 hours.
-- Cycles: 12.
-- Checks: 53 total, 53 passed, 0 failed.
-- Final `trial:ready`: Pass.
-
-Reports:
+After restarting, open Codex in this project and send:
 
 ```text
-dist/nightly-trial/20260708-005333/summary.md
-dist/nightly-trial/20260708-005333/summary.json
-dist/SIMULATED_FIRST_TRIAL_REPORT.md
-dist/TRIAL_READINESS_REPORT.json
+请先读取 docs/HANDOFF_RESTART.md 和 docs/PROJECT_STATUS.md，接上 CodeClaw 当前进度。当前 2.8 已完成，下一轮按规划进入 2.9。请先深入规划，再开始执行；每轮结束后继续规划下一轮任务。
 ```
 
-Latest local trial package:
+## Project Location
 
-```text
-dist/CodeClaw-local-trial-20260708
-```
-
-Important note:
-
-- A hidden/background launch attempt was tried first, but Windows/Codex process handling with Chinese paths was unreliable.
-- The successful run was executed in the foreground through Codex tooling and completed.
-- Do not assume any hidden nightly process is still running.
-
-## Recently Added Capabilities
-
-### Trial Readiness
-
-Command:
-
-```bash
-npm.cmd run trial:ready
-```
-
-Purpose:
-
-- Runs source `health/check/test`.
-- Creates a clean local trial package.
-- Checks package hygiene.
-- Runs package `check/health/test`.
-- Writes `dist/TRIAL_READINESS_REPORT.json`.
-
-### Simulated First Trial
-
-Command:
-
-```bash
-npm.cmd run trial:simulate
-```
-
-Purpose:
-
-- Simulates a solo technical tester.
-- Checks first-screen UI markers.
-- Runs Demo read-only preflight.
-- Generates Demo patch proposal without applying it.
-- Runs real-project read-only preflight.
-- Writes `dist/SIMULATED_FIRST_TRIAL_REPORT.md`.
-
-### Nightly Trial
-
-Command:
-
-```bash
-npm.cmd run nightly:trial
-```
-
-Purpose:
-
-- Default 2.5-hour safe validation loop.
-- Runs `check`, `test`, `health`, `trial:simulate`.
-- Periodically runs `trial:ready`.
-- Writes `dist/nightly-trial/YYYYMMDD-HHMMSS/summary.md`.
-
-Docs:
-
-```text
-docs/NIGHTLY_TRIAL.md
-```
-
-### Persona Trial Review
-
-Doc:
-
-```text
-docs/PERSONA_TRIAL_REVIEW.md
-```
-
-Changes made from that review:
-
-- Added first-screen safety strip:
-  - Local run.
-  - Read-only preflight first.
-  - Confirmation before writes and commands.
-- Strengthened `Apply` confirmation copy.
-- Strengthened verification command confirmation copy.
-- Updated disconnected-service copy from `run-dev.cmd` to `start-codeclaw.cmd` or `npm.cmd run dev`.
-- Added `trustStrip` to health checks.
-
-## Current Verification Baseline
-
-Known passing commands after latest changes:
-
-```bash
-npm.cmd run check
-npm.cmd run health
-npm.cmd run trial:simulate
-npm.cmd run trial:ready
-npm.cmd run nightly:trial -- --hours 2 --interval-minutes 10 --ready-every 3
-```
-
-Known passing unit tests:
-
-- `53/53` tests passed during the 2-hour nightly run.
-
-Package hygiene:
-
-- Latest readiness reported `missingRequired: 0`.
-- Latest readiness reported `disallowed: 0`.
-
-## Important Files
-
-Frontend:
-
-```text
-apps/web/public/index.html
-apps/web/public/app.js
-apps/web/public/styles.css
-```
-
-Server:
-
-```text
-apps/web/server.js
-```
-
-Scripts:
-
-```text
-scripts/health-check.js
-scripts/prepare-local-trial.js
-scripts/trial-readiness.js
-scripts/simulate-first-trial.js
-scripts/nightly-trial.js
-```
-
-Launchers:
-
-```text
-start-codeclaw.cmd
-start-codeclaw.ps1
-run-nightly-trial.cmd
-```
-
-Docs:
-
-```text
-docs/START_GUIDE.md
-docs/LOCAL_TRIAL_PACKAGE.md
-docs/FIRST_TRIAL_RUNBOOK.md
-docs/PERSONA_TRIAL_REVIEW.md
-docs/NIGHTLY_TRIAL.md
-docs/TRIAL_FEEDBACK_TEMPLATE.md
-docs/TRIAL_INVITE_MESSAGE.md
-docs/RELEASE_STRATEGY.md
-```
-
-## Next Work To Resume
-
-The next two product improvements, in recommended order:
-
-### 1. Real Project Path Input UX
-
-Goal:
-
-Reduce first-user friction when entering a Windows project path.
-
-Suggested scope:
-
-- Improve placeholder and helper copy around the project path field.
-- Add a small "path tips" area:
-  - Paste a folder path, not a file.
-  - Example: `C:\Users\you\project`.
-  - Avoid protected system folders.
-  - Use Demo first if unsure.
-- Consider a "recent paths" / "use example" enhancement if it stays small.
-- Improve friendly errors for:
-  - path not found,
-  - file instead of folder,
-  - permission denied,
-  - empty path.
-- Update `trial:simulate` or `health` markers if new UI markers should not regress.
-
-Recommended verification:
-
-```bash
-npm.cmd run check
-npm.cmd run health
-npm.cmd run trial:simulate
-```
-
-### 2. Dry-run Apply Review Page / Panel
-
-Goal:
-
-Make users safer and more confident before clicking `Apply`.
-
-Suggested scope:
-
-- Add an explicit pre-Apply review state/panel before writing:
-  - changed files,
-  - number of files,
-  - patch summary,
-  - risk notes,
-  - "writes local files" warning,
-  - rollback reminder,
-  - recommendation to use Demo/copy/disposable branch.
-- Keep actual write behavior gated by the existing confirm.
-- Do not auto-apply.
-- Do not introduce broad patch engine changes yet.
-- Make it visible in the existing patch panel rather than adding a new page unless necessary.
-
-Recommended verification:
-
-```bash
-npm.cmd run check
-npm.cmd run health
-npm.cmd run trial:simulate
-npm.cmd run trial:ready
-```
-
-## Suggested Restart Prompt
-
-After restarting Codex, use:
-
-```text
-请读取 docs/HANDOFF_RESTART.md，接上当前阶段。先推进“真实项目路径输入体验”，深入规划后开始实现，并在完成后跑 check、health、trial:simulate。
-```
-
-## Caveats
-
-- PowerShell `Get-Content` may display Chinese as mojibake in some command outputs, even when files are valid UTF-8. Use Node UTF-8 reads when checking actual content.
-- The repository root for actual work is:
+Main repo:
 
 ```text
 C:\Users\ZFJJi\Desktop\AI Agent\码爪 CodeClaw\项目工程
 ```
 
-- The outer workspace root is:
+Outer workspace:
 
 ```text
 C:\Users\ZFJJi\Desktop\AI Agent\码爪 CodeClaw
 ```
 
-- Avoid approving writes to unrelated external projects unless the user explicitly requests it.
+If PowerShell displays the Chinese path as mojibake, still use the actual folder shown above in Explorer.
+
+## Current Git State
+
+Latest commit:
+
+```text
+2714e05 Add after-live recovery workflow
+```
+
+Recent commits:
+
+```text
+2714e05 Add after-live recovery workflow
+1e1ba1a Add live session capture workflow
+e0dd3d8 Add pre-live gate for real tester launch
+```
+
+Current branch:
+
+```text
+main tracking gitee/main
+```
+
+Before starting new code work after restart, check:
+
+```powershell
+cd "C:\Users\ZFJJi\Desktop\AI Agent\码爪 CodeClaw\项目工程"
+git status --short --branch
+git log -3 --oneline
+```
+
+If the user has not pushed after 2.8, they can push with:
+
+```powershell
+git pushall
+```
+
+## Current Stage
+
+Completed:
+
+```text
+Stage 2.8: first real tester after-call recovery and evidence packaging
+```
+
+What 2.8 added:
+
+- `trial:after-live` guarded after-call workflow.
+- Runs completion, privacy, post-session, review, archive, and status in order.
+- Stops on incomplete records, privacy hold, post-session failure, review fix-now/block, or archive hold.
+- Generates:
+
+```text
+dist/TRIAL_AFTER_LIVE_REPORT.md
+dist/TRIAL_AFTER_LIVE_REPORT.json
+dist/trial-after-live/<tester-id>-<timestamp>/
+```
+
+- Evidence packets copy generated reports and safe context such as `LIVE_SESSION_HOST_SUMMARY.md`.
+- Evidence packets exclude raw tester records, screenshots, logs, source files, contact data, and secret tokens.
+- `trial:post-session` now supports `--reports` for isolated report directories.
+- `trial:status` now recognizes:
+
+```text
+READY_FOR_AFTER_LIVE
+NEEDS_AFTER_LIVE
+AFTER_LIVE_BLOCKED
+```
+
+Important new files:
+
+```text
+scripts/after-live-recovery.js
+tests/after-live-recovery.test.js
+docs/TRIAL_AFTER_LIVE.md
+```
+
+Important updated files:
+
+```text
+package.json
+scripts/post-session-recovery.js
+scripts/trial-status.js
+scripts/trial-readiness.js
+scripts/freeze-trial-candidate.js
+scripts/generate-trial-dispatch.js
+scripts/prepare-local-trial.js
+scripts/run-intake-review-dry-run.js
+tests/trial-status.test.js
+docs/PROJECT_STATUS.md
+docs/FIRST_TRIAL_RUNBOOK.md
+docs/LOCAL_TRIAL_PACKAGE.md
+docs/RELEASE_CHECKLIST.md
+docs/TRIAL_STATUS.md
+docs/TRIAL_LIVE_CAPTURE.md
+```
+
+## Verification Baseline
+
+Latest completed verification after 2.8:
+
+```powershell
+npm.cmd run check
+npm.cmd test
+npm.cmd run health
+npm.cmd run trial:ready
+npm.cmd run trial:status
+```
+
+Results:
+
+- `check`: passed.
+- `test`: passed, 92 tests.
+- `health`: passed.
+- `trial:ready`: passed in source and generated local trial package.
+- `trial:status`: `NEEDS_TESTER_INTAKE`.
+
+Current product status:
+
+- The code is ready for the next local real tester intake/session cycle.
+- There is no long-running server or background task that must be preserved across reboot.
+- Generated/local output remains under ignored `dist/`, `.codeclaw/`, and `server-bg.log`.
+
+## Next Planned Stage
+
+Next:
+
+```text
+Stage 2.9: next tester launch loop hardening
+```
+
+Recommended 2.9 goal:
+
+Build a guarded tester-2 launch loop check that confirms the project is ready to move from tester 1 after-live recovery into tester 2 hosting.
+
+Planned order:
+
+1. Add a command such as `trial:next-live` or `trial:next-tester-ready`.
+2. Confirm `trial:after-live` passed for the previous tester.
+3. Confirm current tester intake is ready and anonymous.
+4. Confirm next session pack, host-ready, host-run, pre-live, and live-capture are aligned to the same tester id.
+5. Block stale tester 1 session folders, stale watch items, dry-run ids, or missing host acceptance.
+6. Generate a concise tester-2 host handoff note with accepted watch items and stop conditions.
+7. Update `trial:status` to recommend the new loop check after 2.8 passes.
+8. Add tests for ready, stale tester id, missing after-live, and stale watch item cases.
+9. Update docs and package/readiness required docs.
+
+Suggested verification for 2.9:
+
+```powershell
+npm.cmd run check
+npm.cmd test
+npm.cmd run health
+npm.cmd run trial:ready
+npm.cmd run trial:status
+```
+
+## User Working Preference
+
+The user wants every future task to:
+
+- First do deeper thinking and planning.
+- Then implement.
+- Then verify.
+- Then summarize in beginner-friendly Chinese.
+- Then plan the next task.
+- Prefer longer, complete task runs rather than stopping halfway.
+
+Keep this rhythm unless the user explicitly asks for a shorter answer.
+
+## Push Workflow
+
+The user usually pushes with:
+
+```powershell
+cd "C:\Users\ZFJJi\Desktop\AI Agent\码爪 CodeClaw\项目工程"
+git pushall
+```
+
+If push has problems, inspect:
+
+```powershell
+git remote -v
+git status --short --branch
+git log -3 --oneline
+```
+
+Do not use destructive git commands. Do not reset or checkout user changes unless explicitly requested.
+
+## Safety Notes
+
+- Never commit real tester rosters.
+- Never commit raw real tester feedback/session records.
+- Keep `.codeclaw/`, `dist/`, and `server-bg.log` ignored/local.
+- Keep after-live packets local-only unless a human privacy review approves a summary.
+- Do not copy screenshots, logs, source files, contact details, project paths, or secrets into shareable packets.
+
+## Useful Commands
+
+Status:
+
+```powershell
+npm.cmd run trial:status
+```
+
+After a live tester session:
+
+```powershell
+npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
+```
+
+Real tester intake:
+
+```powershell
+npm.cmd run trial:intake -- --init
+npm.cmd run trial:intake
+npm.cmd run trial:intake-session -- --force
+```
+
+Host gates:
+
+```powershell
+npm.cmd run trial:host-ready
+npm.cmd run trial:host-run
+npm.cmd run trial:pre-live
+npm.cmd run trial:live-capture
+```
+
+Full verification:
+
+```powershell
+npm.cmd run check
+npm.cmd test
+npm.cmd run health
+npm.cmd run trial:ready
+npm.cmd run trial:status
+```
+
+## Suggested First Action After Restart
+
+Do not immediately code. First ask Codex to read:
+
+```text
+docs/HANDOFF_RESTART.md
+docs/PROJECT_STATUS.md
+package.json
+scripts/trial-status.js
+scripts/after-live-recovery.js
+```
+
+Then begin Stage 2.9 planning.
