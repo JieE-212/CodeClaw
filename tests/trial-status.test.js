@@ -56,7 +56,48 @@ test("trial-status recognizes ready-to-host state after host runbook", async () 
   assert.equal(result.code, 0);
   assert.equal(report.decision, "READY_TO_HOST");
   assert.equal(report.currentStage, "hosting");
+  assert.match(report.nextCommand, /trial:complete-session/);
+});
+
+test("trial-status recognizes ready-for-post-session after completion check", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-complete-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_SESSION_COMPLETION_REPORT.json", { ok: true, mode: "trial-session-completion", decision: "SESSION_COMPLETION_READY", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "READY_FOR_POST_SESSION");
+  assert.equal(report.currentStage, "post-session");
   assert.match(report.nextCommand, /trial:post-session/);
+});
+
+test("trial-status blocks when completion check holds", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-complete-hold-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_SESSION_COMPLETION_REPORT.json", {
+    ok: false,
+    mode: "trial-session-completion",
+    decision: "SESSION_COMPLETION_HOLD",
+    blockers: ["Feedback is missing: Goal."]
+  });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "SESSION_COMPLETION_BLOCKED");
+  assert.equal(report.currentStage, "post-session");
+  assert.ok(report.blockers.some((item) => item.includes("Feedback is missing")));
 });
 
 test("trial-status blocks on privacy hold", async () => {

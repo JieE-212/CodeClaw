@@ -13,6 +13,7 @@ npm.cmd run trial:post-session
 This is equivalent to:
 
 ```bash
+npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:privacy-check -- dist/trial-session-packs/tester-1
 npm.cmd run trial:ingest-feedback -- dist/trial-session-packs/tester-1
 npm.cmd run trial:fix-backlog
@@ -23,8 +24,11 @@ npm.cmd run trial:host-ready -- --tester tester-2
 For a specific completed session and next tester:
 
 ```bash
+npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
 ```
+
+`trial:post-session` runs `trial:complete-session` automatically first. Run completion manually when you want to check missing fields before starting the full post-session pipeline.
 
 The command writes:
 
@@ -49,7 +53,7 @@ Proceed only when it says `READY_FOR_NEXT_TESTER`.
 
 If it says `FIX_BEFORE_NEXT_TESTER` or `HOST_READY_HOLD`, fix the listed blockers before inviting the next tester.
 
-If it says `POST_SESSION_PIPELINE_FAILED` because privacy check failed, redact the completed session records and rerun the same command.
+If it says `POST_SESSION_PIPELINE_FAILED` because completion or privacy check failed, finish or redact the completed session records and rerun the same command.
 
 After at least two completed tester folders exist, run:
 

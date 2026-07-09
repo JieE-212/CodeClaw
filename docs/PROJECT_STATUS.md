@@ -165,14 +165,45 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 2.3 is complete: first real tester completion and post-session capture.
+
+Implemented and verified:
+
+- `trial:complete-session` checks completed observation, feedback, and result records before post-session.
+- `dist/TRIAL_SESSION_COMPLETION_REPORT.md` and `dist/TRIAL_SESSION_COMPLETION_REPORT.json` record completion readiness.
+- The command writes `HOST_COMPLETION_CHECKLIST.md` for session folders.
+- It blocks missing required records, empty placeholders, missing go/no-go decisions, obvious personal identity fields, emails, phone numbers, and secret tokens.
+- It supports both generated session-pack file names and completed sample names such as `tester-1-feedback.md`.
+- `trial:post-session` now runs completion check before privacy check, feedback ingest, backlog generation, next session pack, and host-ready.
+- `trial:status` now distinguishes `READY_TO_HOST`, `SESSION_COMPLETION_BLOCKED`, and `READY_FOR_POST_SESSION`.
+- Local archives can include `HOST_COMPLETION_CHECKLIST.md` as session context while still excluding raw tester records.
+- Trial runbook, local package guide, release checklist, go/no-go guide, status guide, privacy guide, session-pack guide, archive guide, post-session guide, dispatch docs, and package readiness were updated.
+- Automated tests cover completed anonymous records, empty placeholders, personal contact data blocking, and the new status transitions.
+
+Latest verification:
+
+- `node --check scripts\session-completion-check.js`: passed.
+- `node --check scripts\post-session-recovery.js`: passed.
+- `node --check scripts\trial-status.js`: passed.
+- `npm.cmd run test`: passed, 77 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:complete-session -- --session examples\trial-feedback-sample --checklist dist\TRIAL_SAMPLE_COMPLETION_CHECKLIST.md`: `SESSION_COMPLETION_READY`.
+- `npm.cmd run trial:post-session -- --session examples\trial-feedback-sample --next-tester tester-2`: `READY_FOR_NEXT_TESTER`.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+
 ## Next Planned Phase
 
-Stage 2.3: first real tester completion and post-session capture.
+Stage 2.4: first real tester artifact review and fix selection.
 
 Planned order:
 
-1. Add a completion gate that checks filled observation, feedback, and result records before `trial:post-session`.
-2. Make the gate block empty placeholders and obvious personal data before ingest.
-3. Generate a concise host completion checklist for the first real tester.
-4. Connect the completion gate into `trial:status`.
-5. Verify the flow with safe and incomplete session fixtures.
+1. Add a review command that reads completion, privacy, feedback, backlog, post-session, and archive reports for one tester.
+2. Produce a concise host decision brief: fix now, watch next tester, or proceed.
+3. Require every P0/P1 item to have an owner, action, and next verification command.
+4. Connect the review summary into `trial:status`.
+5. Verify with sample safe, watch, and fix-first sessions.

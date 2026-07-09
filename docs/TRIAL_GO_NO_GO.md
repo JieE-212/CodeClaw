@@ -70,6 +70,7 @@ Proceed to tester 2 only if:
 - `npm.cmd run trial:fix-backlog` has no `P0` items.
 - `npm.cmd run trial:session-pack` has generated the current tester folder.
 - `npm.cmd run trial:host-ready` says `READY_TO_HOST`.
+- Completed session records pass `npm.cmd run trial:complete-session -- --session <session-folder>`.
 - Completed session records pass `npm.cmd run trial:privacy-check -- <session-folder>`.
 - Real external testers have a local `trial:intake` report with `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
 - After a completed session, `npm.cmd run trial:post-session -- --session <session-folder>` says `READY_FOR_NEXT_TESTER` before inviting another tester.

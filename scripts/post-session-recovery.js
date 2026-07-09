@@ -17,6 +17,18 @@ const steps = [];
 let report;
 
 try {
+  const completionArgs = ["--", "--session", relative(sessionPath)];
+  if (!isInside(sessionPath, path.join(distPath, "trial-session-packs"))) {
+    completionArgs.push("--checklist", path.join("dist", "TRIAL_SESSION_COMPLETION_CHECKLIST.md"));
+  }
+  const completionStep = await runNpmStep({
+    name: "session:complete",
+    script: "trial:complete-session",
+    args: completionArgs,
+    allowFailure: true
+  });
+  steps.push(completionStep);
+  if (completionStep.exitCode !== 0) throw new Error("session:complete failed; finish or redact session records before continuing.");
   const privacyStep = await runNpmStep({
     name: "privacy:check",
     script: "trial:privacy-check",
@@ -73,6 +85,7 @@ async function buildReport({ steps, error }) {
   const backlog = await readJson(path.join(distPath, "TRIAL_FIX_BACKLOG.json"));
   const hostReady = await readJson(path.join(distPath, "TRIAL_HOST_READY_REPORT.json"));
   const privacy = await readJson(path.join(distPath, "TRIAL_PRIVACY_REPORT.json"));
+  const completion = await readJson(path.join(distPath, "TRIAL_SESSION_COMPLETION_REPORT.json"));
   const sessionManifest = await readJson(path.join(distPath, "trial-session-packs", nextTester, "SESSION_PACK_MANIFEST.json"));
   const blockers = [];
   const warnings = [];
@@ -81,6 +94,7 @@ async function buildReport({ steps, error }) {
   for (const step of steps) {
     if (step.exitCode !== 0 && step.name !== "next:host-ready") blockers.push(`${step.name} failed with exit code ${step.exitCode}.`);
   }
+  if (!completion.ok) blockers.push("Session completion check did not pass.");
   if (!privacy.ok) blockers.push("Privacy check did not pass.");
   if (!feedback.ok) blockers.push("Feedback ingest report is not ok.");
   if (!backlog.ok) blockers.push("Fix backlog report is not ok.");
@@ -101,6 +115,7 @@ async function buildReport({ steps, error }) {
     blockers,
     warnings: unique(warnings),
     privacyDecision: privacy.decision || "UNKNOWN",
+    completionDecision: completion.decision || "UNKNOWN",
     feedbackDecision: feedback.decision || "UNKNOWN",
     backlogDecision: backlog.decision || "UNKNOWN",
     hostReadyDecision: hostReady.decision || "UNKNOWN",
@@ -239,6 +254,7 @@ function renderMarkdown(report) {
     "",
     "## Decisions",
     "",
+    `- Completion: ${report.completionDecision}`,
     `- Privacy: ${report.privacyDecision}`,
     `- Feedback: ${report.feedbackDecision}`,
     `- Backlog: ${report.backlogDecision}`,
@@ -338,4 +354,9 @@ function relative(targetPath) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function isInside(candidatePath, allowedRoot) {
+  const relativePath = path.relative(allowedRoot, candidatePath);
+  return !relativePath || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }

@@ -57,6 +57,7 @@ const report = {
     "docs/TRIAL_TESTER_INTAKE.md",
     "docs/TRIAL_INTAKE_SESSION.md",
     "docs/TRIAL_HOST_RUN.md",
+    "docs/TRIAL_SESSION_COMPLETION.md",
     "docs/TRIAL_HOST_BRIEF.md",
     "docs/TRIAL_GO_NO_GO.md"
   ],

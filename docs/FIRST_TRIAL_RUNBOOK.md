@@ -226,6 +226,7 @@ dist/trial-session-packs/tester-1/
 Then run:
 
 ```bash
+npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:privacy-check -- dist/trial-session-packs/tester-1
 npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
 ```
@@ -241,6 +242,8 @@ dist/TRIAL_HOST_READY_REPORT.md
 dist/TRIAL_HOST_READY_REPORT.json
 dist/TRIAL_HOST_RUN_REPORT.md
 dist/TRIAL_HOST_RUN_REPORT.json
+dist/TRIAL_SESSION_COMPLETION_REPORT.md
+dist/TRIAL_SESSION_COMPLETION_REPORT.json
 dist/TRIAL_POST_SESSION_REPORT.md
 dist/TRIAL_POST_SESSION_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md

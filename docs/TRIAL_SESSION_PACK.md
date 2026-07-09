@@ -59,6 +59,7 @@ Run the post-session loop against the generated folder:
 
 ```bash
 npm.cmd run trial:privacy-check -- dist/trial-session-packs/tester-1
+npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
 ```
 

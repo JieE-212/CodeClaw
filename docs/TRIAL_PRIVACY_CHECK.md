@@ -52,7 +52,7 @@ PRIVACY_HOLD
 
 ## Post-Session Flow
 
-`trial:post-session` runs this automatically before feedback ingest:
+`trial:post-session` runs `trial:complete-session` first, then this privacy check before feedback ingest:
 
 ```bash
 npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2

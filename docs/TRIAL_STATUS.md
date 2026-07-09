@@ -37,6 +37,8 @@ NEEDS_HOST_READY
 NEEDS_HOST_RUN
 HOST_RUN_BLOCKED
 READY_TO_HOST
+READY_FOR_POST_SESSION
+SESSION_COMPLETION_BLOCKED
 PRIVACY_HOLD
 POST_SESSION_REVIEW
 NEEDS_ARCHIVE
@@ -86,3 +88,11 @@ npm.cmd run trial:host-run
 ```
 
 Host only after the host run report says `HOST_RUN_READY`, or after the host accepts every warning in `HOST_RUN_READY_WITH_REVIEW`.
+
+After the hosted session records are filled, run:
+
+```bash
+npm.cmd run trial:complete-session -- --session <session-folder>
+```
+
+If the decision is `READY_FOR_POST_SESSION`, run `trial:post-session`.

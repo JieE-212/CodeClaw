@@ -42,7 +42,7 @@ reports/
 session-context/
 ```
 
-`session-context/` may include `SESSION_PACK_MANIFEST.json`, `SESSION_BRIEF.md`, and `HOST_RUNBOOK.md`. It still excludes raw tester records by default.
+`session-context/` may include `SESSION_PACK_MANIFEST.json`, `SESSION_BRIEF.md`, `HOST_RUNBOOK.md`, and `HOST_COMPLETION_CHECKLIST.md`. It still excludes raw tester records by default.
 
 ## Privacy Gate
 

@@ -36,6 +36,7 @@ async function buildReport() {
     dispatch: await readReport("TRIAL_DISPATCH_NOTE.json"),
     hostReady: await readReport("TRIAL_HOST_READY_REPORT.json"),
     hostRun: await readReport("TRIAL_HOST_RUN_REPORT.json"),
+    completion: await readReport("TRIAL_SESSION_COMPLETION_REPORT.json"),
     privacy: await readReport("TRIAL_PRIVACY_REPORT.json"),
     feedback: await readReport("TRIAL_FEEDBACK_SUMMARY.json"),
     backlog: await readReport("TRIAL_FIX_BACKLOG.json"),
@@ -130,8 +131,14 @@ function decideState(reports, blockers) {
   if (!reports.postSession.exists && reports.hostRun.decision === "HOST_RUN_HOLD") {
     return state("HOST_RUN_BLOCKED", "hosting", "npm.cmd run trial:host-run", "Fix host-run blockers before hosting.");
   }
+  if (!reports.postSession.exists && reports.completion.exists && reports.completion.decision === "SESSION_COMPLETION_HOLD") {
+    return state("SESSION_COMPLETION_BLOCKED", "post-session", "npm.cmd run trial:complete-session -- --session <session-folder>", "Finish or redact completed session records before post-session.");
+  }
+  if (!reports.postSession.exists && reports.completion.exists && reports.completion.decision.startsWith("SESSION_COMPLETION_READY")) {
+    return state("READY_FOR_POST_SESSION", "post-session", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Run the post-session pipeline for the completed records.");
+  }
   if (!reports.postSession.exists) {
-    return state("READY_TO_HOST", "hosting", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Host the session, fill records, then run post-session.");
+    return state("READY_TO_HOST", "hosting", "npm.cmd run trial:complete-session -- --session <session-folder>", "Host the session, fill records, then run completion check.");
   }
   if (reports.postSession.decision !== "READY_FOR_NEXT_TESTER") {
     return state("POST_SESSION_REVIEW", "post-session", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Resolve post-session blockers or review items.");
@@ -167,6 +174,7 @@ function collectBlockers(reports) {
   const blockers = [];
   for (const [key, report] of Object.entries(reports)) {
     if (key === "hostRun" && reports.postSession.exists) continue;
+    if (key === "completion" && reports.postSession.exists) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -209,6 +217,7 @@ function quickLinks(reports, artifacts) {
     dispatchNote: reports.dispatch.exists ? reports.dispatch.relativePath : "",
     hostReadyReport: reports.hostReady.exists ? reports.hostReady.relativePath : "",
     hostRunReport: reports.hostRun.exists ? reports.hostRun.relativePath : "",
+    completionReport: reports.completion.exists ? reports.completion.relativePath : "",
     postSessionReport: reports.postSession.exists ? reports.postSession.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
@@ -226,6 +235,7 @@ function commandGuide(current, reports) {
     { step: "Dispatch", command: "npm.cmd run trial:dispatch", status: reports.dispatch.exists ? reports.dispatch.decision : "missing" },
     { step: "Host-ready", command: "npm.cmd run trial:session-pack -- --force; npm.cmd run trial:host-ready", status: reports.hostReady.exists ? reports.hostReady.decision : "missing" },
     { step: "Host runbook", command: "npm.cmd run trial:host-run", status: reports.hostRun.exists ? reports.hostRun.decision : "missing" },
+    { step: "Session completion", command: "npm.cmd run trial:complete-session -- --session <session-folder>", status: reports.completion.exists ? reports.completion.decision : "missing" },
     { step: "Post-session", command: "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", status: reports.postSession.exists ? reports.postSession.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },

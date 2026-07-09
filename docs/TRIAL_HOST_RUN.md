@@ -56,7 +56,7 @@ Open the generated `HOST_RUNBOOK.md` before the call. Keep these files open next
 After the session, fill the records and run:
 
 ```bash
+npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
 npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
 npm.cmd run trial:status
 ```
-

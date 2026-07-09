@@ -25,6 +25,7 @@ npm.cmd run trial:ingest-feedback
 npm.cmd run trial:fix-backlog
 npm.cmd run trial:session-pack -- --force
 npm.cmd run trial:host-ready
+npm.cmd run trial:complete-session -- --session examples/trial-feedback-sample --checklist dist/TRIAL_SAMPLE_COMPLETION_CHECKLIST.md
 npm.cmd run trial:privacy-check -- examples/trial-feedback-sample
 npm.cmd run trial:post-session -- --session examples/trial-feedback-sample --next-tester tester-2
 npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
@@ -33,6 +34,7 @@ npm.cmd run trial:status
 npm.cmd run trial:intake -- --init --force
 node --check scripts/generate-intake-session.js
 node --check scripts/generate-host-run.js
+node --check scripts/session-completion-check.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -54,6 +56,7 @@ Expected result:
 - `trial:session-pack` writes a generated tester folder with `SESSION_BRIEF.md` and the three fillable records.
 - `trial:host-ready` says `READY_TO_HOST` before a hosted tester session.
 - `trial:host-run` is syntax-checked and covered by automated tests; run it live only after intake-session and host-ready are aligned.
+- `trial:complete-session` passes on completed sample records and blocks empty or personally identifying records.
 - `trial:privacy-check` passes on safe sample feedback and blocks unsafe session records.
 - `trial:post-session` writes a post-session decision report and next tester pack.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.
