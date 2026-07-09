@@ -22,6 +22,7 @@ It summarizes:
 - latest package folder
 - latest session pack
 - latest archive folder
+- intake-to-review dry-run report link when available
 - report decisions
 - blockers and warnings
 
@@ -67,6 +68,12 @@ After running any trial command, rerun:
 
 ```bash
 npm.cmd run trial:status
+```
+
+Before filling the first real tester roster, run:
+
+```bash
+npm.cmd run trial:intake-review-dry-run -- --force
 ```
 
 If the decision is `NEEDS_TESTER_INTAKE`, run:

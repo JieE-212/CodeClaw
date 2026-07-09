@@ -42,6 +42,7 @@ async function buildReport() {
     backlog: await readReport("TRIAL_FIX_BACKLOG.json"),
     postSession: await readReport("TRIAL_POST_SESSION_REPORT.json"),
     review: await readReport("TRIAL_REVIEW_REPORT.json"),
+    intakeReviewDryRun: await readReport("TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
     intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
@@ -180,6 +181,7 @@ function decideState(reports, blockers) {
 function collectBlockers(reports) {
   const blockers = [];
   for (const [key, report] of Object.entries(reports)) {
+    if (key === "intakeReviewDryRun") continue;
     if (key === "hostRun" && reports.postSession.exists) continue;
     if (key === "completion" && reports.postSession.exists) continue;
     if (!report.exists) continue;
@@ -227,6 +229,7 @@ function quickLinks(reports, artifacts) {
     completionReport: reports.completion.exists ? reports.completion.relativePath : "",
     postSessionReport: reports.postSession.exists ? reports.postSession.relativePath : "",
     reviewReport: reports.review.exists ? reports.review.relativePath : "",
+    intakeReviewDryRun: reports.intakeReviewDryRun.exists ? reports.intakeReviewDryRun.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
@@ -246,6 +249,7 @@ function commandGuide(current, reports) {
     { step: "Session completion", command: "npm.cmd run trial:complete-session -- --session <session-folder>", status: reports.completion.exists ? reports.completion.decision : "missing" },
     { step: "Post-session", command: "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", status: reports.postSession.exists ? reports.postSession.decision : "missing" },
     { step: "Session review", command: "npm.cmd run trial:review-session", status: reports.review.exists ? reports.review.decision : "missing" },
+    { step: "Intake-review dry run", command: "npm.cmd run trial:intake-review-dry-run", status: reports.intakeReviewDryRun.exists ? reports.intakeReviewDryRun.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },

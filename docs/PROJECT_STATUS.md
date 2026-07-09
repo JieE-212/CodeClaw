@@ -223,14 +223,39 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 2.5 is complete: real tester intake-to-review dry run.
+
+Implemented and verified:
+
+- `trial:intake-review-dry-run` rehearses one anonymous tester from intake through review.
+- The dry run creates an anonymous local roster under `dist/trial-dry-runs/<run-id>/`, not under `.codeclaw/`.
+- The command runs package creation, intake, intake-session, host-ready, host-run, completion, post-session, review, and status in order.
+- It seeds safe completed records with anonymous tester and host ids so completion, privacy, feedback, backlog, post-session, and review gates are exercised end to end.
+- The final reports are generated at `dist/TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.md` and `dist/TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json`.
+- Package hygiene checks confirm dry-run tester roster and dry-run artifacts are not copied into the generated local trial package.
+- `trial:status` now links the dry-run report when present without making it a hard blocker.
+- Trial runbook, local package guide, release checklist, status guide, dispatch docs, and package readiness were updated.
+- Automated tests cover the full anonymous dry run and package hygiene.
+
+Latest verification:
+
+- `node --check scripts\run-intake-review-dry-run.js`: passed.
+- `node --check tests\intake-review-dry-run.test.js`: passed.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 82 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:intake-review-dry-run -- --force --run-id intake-review-latest`: `DRY_RUN_READY_FOR_REAL_INTAKE`.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 2.5: real tester intake-to-review dry run.
+Stage 2.6: real tester roster handoff and first live-session launch gate.
 
 Planned order:
 
-1. Add a non-private fixture that simulates one anonymous ready tester from intake through review.
-2. Run the whole scripted path: intake, intake-session, host-ready, host-run, completion, post-session, review, status.
-3. Ensure generated live artifacts stay in ignored folders.
-4. Ensure no local roster or raw real tester data can enter the package.
-5. Use the dry run as the final rehearsal before filling the real tester roster.
+1. Add a beginner-safe checklist for filling `.codeclaw/trial-intake/TESTER_ROSTER.json` with anonymous real tester data.
+2. Add a pre-live gate that confirms dry-run passed, intake is ready, the selected tester has consent/privacy/scope, and no personal fields are present.
+3. Generate the first real tester launch packet from intake and require `trial:host-ready`, `trial:host-run`, and `trial:status` to align.
+4. Document the exact PowerShell command sequence for the user before the first real hosted session.
+5. Keep real tester roster and raw records local-only and excluded from package/share paths.
