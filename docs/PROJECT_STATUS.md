@@ -112,14 +112,40 @@ Latest verification:
 - `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
 - `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
 
+Stage 2.1 is complete: first real tester session pack from intake.
+
+Implemented and verified:
+
+- `trial:intake-session` generates a session pack from `TRIAL_TESTER_INTAKE_REPORT.json`.
+- The command selects the first ready anonymous tester or a specific `--tester`.
+- It blocks when intake is missing, not ready, held, or the selected tester is blocked.
+- Generated `SESSION_BRIEF.md` includes a tester intake section with language, host language, allowed scope, consent status, privacy status, and review flag.
+- Generated `SESSION_PACK_MANIFEST.json` includes intake metadata.
+- `trial:status` now recommends `trial:intake-session -- --force` after intake is ready.
+- Automated tests cover ready intake session generation and intake hold blocking.
+
+Latest verification:
+
+- `node --check scripts\generate-intake-session.js`: passed.
+- `node --check tests\intake-session.test.js`: passed.
+- `npm.cmd run test`: passed, 70 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:intake-session -- --force`: correctly blocked with `INTAKE_SESSION_HOLD` because no ready local tester is filled yet.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+- `npm.cmd run trial:simulate`: passed.
+- `npm.cmd run trial:freeze`: `GO_HOSTED_TRIAL`.
+- `npm.cmd run trial:dispatch`: `READY_TO_SEND`.
+
 ## Next Planned Phase
 
-Stage 2.1: first real tester session pack from intake.
+Stage 2.2: guided first real tester host run.
 
 Planned order:
 
 1. Fill the local tester roster for the first real tester using an anonymous id.
-2. Run `trial:intake` until it says `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
-3. Generate a tester-specific session pack from the intake id.
-4. Run `trial:host-ready` and `trial:status` immediately before hosting.
+2. Run `trial:intake`, then `trial:intake-session -- --force`.
+3. Run `trial:host-ready` and `trial:status` immediately before hosting.
+4. Use the generated `SESSION_BRIEF.md` as the live host script.
 5. Record the first real session using the generated observation, feedback, and result files.

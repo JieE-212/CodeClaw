@@ -31,6 +31,7 @@ npm.cmd run trial:cohort-summary -- examples/trial-cohort-sample
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 npm.cmd run trial:status
 npm.cmd run trial:intake -- --init --force
+node --check scripts/generate-intake-session.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -57,6 +58,7 @@ Expected result:
 - `trial:archive-session` writes a local-only evidence archive and blocks privacy-hold sessions.
 - `trial:status` writes a current operator dashboard with the next recommended command.
 - `trial:intake -- --init` writes a local-only tester roster template and report.
+- `trial:intake-session` is syntax-checked and covered by tests.
 - Smoke output includes `"ok": true`.
 - Pilot output includes `"ok": true` and `"sourceFilesUnchanged": true`.
 - Fixture pilot output includes `"ok": true`, `"verificationExitCode": 0`, and `"fixtureRestored": true`.

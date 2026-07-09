@@ -100,8 +100,8 @@ Use anonymous ids like `tester-1`, `pilot-zh-1`, or `pilot-en-1`.
 After intake passes:
 
 ```bash
+npm.cmd run trial:intake-session -- --force
 npm.cmd run trial:status
 ```
 
 Then follow the status report's next command.
-

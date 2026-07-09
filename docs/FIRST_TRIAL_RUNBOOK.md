@@ -80,6 +80,7 @@ Share these with the tester:
 - `docs/TRIAL_ARCHIVE_SESSION.md`.
 - `docs/TRIAL_STATUS.md`.
 - `docs/TRIAL_TESTER_INTAKE.md`.
+- `docs/TRIAL_INTAKE_SESSION.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -104,6 +105,7 @@ Before creating a session pack for a real external tester, run:
 ```bash
 npm.cmd run trial:intake -- --init
 npm.cmd run trial:intake
+npm.cmd run trial:intake-session -- --force
 ```
 
 Keep `.codeclaw/trial-intake/TESTER_ROSTER.json` local-only and anonymous.

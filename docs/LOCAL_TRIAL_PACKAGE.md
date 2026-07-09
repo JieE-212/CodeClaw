@@ -57,6 +57,7 @@ docs/TRIAL_COHORT_SUMMARY.md
 docs/TRIAL_ARCHIVE_SESSION.md
 docs/TRIAL_STATUS.md
 docs/TRIAL_TESTER_INTAKE.md
+docs/TRIAL_INTAKE_SESSION.md
 docs/TRIAL_RESULT_RECORD.md
 docs/TRIAL_INVITE_MESSAGE.md
 docs/RELEASE_STRATEGY.md
@@ -227,6 +228,7 @@ npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 npm.cmd run trial:status
 npm.cmd run trial:intake
+npm.cmd run trial:intake-session -- --force
 ```
 
 This writes:
@@ -251,6 +253,8 @@ dist/TRIAL_STATUS_REPORT.md
 dist/TRIAL_STATUS_REPORT.json
 dist/TRIAL_TESTER_INTAKE_REPORT.md
 dist/TRIAL_TESTER_INTAKE_REPORT.json
+dist/TRIAL_INTAKE_SESSION_REPORT.md
+dist/TRIAL_INTAKE_SESSION_REPORT.json
 ```
 
 Proceed to tester 2 only when privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
@@ -366,6 +370,7 @@ docs/TRIAL_COHORT_SUMMARY.md
 docs/TRIAL_ARCHIVE_SESSION.md
 docs/TRIAL_STATUS.md
 docs/TRIAL_TESTER_INTAKE.md
+docs/TRIAL_INTAKE_SESSION.md
 ```
 
 Use this ready-to-send invite if helpful:

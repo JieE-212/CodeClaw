@@ -70,3 +70,9 @@ npm.cmd run trial:intake -- --init
 ```
 
 Then fill the local roster and rerun `npm.cmd run trial:intake`.
+
+If intake is ready, the next command should be:
+
+```bash
+npm.cmd run trial:intake-session -- --force
+```

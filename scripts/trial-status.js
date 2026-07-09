@@ -145,7 +145,7 @@ function decideState(reports, blockers) {
     return state("NEEDS_TESTER_INTAKE", "intake", "npm.cmd run trial:intake", "Complete at least one tester intake entry before generating a session pack.");
   }
   if (!reports.cohort.exists || reports.cohort.decision === "WAITING_FOR_MORE_SESSIONS") {
-    return state("READY_FOR_NEXT_TESTER", "next-session", "npm.cmd run trial:session-pack -- --tester <tester-id> --force", "Invite the next tester and keep collecting comparable records.");
+    return state("READY_FOR_NEXT_TESTER", "next-session", "npm.cmd run trial:intake-session -- --force", "Generate the next tester session pack from intake.");
   }
   if (reports.cohort.decision === "HOLD_EXPANSION_FIX_FIRST" || reports.cohort.decision === "REVIEW_REPEATED_SAFETY") {
     return state("COHORT_REVIEW", "cohort", "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", "Review repeated safety or expansion blockers.");
@@ -153,7 +153,7 @@ function decideState(reports, blockers) {
   if (blockers.length) {
     return state("BLOCKED", "review", "npm.cmd run trial:status", "Review blockers in the status report.");
   }
-  return state("READY_TO_EXPAND", "cohort", "npm.cmd run trial:session-pack -- --tester <tester-id> --force", "Proceed with the next hosted tester batch under watch items.");
+  return state("READY_TO_EXPAND", "cohort", "npm.cmd run trial:intake-session -- --force", "Proceed with the next hosted tester batch from intake under watch items.");
 }
 
 function collectBlockers(reports) {
@@ -220,6 +220,7 @@ function commandGuide(current, reports) {
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },
+    { step: "Intake session", command: "npm.cmd run trial:intake-session -- --force", status: "uses ready tester intake" },
     { step: "Current recommendation", command: current.nextCommand, status: current.decision }
   ];
 }
