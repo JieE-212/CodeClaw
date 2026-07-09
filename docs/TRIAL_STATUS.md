@@ -39,6 +39,8 @@ NEEDS_HOST_RUN
 HOST_RUN_BLOCKED
 NEEDS_PRE_LIVE
 PRE_LIVE_BLOCKED
+NEEDS_LIVE_CAPTURE
+LIVE_CAPTURE_BLOCKED
 READY_TO_HOST
 READY_FOR_POST_SESSION
 SESSION_COMPLETION_BLOCKED
@@ -107,6 +109,14 @@ npm.cmd run trial:pre-live
 ```
 
 Host only after the pre-live report says `PRE_LIVE_READY_TO_HOST`, or after the host accepts every warning in `PRE_LIVE_READY_WITH_HOST_REVIEW`.
+
+If the decision is `NEEDS_LIVE_CAPTURE`, run:
+
+```bash
+npm.cmd run trial:live-capture
+```
+
+Host only after the live-capture report says `LIVE_CAPTURE_READY`, or after the host accepts every warning in `LIVE_CAPTURE_READY_WITH_REVIEW`.
 
 After the hosted session records are filled, run:
 

@@ -273,14 +273,40 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 2.7 is complete: first real tester live-session operator capture.
+
+Implemented and verified:
+
+- `trial:live-capture` generates the host's live-session capture files before the first real tester call.
+- The command writes `LIVE_SESSION_CAPTURE.md` and `LIVE_SESSION_HOST_SUMMARY.md` into the selected session folder.
+- It reads `TRIAL_PRE_LIVE_REPORT.json` and blocks when pre-live is missing, held, or not ready.
+- It blocks dry-run tester ids before live capture.
+- It checks the session folder for screenshots, logs, archives, source files, env/key/cert files, obvious contact data, personal identity fields, and secret tokens.
+- It prints the beginner-safe after-call command sequence: completion, privacy, post-session, review, archive, and status.
+- `dist/TRIAL_LIVE_CAPTURE_REPORT.md` and `dist/TRIAL_LIVE_CAPTURE_REPORT.json` record `LIVE_CAPTURE_HOLD`, `LIVE_CAPTURE_READY_WITH_REVIEW`, or `LIVE_CAPTURE_READY`.
+- `trial:status` now recommends `trial:live-capture` after pre-live and before `READY_TO_HOST`.
+- Trial runbook, local package guide, release checklist, status guide, dispatch docs, and package readiness were updated.
+- Automated tests cover capture file generation, screenshot/contact-data blocking, and the status transition.
+
+Latest verification:
+
+- `node --check scripts\live-session-capture.js`: passed.
+- `node --check tests\live-session-capture.test.js`: passed.
+- `node --check scripts\trial-status.js`: passed.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 88 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
+
 ## Next Planned Phase
 
-Stage 2.7: first real tester live-session operator capture.
+Stage 2.8: first real tester after-call recovery and evidence packaging.
 
 Planned order:
 
-1. Add a live-session capture checklist for the host to follow during the first real call.
-2. Make a beginner-safe after-call command sequence from filled records to completion, privacy, post-session, review, and archive.
-3. Add checks that the selected real tester session folder contains only completed Markdown records, not screenshots, logs, source files, or contact data.
-4. Generate a compact host summary that can be pasted into project notes without raw tester identity.
+1. Add a guarded `trial:after-live` command that runs completion, privacy, post-session, review, archive, and status in order.
+2. Stop immediately on incomplete records, privacy hold, or review blockers.
+3. Generate a compact local evidence packet that includes reports and anonymous host summary but excludes raw screenshots/logs/source files.
+4. Update status to distinguish `READY_FOR_AFTER_LIVE`, `AFTER_LIVE_BLOCKED`, and `READY_FOR_REVIEW_OR_ARCHIVE` if needed.
 5. Keep raw real tester records local-only until privacy and review reports pass.

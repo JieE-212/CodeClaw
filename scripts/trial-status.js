@@ -44,6 +44,7 @@ async function buildReport() {
     review: await readReport("TRIAL_REVIEW_REPORT.json"),
     intakeReviewDryRun: await readReport("TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json"),
     preLive: await readReport("TRIAL_PRE_LIVE_REPORT.json"),
+    liveCapture: await readReport("TRIAL_LIVE_CAPTURE_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
     intake: await readReport("TRIAL_TESTER_INTAKE_REPORT.json")
@@ -140,6 +141,12 @@ function decideState(reports, blockers) {
   if (!reports.postSession.exists && reports.preLive.exists && reports.preLive.decision === "PRE_LIVE_HOLD") {
     return state("PRE_LIVE_BLOCKED", "hosting", "npm.cmd run trial:pre-live", "Fix pre-live blockers before hosting.");
   }
+  if (!reports.postSession.exists && reports.preLive.exists && !reports.liveCapture.exists) {
+    return state("NEEDS_LIVE_CAPTURE", "hosting", "npm.cmd run trial:live-capture", "Generate the live-session capture checklist before hosting.");
+  }
+  if (!reports.postSession.exists && reports.liveCapture.exists && reports.liveCapture.decision === "LIVE_CAPTURE_HOLD") {
+    return state("LIVE_CAPTURE_BLOCKED", "hosting", "npm.cmd run trial:live-capture", "Fix live-capture blockers before hosting.");
+  }
   if (!reports.postSession.exists && reports.completion.exists && reports.completion.decision === "SESSION_COMPLETION_HOLD") {
     return state("SESSION_COMPLETION_BLOCKED", "post-session", "npm.cmd run trial:complete-session -- --session <session-folder>", "Finish or redact completed session records before post-session.");
   }
@@ -192,6 +199,7 @@ function collectBlockers(reports) {
     if (key === "hostRun" && reports.postSession.exists) continue;
     if (key === "completion" && reports.postSession.exists) continue;
     if (key === "preLive" && reports.postSession.exists) continue;
+    if (key === "liveCapture" && reports.postSession.exists) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -239,6 +247,7 @@ function quickLinks(reports, artifacts) {
     reviewReport: reports.review.exists ? reports.review.relativePath : "",
     intakeReviewDryRun: reports.intakeReviewDryRun.exists ? reports.intakeReviewDryRun.relativePath : "",
     preLiveReport: reports.preLive.exists ? reports.preLive.relativePath : "",
+    liveCaptureReport: reports.liveCapture.exists ? reports.liveCapture.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     archiveReport: reports.archive.exists ? reports.archive.relativePath : "",
     intakeReport: reports.intake.exists ? reports.intake.relativePath : "",
@@ -260,6 +269,7 @@ function commandGuide(current, reports) {
     { step: "Session review", command: "npm.cmd run trial:review-session", status: reports.review.exists ? reports.review.decision : "missing" },
     { step: "Intake-review dry run", command: "npm.cmd run trial:intake-review-dry-run", status: reports.intakeReviewDryRun.exists ? reports.intakeReviewDryRun.decision : "missing" },
     { step: "Pre-live gate", command: "npm.cmd run trial:pre-live", status: reports.preLive.exists ? reports.preLive.decision : "missing" },
+    { step: "Live capture", command: "npm.cmd run trial:live-capture", status: reports.liveCapture.exists ? reports.liveCapture.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Archive", command: "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", status: reports.archive.exists ? reports.archive.decision : "missing" },
     { step: "Tester intake", command: "npm.cmd run trial:intake", status: reports.intake.exists ? reports.intake.decision : "missing" },

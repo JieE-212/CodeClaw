@@ -40,6 +40,7 @@ node --check scripts/session-completion-check.js
 node --check scripts/review-trial-session.js
 node --check scripts/run-intake-review-dry-run.js
 node --check scripts/pre-live-gate.js
+node --check scripts/live-session-capture.js
 node --check apps\web\public\app.js
 npm.cmd run smoke
 npm.cmd run pilot:self
@@ -67,6 +68,7 @@ Expected result:
 - `trial:review-session` writes a host decision brief with owner, action, and verification command for P0/P1 items.
 - `trial:intake-review-dry-run` writes `DRY_RUN_READY_FOR_REAL_INTAKE` before a real tester roster is filled.
 - `trial:pre-live` is syntax-checked and covered by automated tests; run it live only after real intake-session, host-ready, and host-run are aligned.
+- `trial:live-capture` is syntax-checked and covered by automated tests; run it live after pre-live and before the call.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.
 - `trial:archive-session` writes a local-only evidence archive and blocks privacy-hold sessions.
 - `trial:status` writes a current operator dashboard with the next recommended command.

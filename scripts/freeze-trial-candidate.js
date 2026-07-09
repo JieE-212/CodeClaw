@@ -61,6 +61,7 @@ const report = {
     "docs/TRIAL_SESSION_REVIEW.md",
     "docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md",
     "docs/TRIAL_PRE_LIVE.md",
+    "docs/TRIAL_LIVE_CAPTURE.md",
     "docs/TRIAL_HOST_BRIEF.md",
     "docs/TRIAL_GO_NO_GO.md"
   ],

@@ -59,7 +59,7 @@ test("trial-status asks for pre-live gate after host runbook", async () => {
   assert.match(report.nextCommand, /trial:pre-live/);
 });
 
-test("trial-status recognizes ready-to-host state after pre-live gate", async () => {
+test("trial-status asks for live capture after pre-live gate", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-pre-live-"));
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
@@ -67,6 +67,25 @@ test("trial-status recognizes ready-to-host state after pre-live gate", async ()
   await writeReadyHostReports(tempRoot);
   await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
   await writeJson(tempRoot, "TRIAL_PRE_LIVE_REPORT.json", { ok: true, mode: "trial-pre-live", decision: "PRE_LIVE_READY_TO_HOST", blockers: [] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "NEEDS_LIVE_CAPTURE");
+  assert.equal(report.currentStage, "hosting");
+  assert.match(report.nextCommand, /trial:live-capture/);
+});
+
+test("trial-status recognizes ready-to-host state after live capture", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-live-capture-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_PRE_LIVE_REPORT.json", { ok: true, mode: "trial-pre-live", decision: "PRE_LIVE_READY_TO_HOST", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_LIVE_CAPTURE_REPORT.json", { ok: true, mode: "trial-live-capture", decision: "LIVE_CAPTURE_READY", blockers: [] });
 
   const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
@@ -85,6 +104,7 @@ test("trial-status recognizes ready-for-post-session after completion check", as
   await writeReadyHostReports(tempRoot);
   await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
   await writeJson(tempRoot, "TRIAL_PRE_LIVE_REPORT.json", { ok: true, mode: "trial-pre-live", decision: "PRE_LIVE_READY_TO_HOST", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_LIVE_CAPTURE_REPORT.json", { ok: true, mode: "trial-live-capture", decision: "LIVE_CAPTURE_READY", blockers: [] });
   await writeJson(tempRoot, "TRIAL_SESSION_COMPLETION_REPORT.json", { ok: true, mode: "trial-session-completion", decision: "SESSION_COMPLETION_READY", blockers: [] });
 
   const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
@@ -104,6 +124,7 @@ test("trial-status blocks when completion check holds", async () => {
   await writeReadyHostReports(tempRoot);
   await writeJson(tempRoot, "TRIAL_HOST_RUN_REPORT.json", { ok: true, mode: "trial-host-run", decision: "HOST_RUN_READY", blockers: [] });
   await writeJson(tempRoot, "TRIAL_PRE_LIVE_REPORT.json", { ok: true, mode: "trial-pre-live", decision: "PRE_LIVE_READY_TO_HOST", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_LIVE_CAPTURE_REPORT.json", { ok: true, mode: "trial-live-capture", decision: "LIVE_CAPTURE_READY", blockers: [] });
   await writeJson(tempRoot, "TRIAL_SESSION_COMPLETION_REPORT.json", {
     ok: false,
     mode: "trial-session-completion",

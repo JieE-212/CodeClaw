@@ -83,6 +83,7 @@ Share these with the tester:
 - `docs/TRIAL_INTAKE_SESSION.md`.
 - `docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md`.
 - `docs/TRIAL_PRE_LIVE.md`.
+- `docs/TRIAL_LIVE_CAPTURE.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
 Generate a session-specific folder before the hosted run:
@@ -113,6 +114,7 @@ npm.cmd run trial:intake-session -- --force
 npm.cmd run trial:host-ready
 npm.cmd run trial:host-run
 npm.cmd run trial:pre-live
+npm.cmd run trial:live-capture
 npm.cmd run trial:status
 ```
 

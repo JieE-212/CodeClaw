@@ -56,6 +56,7 @@ docs/TRIAL_SESSION_COMPLETION.md
 docs/TRIAL_SESSION_REVIEW.md
 docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md
 docs/TRIAL_PRE_LIVE.md
+docs/TRIAL_LIVE_CAPTURE.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
 docs/TRIAL_COHORT_SUMMARY.md
@@ -234,6 +235,7 @@ npm.cmd run trial:post-session
 npm.cmd run trial:review-session
 npm.cmd run trial:intake-review-dry-run -- --force
 npm.cmd run trial:pre-live
+npm.cmd run trial:live-capture
 npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
 npm.cmd run trial:status
@@ -261,6 +263,8 @@ dist/TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.md
 dist/TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json
 dist/TRIAL_PRE_LIVE_REPORT.md
 dist/TRIAL_PRE_LIVE_REPORT.json
+dist/TRIAL_LIVE_CAPTURE_REPORT.md
+dist/TRIAL_LIVE_CAPTURE_REPORT.json
 dist/TRIAL_PRIVACY_REPORT.md
 dist/TRIAL_PRIVACY_REPORT.json
 dist/TRIAL_COHORT_SUMMARY.md
@@ -387,6 +391,7 @@ docs/TRIAL_SESSION_COMPLETION.md
 docs/TRIAL_SESSION_REVIEW.md
 docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md
 docs/TRIAL_PRE_LIVE.md
+docs/TRIAL_LIVE_CAPTURE.md
 docs/TRIAL_POST_SESSION.md
 docs/TRIAL_PRIVACY_CHECK.md
 docs/TRIAL_COHORT_SUMMARY.md
