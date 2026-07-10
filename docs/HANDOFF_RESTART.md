@@ -9,7 +9,7 @@ Use this file after restarting Codex or opening a new terminal.
 Send this to the new Codex window:
 
 ```text
-请先读取 docs/HANDOFF_RESTART.md、docs/HANDOFF_CURRENT_3_0_7.md、docs/PROJECT_STATUS.md 和 package.json，接上 CodeClaw 当前进度。当前已完成到 3.0.6，下一轮按规划推进 3.0.7：pre-human-tester operator polish。请先检查 git 状态，再按既有节奏：规划、实现、验证、提交，最后告诉我运行 git pushall。
+请先读取 docs/HANDOFF_RESTART.md、docs/HANDOFF_CURRENT_3_0_8.md、docs/PROJECT_STATUS.md 和 package.json，接上 CodeClaw 当前进度。当前已完成到 3.0.7，下一轮是 3.0.8：等待真人测试者到位后执行 tester-2 首次真人测试和 after-live 证据收尾；真人未到位前不要创建反馈或启动真实会话。请先检查 git 状态，再按既有节奏：规划、实现、验证、提交，最后告诉我运行 git pushall。
 ```
 
 ## Project Location
@@ -37,7 +37,7 @@ main tracking gitee/main
 Latest completed commit:
 
 ```text
-9984afe Add post-call rehearsal workflow
+b6fee7c Polish pre-human tester operator flow
 ```
 
 Before coding, run:
@@ -60,7 +60,7 @@ If local commits are ahead, ask the user to run:
 git pushall
 ```
 
-## Completed Through 3.0.6
+## Completed Through 3.0.7
 
 3.0.3 completed:
 
@@ -118,15 +118,32 @@ AFTER_LIVE_READY_WITH_REVIEW
 FIRST_LIVE_STANDBY_READY_WITH_REVIEW
 ```
 
+3.0.7 completed:
+
+- Expanded the in-app host checklist into waiting, before-call, during-call, and immediately-after-call stages.
+- Added copyable operator commands for standby, synthetic rehearsal, confirmed-note drafting, and after-live.
+- Added localized copy feedback for English, zh-CN, and Russian.
+- Added the operator guide to health-check UI markers.
+- Kept tester-2 paused until a real human tester is available.
+- Current real local state remains:
+
+```text
+FIRST_LIVE_STANDBY_READY_WITH_REVIEW
+blockers: 0
+warnings: 5
+```
+
 ## Latest Verification Baseline
 
-After 3.0.6, these passed:
+After 3.0.7, these passed:
 
 ```powershell
 npm.cmd run check
 npm.cmd test
 npm.cmd run health
+npm.cmd run i18n:check
 npm.cmd run trial:ready
+npm.cmd run trial:first-live-standby -- --tester tester-2
 npm.cmd run trial:post-call-rehearsal -- --force
 ```
 
@@ -166,32 +183,28 @@ FIRST_LIVE_STANDBY_READY_WITH_REVIEW
 
 For `READY_WITH_REVIEW`, host must read and accept warnings first.
 
-## Next Stage: 3.0.7
+## Next Stage: 3.0.8
 
 Planned next phase:
 
 ```text
-Stage 3.0.7: pre-human-tester operator polish
+Stage 3.0.8: first real tester-2 session and after-live evidence
 ```
 
 Goal:
 
-Make the operator experience clearer before the user finds a real tester.
+Run the first real tester-2 session safely, then close it with privacy-safe after-live evidence.
 
 Recommended order:
 
-1. Inspect existing in-app host checklist UI and i18n strings.
-2. Improve the in-app checklist around:
-   - what to do while waiting for a tester
-   - what to keep open during the call
-   - what to run immediately after the call
-3. Surface these commands in beginner-friendly UI or docs:
-   - `trial:first-live-standby`
-   - `trial:post-call-rehearsal`
-   - `trial:record-draft`
-   - `trial:after-live`
-4. Keep tester-2 first-live paused until a real human tester is available.
-5. Verify with:
+1. Do not start until a real human tester is available.
+2. Run a real-browser visual pass of the operator panel in English, zh-CN, and Russian at desktop and narrow widths, including one copy action.
+3. Rerun `trial:first-live-standby -- --tester tester-2` immediately before the call.
+4. Read and accept every warning before hosting.
+5. Keep `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, and the three final record templates open.
+6. Host only Demo plus real-project read-only preflight; stop before Apply on every real project.
+7. After the call, fill only confirmed privacy-safe records, then run `trial:record-draft` and `trial:after-live`.
+8. Verify with:
 
 ```powershell
 npm.cmd run check
@@ -199,12 +212,8 @@ npm.cmd test
 npm.cmd run health
 npm.cmd run trial:ready
 npm.cmd run trial:first-live-standby -- --tester tester-2
-```
-
-If UI changes are made, also run:
-
-```powershell
-npm.cmd run i18n:check
+npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2
+npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force
 ```
 
 ## Important Files
@@ -212,7 +221,7 @@ npm.cmd run i18n:check
 Read these first:
 
 ```text
-docs/HANDOFF_CURRENT_3_0_7.md
+docs/HANDOFF_CURRENT_3_0_8.md
 docs/PROJECT_STATUS.md
 package.json
 apps/web/public/app.js
