@@ -88,7 +88,9 @@ test("tester-launch-plan can launch a first real tester without previous after-l
   assert.equal(report.decision, "TESTER_LAUNCH_READY_TO_HOST");
   assert.equal(report.firstLive, true);
   assert.equal(report.previousTester, "");
+  assert.match(report.nextCommand, /BEGINNER_FIRST_LIVE_GUIDE/);
   assert.match(report.nextCommand, /LIVE_SESSION_CAPTURE/);
+  assert.ok(report.nextSteps.some((item) => item.includes("record-draft")));
   assert.ok(!report.commandSequence.some((item) => item.includes("trial:next-live")));
 });
 

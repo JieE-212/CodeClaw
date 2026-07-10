@@ -204,7 +204,7 @@ async function inspectSessionFolder({ sessionFolder, manifest, testerId }) {
     blockers.push(`Session folder does not exist: ${relative(sessionFolder)}.`);
     return { blockers, warnings };
   }
-  for (const file of ["SESSION_BRIEF.md", "HOST_RUNBOOK.md", "HUMAN_TRIAL_OBSERVATION.md", "TRIAL_FEEDBACK_TEMPLATE.md", "TRIAL_RESULT_RECORD.md", "SESSION_PACK_MANIFEST.json"]) {
+  for (const file of ["BEGINNER_FIRST_LIVE_GUIDE.md", "SESSION_BRIEF.md", "HOST_RUNBOOK.md", "HUMAN_TRIAL_OBSERVATION.md", "TRIAL_FEEDBACK_TEMPLATE.md", "TRIAL_RESULT_RECORD.md", "SESSION_PACK_MANIFEST.json"]) {
     if (!(await exists(path.join(sessionFolder, file)))) blockers.push(`Session folder is missing ${file}.`);
   }
   if (!manifest) blockers.push("Session manifest is missing or invalid.");
@@ -236,11 +236,12 @@ function launchChecklist(decision, testerId) {
   }
   return [
     `Confirm the live tester id is ${testerId}.`,
-    "Open HOST_RUNBOOK.md, SESSION_BRIEF.md, and HUMAN_TRIAL_OBSERVATION.md.",
+    "Open BEGINNER_FIRST_LIVE_GUIDE.md, HOST_RUNBOOK.md, SESSION_BRIEF.md, and HUMAN_TRIAL_OBSERVATION.md.",
+    "Reconfirm the real human's consent.",
     "Start with Demo.",
     "Run only one real-project read-only preflight.",
     "Stop before Apply on a non-disposable real project.",
-    "Fill observation, feedback, and result records immediately after the call."
+    "After the call, run record-draft, fill only confirmed records, then run after-live."
   ];
 }
 

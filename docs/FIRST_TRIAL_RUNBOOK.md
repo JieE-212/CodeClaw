@@ -87,6 +87,8 @@ Share these with the tester:
 - `docs/TRIAL_AFTER_LIVE.md`.
 - `docs/TRIAL_INVITE_MESSAGE.md` if you want a ready-to-send message.
 
+The host should also keep `docs/TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md` open. It is a host-only operating sheet; do not ask the tester to fill it.
+
 Generate a session-specific folder before the hosted run:
 
 ```bash
@@ -95,7 +97,7 @@ npm.cmd run trial:host-ready
 npm.cmd run trial:host-run
 ```
 
-Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `Decision: READY_TO_HOST` and `dist/TRIAL_HOST_RUN_REPORT.md` says `HOST_RUN_READY` or `HOST_RUN_READY_WITH_REVIEW`. Use the generated `HOST_RUNBOOK.md` as the live host script.
+Host only when `dist/TRIAL_HOST_READY_REPORT.md` says `Decision: READY_TO_HOST` and `dist/TRIAL_HOST_RUN_REPORT.md` says `HOST_RUN_READY` or `HOST_RUN_READY_WITH_REVIEW`. Use the generated `BEGINNER_FIRST_LIVE_GUIDE.md` and `HOST_RUNBOOK.md` as the live host script.
 
 At any point, run:
 
@@ -302,7 +304,7 @@ Main friction:
 Trust issue:
 Bug found:
 Suggested next product fix:
-Proceed to tester 2? Yes / No
+Proceed to the next tester? Yes / No
 ```
 
 Only expand to 3-5 testers after at least two completed sessions show no launch blocker, no trust-breaking safety confusion, `TRIAL_PRIVACY_REPORT.md` does not say `PRIVACY_HOLD`, `TRIAL_FEEDBACK_SUMMARY.md` does not say `NO_GO_FIX_FIRST`, `TRIAL_FIX_BACKLOG.md` has no `P0` items, `TRIAL_HOST_READY_REPORT.md` says `READY_TO_HOST` for the next session, `TRIAL_HOST_RUN_REPORT.md` says `HOST_RUN_READY` or `HOST_RUN_READY_WITH_REVIEW`, `TRIAL_POST_SESSION_REPORT.md` says `READY_FOR_NEXT_TESTER`, and `TRIAL_COHORT_SUMMARY.md` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH`.

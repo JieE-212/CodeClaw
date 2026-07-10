@@ -28,6 +28,7 @@ test("intake-session generates a tester session pack from ready intake", async (
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
   const manifest = JSON.parse(await fs.readFile(path.join(outputPath, "SESSION_PACK_MANIFEST.json"), "utf8"));
   const brief = await fs.readFile(path.join(outputPath, "SESSION_BRIEF.md"), "utf8");
+  const beginnerGuide = await fs.readFile(path.join(outputPath, "BEGINNER_FIRST_LIVE_GUIDE.md"), "utf8");
 
   assert.equal(result.code, 0);
   assert.equal(report.decision, "INTAKE_SESSION_READY");
@@ -36,6 +37,14 @@ test("intake-session generates a tester session pack from ready intake", async (
   assert.equal(manifest.testerIntake.language, "zh-CN");
   assert.match(brief, /# Tester Intake/);
   assert.match(brief, /Allowed scope: demo, real-read-only/);
+  assert.match(brief, /trial:record-draft/);
+  assert.match(brief, /trial:after-live/);
+  assert.doesNotMatch(brief, /trial:post-session -- --session/);
+  assert.ok(manifest.files.includes("BEGINNER_FIRST_LIVE_GUIDE.md"));
+  assert.deepEqual(manifest.afterSessionCommands.map((item) => item.includes("trial:")), [true, true]);
+  assert.match(beginnerGuide, /CodeClaw 小白真人测试主持操作单/);
+  assert.match(beginnerGuide, /trial:first-live-standby -- --tester tester-1/);
+  assert.doesNotMatch(beginnerGuide, /\{\{TESTER_ID\}\}/);
 });
 
 test("intake-session blocks when intake is not ready", async () => {

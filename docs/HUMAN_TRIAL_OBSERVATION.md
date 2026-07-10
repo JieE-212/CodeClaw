@@ -61,4 +61,4 @@ Stop the trial and record the reason if:
 - Biggest trust concern:
 - First point where host helped:
 - Recommended product fix:
-- Safe to continue to tester 2: Yes / No
+- Safe to continue to the next tester: Yes / No

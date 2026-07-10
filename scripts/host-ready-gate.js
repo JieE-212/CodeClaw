@@ -158,12 +158,12 @@ function hostChecklist(decision, warnings) {
     ];
   }
   const checklist = [
-    "Open SESSION_BRIEF.md before the call.",
-    "Keep docs/START_GUIDE.md and docs/TRIAL_5_MIN_PRECHECK.md open.",
+    "Open BEGINNER_FIRST_LIVE_GUIDE.md and SESSION_BRIEF.md before the call.",
+    "Reconfirm the real human's consent before handing over the browser.",
     "Start with Demo, then run one real-project read-only preflight.",
     "Stop before Apply on a non-disposable real project.",
     "Fill the generated HUMAN_TRIAL_OBSERVATION.md during the session.",
-    "Afterward, fill TRIAL_FEEDBACK_TEMPLATE.md and TRIAL_RESULT_RECORD.md."
+    "Afterward, run record-draft, fill only confirmed record values, then run after-live."
   ];
   if (warnings.length) checklist.push("Explicitly accept the warnings before starting.");
   return checklist;
@@ -179,9 +179,9 @@ function nextSteps(decision) {
     ];
   }
   return [
-    "Host the tester session with SESSION_BRIEF.md open.",
-    "After the session, run npm.cmd run trial:ingest-feedback -- <session-folder>.",
-    "Run npm.cmd run trial:fix-backlog to decide the next tester or fix cycle."
+    "Host the tester session with BEGINNER_FIRST_LIVE_GUIDE.md and SESSION_BRIEF.md open.",
+    "After the session, run trial:record-draft and ask the human for missing answers.",
+    "Run trial:after-live only after all three final records are complete."
   ];
 }
 

@@ -19,7 +19,7 @@ dist/TRIAL_FIRST_LIVE_STANDBY.json
 
 - Tester intake, intake-session, host-ready, host-run, pre-live, live-capture, and first-live launch-plan reports.
 - All reports point to the same anonymous tester id.
-- The session folder has `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, the host summary, the three final record files, and the session manifest.
+- The session folder has `BEGINNER_FIRST_LIVE_GUIDE.md`, `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, the host summary, the three final record files, and the session manifest.
 - The manifest keeps the first-live scope to Demo plus real-read-only.
 - The session folder does not contain screenshots, logs, source files, env files, contact data, or likely secret tokens.
 
@@ -54,13 +54,13 @@ npm.cmd run trial:first-live-standby -- --tester tester-2
 
 ## After The Call
 
-After the real tester call, fill the session records. If the host has local notes, run:
+After the real tester call, capture explicit local notes and run:
 
 ```bash
 npm.cmd run trial:record-draft -- --session dist/trial-session-packs/tester-2
 ```
 
-Then run:
+Copy only confirmed values into the three final records and ask the human for missing answers. Then run:
 
 ```bash
 npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-2 --tester tester-2 --force

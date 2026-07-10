@@ -48,6 +48,7 @@ async function buildReport() {
   const sessionFolder = resolveSessionFolder(hostReady, selectedTesterId);
   const manifest = sessionFolder ? await readJson(path.join(sessionFolder, "SESSION_PACK_MANIFEST.json")) : null;
   const requiredFiles = [
+    "BEGINNER_FIRST_LIVE_GUIDE.md",
     "SESSION_BRIEF.md",
     "HUMAN_TRIAL_OBSERVATION.md",
     "TRIAL_FEEDBACK_TEMPLATE.md",
@@ -117,10 +118,7 @@ async function buildReport() {
     nextCommands: blockers.length ? [
       "npm.cmd run trial:host-ready",
       "npm.cmd run trial:host-run"
-    ] : [
-      `npm.cmd run trial:post-session -- --session ${relative(sessionFolder)} --next-tester ${nextTesterId(selectedTesterId)}`,
-      "npm.cmd run trial:status"
-    ],
+    ] : afterCallCommands(sessionFolder, selectedTesterId),
     nextSteps: nextSteps(blockers.length === 0)
   };
 }
@@ -149,7 +147,8 @@ function renderRunbook({ testerId, sessionFolder, hostReady, intakeSession, mani
     "- Host-ready report says READY_TO_HOST.",
     "- Tester consent and privacy acceptance were recorded in local intake.",
     "- The tester has not shared API keys, secrets, personal contact data, or private project names in the trial files.",
-    "- Keep this runbook, SESSION_BRIEF.md, and HUMAN_TRIAL_OBSERVATION.md open.",
+    "- Keep BEGINNER_FIRST_LIVE_GUIDE.md, this runbook, LIVE_SESSION_CAPTURE.md, and HUMAN_TRIAL_OBSERVATION.md open.",
+    "- Reconfirm the real human's consent before handing over the browser.",
     ...(warnings.length ? ["- Host must explicitly accept the warnings below before starting."] : []),
     "",
     "## Warnings To Accept",
@@ -165,8 +164,8 @@ function renderRunbook({ testerId, sessionFolder, hostReady, intakeSession, mani
     "",
     "## Live Script",
     "",
-    "1. Ask the tester to open the package and start with docs/START_GUIDE.md.",
-    "2. Confirm Node.js 20 or later and complete docs/TRIAL_5_MIN_PRECHECK.md.",
+    "1. Host opens BEGINNER_FIRST_LIVE_GUIDE.md and reads the consent script to the tester.",
+    "2. Confirm Node.js 20 or later and keep the launcher window open.",
     "3. Ask the tester to start CodeClaw and switch language if needed.",
     "4. Ask the tester to run Demo first and say what mode they think they are in.",
     "5. Let Demo reach a patch proposal or patch gate without coaching unless blocked for 30 seconds.",
@@ -174,7 +173,7 @@ function renderRunbook({ testerId, sessionFolder, hostReady, intakeSession, mani
     "7. Ask the tester to explain when CodeClaw reads files, writes files, and runs commands.",
     "8. Stop before Apply on a non-disposable real project.",
     "9. Fill HUMAN_TRIAL_OBSERVATION.md during the session.",
-    "10. After the call, fill TRIAL_FEEDBACK_TEMPLATE.md and TRIAL_RESULT_RECORD.md.",
+    "10. After the call, capture explicit notes, run record-draft, then fill confirmed feedback and result values.",
     "",
     "## Watch Items",
     "",
@@ -189,9 +188,10 @@ function renderRunbook({ testerId, sessionFolder, hostReady, intakeSession, mani
     "",
     "## After The Session",
     "",
+    "Run record-draft first. Copy only confirmed values into the three final records and ask the human for missing answers before after-live.",
+    "",
     "```bash",
-    `npm.cmd run trial:post-session -- --session ${relative(sessionFolder)} --next-tester ${nextTesterId(testerId)}`,
-    "npm.cmd run trial:status",
+    ...afterCallCommands(sessionFolder, testerId),
     "```",
     ""
   ].join("\n");
@@ -243,12 +243,13 @@ function hostChecklist(ready, warnings) {
     ];
   }
   const checklist = [
-    "Open HOST_RUNBOOK.md before the call.",
-    "Open SESSION_BRIEF.md and HUMAN_TRIAL_OBSERVATION.md.",
+    "Open BEGINNER_FIRST_LIVE_GUIDE.md and HOST_RUNBOOK.md before the call.",
+    "Open LIVE_SESSION_CAPTURE.md, SESSION_BRIEF.md, and HUMAN_TRIAL_OBSERVATION.md.",
+    "Reconfirm the real human's consent.",
     "Start with Demo.",
     "Run only read-only preflight on the real project.",
     "Stop before Apply on non-disposable real projects.",
-    "Fill feedback and result records immediately after the call."
+    "Capture explicit notes immediately after the call; use record-draft before filling final records."
   ];
   if (warnings.length) checklist.push("Explicitly accept every warning before starting.");
   return checklist;
@@ -264,8 +265,17 @@ function nextSteps(ready) {
   }
   return [
     "Host the session using HOST_RUNBOOK.md.",
-    "Fill the generated observation, feedback, and result files.",
-    "Run post-session and status immediately after the session."
+    "Run record-draft after local notes exist, then fill only confirmed record values.",
+    "Run after-live only after all required human answers are complete."
+  ];
+}
+
+function afterCallCommands(sessionFolder, testerId) {
+  const session = sessionFolder ? relative(sessionFolder) : "<session-folder>";
+  const tester = testerId || "<tester-id>";
+  return [
+    `npm.cmd run trial:record-draft -- --session ${session}`,
+    `npm.cmd run trial:after-live -- --session ${session} --tester ${tester} --force`
   ];
 }
 
@@ -317,12 +327,6 @@ function parseArgs(rawArgs) {
 function sanitizeTesterId(value) {
   const cleaned = String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "";
-}
-
-function nextTesterId(value) {
-  const match = String(value || "").match(/^(.*?)(\d+)$/);
-  if (!match) return `${sanitizeTesterId(value) || "tester"}-next`;
-  return `${match[1]}${Number(match[2]) + 1}`;
 }
 
 function relative(targetPath) {

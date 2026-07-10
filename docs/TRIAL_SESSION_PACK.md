@@ -37,12 +37,15 @@ The default `dist/` location is intentional. Session packs may contain real test
 The generated folder contains:
 
 ```text
+BEGINNER_FIRST_LIVE_GUIDE.md
 SESSION_BRIEF.md
 HUMAN_TRIAL_OBSERVATION.md
 TRIAL_FEEDBACK_TEMPLATE.md
 TRIAL_RESULT_RECORD.md
 SESSION_PACK_MANIFEST.json
 ```
+
+`BEGINNER_FIRST_LIVE_GUIDE.md` is a generated, tester-specific Chinese host sheet with the consent script, beginner steps, stop conditions, required field values, and the guarded after-call commands.
 
 `SESSION_BRIEF.md` includes:
 
@@ -63,12 +66,10 @@ npm.cmd run trial:record-draft -- --session dist/trial-session-packs/tester-1
 
 This writes `dist/TRIAL_RECORD_DRAFT.md` and `.json`. Copy only confirmed values into the session files and ask for missing fields instead of guessing.
 
-Run the post-session loop against the generated folder:
+When the three records contain confirmed human answers, run the guarded after-live loop against the generated folder:
 
 ```bash
-npm.cmd run trial:privacy-check -- dist/trial-session-packs/tester-1
-npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
-npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
+npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 ```
 
 After at least two completed tester folders exist, run:

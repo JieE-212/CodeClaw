@@ -144,7 +144,8 @@ function parseFields(file) {
   const fields = [];
   const lines = file.text.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^\s*-\s+([^:]{2,80}):\s*(.*)$/);
+    const match = lines[index].match(/^\s*-\s+([^:]{2,80}):\s*(.*)$/)
+      || lines[index].match(/^\s*-\s+(.{2,80}?\?)\s*:?[ \t]*(.*)$/);
     if (!match) continue;
     const key = cleanCell(match[1]);
     const value = cleanCell(match[2]);
@@ -273,7 +274,7 @@ function severityFor(signal) {
   if (/\bseverity\b/.test(label) && /\bhigh\b/.test(value)) return "blocker";
   if (/\bdecision after trial\b/.test(label) && /\bstop\b/.test(value)) return "blocker";
   if (/\bdecision after trial\b/.test(label) && /\bfix first\b/.test(value)) return "blocker";
-  if (/\b(proceed to tester 2|safe to continue to tester 2|should this build go to tester 2)\b/.test(label) && answer === "no") return "blocker";
+  if (isNextTesterDecisionLabel(label) && answer === "no") return "blocker";
   if (answer === "fail") return isSafetyText(label) ? "blocker" : "warning";
   if (answer === "friction") return isSafetyText(label) ? "blocker" : "warning";
   if (answer === "no" && isExpectedYes(label)) return isSafetyText(label) ? "blocker" : "warning";
@@ -288,7 +289,7 @@ function decide({ files, signals, blockers, warnings }) {
   if (blockers.length > 0) return "NO_GO_FIX_FIRST";
   const goSignals = signals.decisionSignals.filter((signal) => {
     const label = `${signal.label || signal.key || ""}`.toLowerCase();
-    return /\b(proceed to tester 2|safe to continue to tester 2|should this build go to tester 2)\b/.test(label);
+    return isNextTesterDecisionLabel(label);
   });
   if (goSignals.some((signal) => signal.answer === "yes")) return warnings.length ? "READY_WITH_WATCH_ITEMS" : "READY_FOR_TESTER_2";
   return warnings.length ? "REVIEW_BEFORE_TESTER_2" : "NEEDS_HOST_DECISION";
@@ -324,16 +325,16 @@ function recommendedFixes({ signals, blockers, warnings }) {
     fixes.push(fixForTheme(theme));
   }
   if (blockers.length === 0 && warnings.length === 0 && signals.answeredRows.length + signals.answeredFields.length > 0) {
-    fixes.push("No blocking product fix found. Prepare tester 2 with the same hosted script and watch for repeated friction.");
+    fixes.push("No blocking product fix found. Prepare the next tester with the same hosted script and watch for repeated friction.");
   }
   if (signals.answeredRows.length + signals.answeredFields.length === 0) {
-    fixes.push("Collect at least one completed feedback, observation, or result record before deciding on tester 2.");
+    fixes.push("Collect at least one completed feedback, observation, or result record before deciding whether to continue to the next tester.");
   }
   return [...new Set(fixes)].slice(0, 8);
 }
 
 function fixForTheme(theme) {
-  const prefix = theme.blockers ? "Fix before tester 2" : "Watch or improve";
+  const prefix = theme.blockers ? "Fix before the next tester" : "Watch or improve";
   const text = {
     startup: "startup and launcher clarity.",
     language: "language switcher discoverability and translated first-run copy.",
@@ -361,18 +362,18 @@ function nextSteps(decision) {
   }
   if (decision === "NO_GO_FIX_FIRST") {
     return [
-      "Fix blockers before inviting tester 2.",
+      "Fix blockers before inviting the next tester.",
       "Rerun trial:simulate, trial:ready, trial:freeze, trial:dispatch, then rerun trial:ingest-feedback with the completed records."
     ];
   }
   if (decision === "REVIEW_BEFORE_TESTER_2" || decision === "NEEDS_HOST_DECISION") {
     return [
-      "Have the host make an explicit tester-2 go/no-go entry in TRIAL_RESULT_RECORD.md.",
-      "Fix or accept warnings before inviting tester 2."
+      "Have the host make an explicit next-tester go/no-go entry in TRIAL_RESULT_RECORD.md.",
+      "Fix or accept warnings before inviting the next tester."
     ];
   }
   return [
-    "Invite tester 2 with the current hosted trial packet.",
+    "Invite the next tester with the current hosted trial packet.",
     "Keep the same observation checklist so friction can be compared across testers."
   ];
 }
@@ -422,7 +423,11 @@ function isExpectedNo(label) {
 
 function isDecisionSignal(signal) {
   const text = `${signal.label || signal.key || ""}`.toLowerCase();
-  return /\b(decision after trial|proceed to tester 2|safe to continue to tester 2|should this build go to tester 2)\b/.test(text);
+  return /\bdecision after trial\b/.test(text) || isNextTesterDecisionLabel(text);
+}
+
+function isNextTesterDecisionLabel(value) {
+  return /\b(?:proceed to (?:tester 2|the next tester)|safe to continue to (?:tester 2|the next tester)|should this build (?:go to tester 2|continue to the next tester))\b/i.test(value);
 }
 
 function isSafetyConcern(signal) {
@@ -490,7 +495,7 @@ function withReason(signal, reason) {
 
 function blockerReason(signal) {
   const label = `${signal.label || ""}`.toLowerCase();
-  if (/\b(proceed to tester 2|safe to continue to tester 2|should this build go to tester 2)\b/.test(label)) return "Host marked tester 2 as not ready.";
+  if (isNextTesterDecisionLabel(label)) return "Host marked the build as not ready for the next tester.";
   if (isSafetyText(label)) return "Safety or trust boundary failed.";
   return "Trial result needs a fix before wider testing.";
 }

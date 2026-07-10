@@ -135,20 +135,20 @@ async function writeNotes() {
     "- Biggest trust concern: None in rehearsal.",
     "- First point where host helped: No host help was needed.",
     "- Recommended product fix: Keep the post-call command order visible.",
-    "- Safe to continue to tester 2: Yes",
+    "- Safe to continue to the next tester: Yes",
     "- Would you use CodeClaw again on a real project?: Yes",
     "- Would you try one disposable patch next?: Maybe",
     "- Most useful part: Local-only safety gates.",
     "- Most confusing part: After-call command order.",
-    "- Should this build go to tester 2?: Yes",
+    "- Should this build continue to the next tester?: Yes",
     "- Decision after trial: Continue",
     "- First stuck moment: None",
     "- Host intervention needed: No",
     "- Severity: Low",
     "- Strongest trust-building moment: Read-only preflight stayed visibly safe.",
     "- Strongest trust concern: None",
-    "- Proceed to tester 2: Yes",
-    "- Required fix before tester 2: None",
+    "- Proceed to the next tester: Yes",
+    "- Required fix before the next tester: None",
     ""
   ].join("\n"), "utf8");
 }
@@ -200,7 +200,7 @@ async function writeCompletedSession() {
       "Biggest trust concern": "None in rehearsal.",
       "First point where host helped": "No host help was needed.",
       "Recommended product fix": "Keep post-call commands visible.",
-      "Safe to continue to tester 2": "Yes"
+      "Safe to continue to the next tester": "Yes"
     }
   }), "utf8");
   await fs.writeFile(path.join(sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), recordMarkdown({
@@ -213,7 +213,7 @@ async function writeCompletedSession() {
       "Would you try one disposable patch next?": "Maybe",
       "Most useful part": "Local-only safety gates.",
       "Most confusing part": "After-call command order.",
-      "Should this build go to tester 2?": "Yes"
+      "Should this build continue to the next tester?": "Yes"
     }
   }), "utf8");
   await fs.writeFile(path.join(sessionPath, "TRIAL_RESULT_RECORD.md"), recordMarkdown({
@@ -226,8 +226,8 @@ async function writeCompletedSession() {
       Severity: "Low",
       "Strongest trust-building moment": "Read-only preflight stayed visibly safe.",
       "Strongest trust concern": "None",
-      "Proceed to tester 2": "Yes",
-      "Required fix before tester 2": "None"
+      "Proceed to the next tester": "Yes",
+      "Required fix before the next tester": "None"
     }
   }), "utf8");
 }

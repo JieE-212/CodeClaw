@@ -38,7 +38,7 @@ The report says `HOST_RUN_READY` only when:
 
 - `trial:host-ready` says `READY_TO_HOST`.
 - The session folder exists.
-- `SESSION_BRIEF.md`, `HUMAN_TRIAL_OBSERVATION.md`, `TRIAL_FEEDBACK_TEMPLATE.md`, `TRIAL_RESULT_RECORD.md`, and `SESSION_PACK_MANIFEST.json` exist.
+- `BEGINNER_FIRST_LIVE_GUIDE.md`, `SESSION_BRIEF.md`, `HUMAN_TRIAL_OBSERVATION.md`, `TRIAL_FEEDBACK_TEMPLATE.md`, `TRIAL_RESULT_RECORD.md`, and `SESSION_PACK_MANIFEST.json` exist.
 - The tester id matches across host-ready, intake-session, and the session manifest.
 - Intake-session says `INTAKE_SESSION_READY` or `INTAKE_SESSION_READY_WITH_REVIEW`.
 
@@ -48,15 +48,16 @@ The report says `HOST_RUN_READY` only when:
 
 Open the generated `HOST_RUNBOOK.md` before the call. Keep these files open next to it:
 
+- `BEGINNER_FIRST_LIVE_GUIDE.md`
+- `LIVE_SESSION_CAPTURE.md`
 - `SESSION_BRIEF.md`
 - `HUMAN_TRIAL_OBSERVATION.md`
 - `TRIAL_FEEDBACK_TEMPLATE.md`
 - `TRIAL_RESULT_RECORD.md`
 
-After the session, fill the records and run:
+After the session, run record-draft, copy only confirmed values into the final records, ask the human for missing answers, then run after-live:
 
 ```bash
-npm.cmd run trial:complete-session -- --session dist/trial-session-packs/tester-1
-npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
-npm.cmd run trial:status
+npm.cmd run trial:record-draft -- --session dist/trial-session-packs/tester-1
+npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 ```

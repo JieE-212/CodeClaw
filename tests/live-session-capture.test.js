@@ -18,8 +18,10 @@ test("live-capture writes host capture files for a clean session folder", async 
   assert.equal(report.blockers.length, 0);
   assert.ok(await exists(path.join(fixture.sessionPath, "LIVE_SESSION_CAPTURE.md")));
   assert.ok(await exists(path.join(fixture.sessionPath, "LIVE_SESSION_HOST_SUMMARY.md")));
-  assert.ok(report.afterCallCommands.some((item) => item.includes("trial:post-session")));
-  assert.ok(report.afterCallCommands.some((item) => item.includes("trial:archive-session")));
+  assert.ok(report.afterCallCommands.some((item) => item.includes("trial:record-draft")));
+  assert.ok(report.afterCallCommands.some((item) => item.includes("trial:after-live")));
+  assert.equal(report.afterCallCommands.length, 2);
+  assert.ok(report.hygiene.scannedFiles.some((item) => item.endsWith("BEGINNER_FIRST_LIVE_GUIDE.md")));
 });
 
 test("live-capture blocks screenshots and personal contact data", async () => {
@@ -69,6 +71,7 @@ async function makeFixture(testerId) {
 }
 
 async function writeSessionFiles(sessionPath, testerId) {
+  await fs.writeFile(path.join(sessionPath, "BEGINNER_FIRST_LIVE_GUIDE.md"), "# Beginner Guide\n\nReconfirm consent.\n", "utf8");
   await fs.writeFile(path.join(sessionPath, "SESSION_BRIEF.md"), `# Session\n\nTester id: ${testerId}\n`, "utf8");
   await fs.writeFile(path.join(sessionPath, "HOST_RUNBOOK.md"), `# Runbook\n\nTester id: ${testerId}\n`, "utf8");
   await fs.writeFile(path.join(sessionPath, "HUMAN_TRIAL_OBSERVATION.md"), "# Observation\n\n- Tester: tester-1\n", "utf8");

@@ -48,6 +48,7 @@ Host only when the decision is `LIVE_CAPTURE_READY`, or when it is `LIVE_CAPTURE
 Open:
 
 ```text
+<session-folder>/BEGINNER_FIRST_LIVE_GUIDE.md
 <session-folder>/HOST_RUNBOOK.md
 <session-folder>/HUMAN_TRIAL_OBSERVATION.md
 <session-folder>/LIVE_SESSION_CAPTURE.md
@@ -57,7 +58,13 @@ Record only anonymous observations. Do not paste real names, contact data, scree
 
 ## After The Call
 
-Fill:
+Add explicit local notes to the observation file, then run record-draft:
+
+```bash
+npm.cmd run trial:record-draft -- --session <session-folder>
+```
+
+Copy only confirmed values and ask the human for missing answers before filling:
 
 ```text
 <session-folder>/HUMAN_TRIAL_OBSERVATION.md
@@ -66,8 +73,8 @@ Fill:
 <session-folder>/LIVE_SESSION_HOST_SUMMARY.md
 ```
 
-Then run the command sequence printed in `TRIAL_LIVE_CAPTURE_REPORT.md`, or use the single guarded recovery command:
+When the three final records are complete, run the guarded recovery command printed in `TRIAL_LIVE_CAPTURE_REPORT.md`:
 
 ```bash
-npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
+npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id> --force
 ```

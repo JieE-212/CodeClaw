@@ -2,7 +2,7 @@
 
 Fill this after the hosted trial. Keep it short and concrete.
 
-After saving this with the tester feedback and observation checklist, run `npm.cmd run trial:ingest-feedback -- <completed-feedback-folder>` and `npm.cmd run trial:fix-backlog`. Use `dist/TRIAL_FEEDBACK_SUMMARY.md` and `dist/TRIAL_FIX_BACKLOG.md` as the tester-2 decision record.
+After saving this with the tester feedback and observation checklist, run `npm.cmd run trial:record-draft -- --session <session-folder>` and review any missing fields. When all three records are confirmed, run `npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id> --force`.
 
 ## Session
 
@@ -48,9 +48,9 @@ After saving this with the tester feedback and observation checklist, run `npm.c
 2.
 3.
 
-## Go/No-Go For Tester 2
+## Go/No-Go For The Next Tester
 
-- Proceed to tester 2: Yes / No
-- Required fix before tester 2:
+- Proceed to the next tester: Yes / No
+- Required fix before the next tester:
 - Owner:
 - Notes:

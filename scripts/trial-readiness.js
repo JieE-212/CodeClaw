@@ -24,6 +24,7 @@ const requiredPackageEntries = [
   "apps",
   "docs",
   "docs/HUMAN_TRIAL_OBSERVATION.md",
+  "docs/TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md",
   "docs/START_GUIDE.md",
   "docs/TRIAL_FEEDBACK_TEMPLATE.md",
   "docs/TRIAL_FEEDBACK_INGEST.md",
@@ -104,9 +105,9 @@ try {
       "Ask testers to start with docs/START_GUIDE.md.",
       "Use docs/TRIAL_HOST_BRIEF.md and docs/TRIAL_GO_NO_GO.md before the hosted session.",
       "Use docs/TRIAL_5_MIN_PRECHECK.md immediately before starting.",
-      "Use docs/HUMAN_TRIAL_OBSERVATION.md during hosted first trials.",
+      "Use docs/TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md and docs/HUMAN_TRIAL_OBSERVATION.md during hosted first trials.",
       "Ask testers to fill docs/TRIAL_FEEDBACK_TEMPLATE.md.",
-      "Fill docs/TRIAL_RESULT_RECORD.md before inviting tester 2.",
+      "Fill docs/TRIAL_RESULT_RECORD.md before inviting the next tester.",
       "Stop before writes if preflight reports blockers or context looks wrong."
     ]
   };

@@ -13,6 +13,7 @@ test("post-call rehearsal runs record-draft into after-live without real tester 
   const result = await runRehearsal(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
   const recordDraft = JSON.parse(await fs.readFile(path.join(fixture.runRoot, "reports", "TRIAL_RECORD_DRAFT.json"), "utf8"));
+  const feedback = JSON.parse(await fs.readFile(path.join(fixture.runRoot, "reports", "TRIAL_FEEDBACK_SUMMARY.json"), "utf8"));
   const afterLive = JSON.parse(await fs.readFile(path.join(fixture.runRoot, "reports", "TRIAL_AFTER_LIVE_REPORT.json"), "utf8"));
 
   assert.equal(result.code, 0, result.stderr || result.stdout);
@@ -21,6 +22,7 @@ test("post-call rehearsal runs record-draft into after-live without real tester 
   assert.equal(report.realTesterFeedback, false);
   assert.match(report.decision, /^POST_CALL_REHEARSAL_READY/);
   assert.match(recordDraft.decision, /^RECORD_DRAFT_READY/);
+  assert.match(feedback.decision, /^READY_/);
   assert.match(afterLive.decision, /^AFTER_LIVE_READY/);
   assert.ok(await exists(path.join(fixture.runRoot, "after-live-packet", "EVIDENCE_PACKET_MANIFEST.json")));
 });

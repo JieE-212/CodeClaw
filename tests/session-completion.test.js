@@ -78,7 +78,7 @@ async function writeCompleteSession(sessionPath) {
     "- Biggest trust concern: None.",
     "- First point where host helped: Asked tester to read the mode label.",
     "- Recommended product fix: Make mode label more prominent.",
-    "- Safe to continue to tester 2: Yes",
+    "- Safe to continue to the next tester: Yes",
     ""
   ].join("\n"), "utf8");
   await fs.writeFile(path.join(sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), [
@@ -115,7 +115,7 @@ async function writeCompleteSession(sessionPath) {
     "- Would you try one disposable patch next? Yes",
     "- Most useful part: Read-only preflight.",
     "- Most confusing part: Mode label.",
-    "- Should this build go to tester 2? Yes",
+    "- Should this build continue to the next tester? Yes",
     ""
   ].join("\n"), "utf8");
   await fs.writeFile(path.join(sessionPath, "TRIAL_RESULT_RECORD.md"), [
@@ -146,10 +146,10 @@ async function writeCompleteSession(sessionPath) {
     "- Strongest trust-building moment: Read-only preflight.",
     "- Strongest trust concern: None.",
     "",
-    "## Go/No-Go For Tester 2",
+    "## Go/No-Go For The Next Tester",
     "",
-    "- Proceed to tester 2: Yes",
-    "- Required fix before tester 2: None.",
+    "- Proceed to the next tester: Yes",
+    "- Required fix before the next tester: None.",
     ""
   ].join("\n"), "utf8");
 }

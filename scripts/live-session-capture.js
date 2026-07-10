@@ -105,6 +105,7 @@ async function inspectSessionFolder(sessionFolder) {
   }
   if (isInside(sessionFolder, path.join(distPath, "trial-dry-runs"))) blockers.push("Session folder is inside dry-run output.");
   const requiredFiles = [
+    "BEGINNER_FIRST_LIVE_GUIDE.md",
     "SESSION_BRIEF.md",
     "HOST_RUNBOOK.md",
     "HUMAN_TRIAL_OBSERVATION.md",
@@ -181,6 +182,7 @@ function renderCaptureFile({ testerId, sessionFolder, preLive }) {
     "",
     "## Before Call",
     "",
+    "- [ ] Open BEGINNER_FIRST_LIVE_GUIDE.md and reconfirm the real human's consent.",
     "- [ ] Open HOST_RUNBOOK.md.",
     "- [ ] Open HUMAN_TRIAL_OBSERVATION.md.",
     "- [ ] Keep SESSION_BRIEF.md nearby.",
@@ -199,11 +201,11 @@ function renderCaptureFile({ testerId, sessionFolder, preLive }) {
     "",
     "## After Call",
     "",
-    "- [ ] Fill HUMAN_TRIAL_OBSERVATION.md.",
-    "- [ ] Fill TRIAL_FEEDBACK_TEMPLATE.md.",
-    "- [ ] Fill TRIAL_RESULT_RECORD.md.",
+    "- [ ] Add explicit local notes to HUMAN_TRIAL_OBSERVATION.md.",
+    "- [ ] Run trial:record-draft and review its missing fields.",
+    "- [ ] Fill TRIAL_FEEDBACK_TEMPLATE.md and TRIAL_RESULT_RECORD.md with confirmed answers only.",
     "- [ ] Fill LIVE_SESSION_HOST_SUMMARY.md with anonymous, high-level notes only.",
-    "- [ ] Run the command sequence below.",
+    "- [ ] Run trial:after-live only after the three final records are complete.",
     "",
     "```bash",
     ...commands,
@@ -279,14 +281,9 @@ function renderMarkdown(report) {
 
 function afterCallCommands(sessionFolder, testerId) {
   const session = sessionFolder ? relative(sessionFolder) : "<session-folder>";
-  const nextTester = nextTesterId(testerId || "tester-1");
   return [
-    `npm.cmd run trial:complete-session -- --session ${session}`,
-    `npm.cmd run trial:privacy-check -- ${session}`,
-    `npm.cmd run trial:post-session -- --session ${session} --next-tester ${nextTester}`,
-    `npm.cmd run trial:review-session -- --session ${session} --reports dist --tester ${testerId || "<tester-id>"}`,
-    `npm.cmd run trial:archive-session -- --session ${session} --tester ${testerId || "<tester-id>"} --force`,
-    "npm.cmd run trial:status"
+    `npm.cmd run trial:record-draft -- --session ${session}`,
+    `npm.cmd run trial:after-live -- --session ${session} --tester ${testerId || "<tester-id>"} --force`
   ];
 }
 
@@ -302,13 +299,13 @@ function nextSteps(decision) {
     return [
       "Host accepts warnings before the call.",
       "Use LIVE_SESSION_CAPTURE.md during the call.",
-      "Fill LIVE_SESSION_HOST_SUMMARY.md after the call."
+      "Use record-draft, human confirmation, then after-live after the call."
     ];
   }
   return [
     "Use LIVE_SESSION_CAPTURE.md during the call.",
     "Fill LIVE_SESSION_HOST_SUMMARY.md after the call.",
-    "Run the after-call commands from the capture report."
+    "Use record-draft, human confirmation, then after-live."
   ];
 }
 
@@ -376,12 +373,6 @@ function cleanCell(value) {
 
 function isDryRunTesterId(value) {
   return /dry[-_.]?run/i.test(String(value || ""));
-}
-
-function nextTesterId(value) {
-  const match = String(value || "").match(/^(.*?)(\d+)$/);
-  if (!match) return `${sanitizeTesterId(value) || "tester"}-next`;
-  return `${match[1]}${Number(match[2]) + 1}`;
 }
 
 function sanitizeTesterId(value) {

@@ -19,8 +19,8 @@ test("record-draft extracts only explicit tester notes and leaves gaps", async (
     "- Severity: Medium",
     "- Most useful part: Read-only preflight.",
     "- Main trust concern: Apply sounded risky on a real project.",
-    "- Proceed to tester 2: Yes",
-    "- Required fix before tester 2: None",
+    "- Proceed to the next tester: Yes",
+    "- Required fix before the next tester: None",
     ""
   ].join("\n"), "utf8");
 
@@ -31,6 +31,7 @@ test("record-draft extracts only explicit tester notes and leaves gaps", async (
   assert.equal(report.decision, "RECORD_DRAFT_READY_WITH_GAPS");
   assert.ok(report.suggestions.some((item) => item.field === "Goal" && item.value.includes("Demo")));
   assert.ok(report.suggestions.some((item) => item.field === "First stuck moment"));
+  assert.ok(report.suggestions.some((item) => item.field === "Proceed to the next tester" && item.value === "Yes"));
   assert.ok(report.missing.some((item) => item.field === "Would you use CodeClaw again on a real project?"));
   assert.equal(report.privacyFindings.blockers.length, 0);
 });

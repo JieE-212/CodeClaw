@@ -410,7 +410,7 @@ function renderObservation(id) {
     "- Biggest trust concern: None.",
     "- First point where host helped: Pointed out the mode label near path controls.",
     "- Recommended product fix: Make the mode cue more prominent near the path controls.",
-    "- Safe to continue to tester 2: Yes",
+    "- Safe to continue to the next tester: Yes",
     "",
     `- Tester: ${id}`,
     "- Host: codeclaw-host",
@@ -496,7 +496,7 @@ function renderFeedback(id) {
     "- Main observed friction: Demo vs real project mode.",
     "- Main trust concern: None.",
     "- Did the tester need help? Yes",
-    "- Should this build go to tester 2? Yes",
+    "- Should this build continue to the next tester? Yes",
     ""
   ].join("\n");
 }
@@ -547,10 +547,10 @@ function renderResult(id) {
     "",
     "1. Make Demo vs real project mode more visually obvious near the path controls.",
     "",
-    "## Go/No-Go For Tester 2",
+    "## Go/No-Go For The Next Tester",
     "",
-    "- Proceed to tester 2: Yes",
-    "- Required fix before tester 2: None.",
+    "- Proceed to the next tester: Yes",
+    "- Required fix before the next tester: None.",
     "- Owner: Product",
     "- Notes: Watch for repeated mode confusion.",
     ""

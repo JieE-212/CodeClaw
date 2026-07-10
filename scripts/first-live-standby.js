@@ -186,6 +186,7 @@ async function inspectSessionFolder(sessionFolder) {
   }
 
   const requiredFiles = [
+    "BEGINNER_FIRST_LIVE_GUIDE.md",
     "SESSION_BRIEF.md",
     "HOST_RUNBOOK.md",
     "LIVE_SESSION_CAPTURE.md",
@@ -282,14 +283,14 @@ function decideState({ reports, blockers, warnings }) {
       ok: true,
       readyToHost: true,
       decision: "FIRST_LIVE_STANDBY_READY_WITH_REVIEW",
-      nextCommand: "Open LIVE_SESSION_CAPTURE.md and HOST_RUNBOOK.md"
+      nextCommand: "Open BEGINNER_FIRST_LIVE_GUIDE.md, LIVE_SESSION_CAPTURE.md, and HOST_RUNBOOK.md"
     };
   }
   return {
     ok: true,
     readyToHost: true,
     decision: "FIRST_LIVE_STANDBY_READY",
-    nextCommand: "Open LIVE_SESSION_CAPTURE.md and HOST_RUNBOOK.md"
+    nextCommand: "Open BEGINNER_FIRST_LIVE_GUIDE.md, LIVE_SESSION_CAPTURE.md, and HOST_RUNBOOK.md"
   };
 }
 
@@ -351,11 +352,12 @@ function standbyChecklist(decision) {
   }
   return [
     `Confirm the tester id is ${testerId}.`,
-    "Open HOST_RUNBOOK.md and LIVE_SESSION_CAPTURE.md.",
+    "Open BEGINNER_FIRST_LIVE_GUIDE.md, HOST_RUNBOOK.md, and LIVE_SESSION_CAPTURE.md.",
+    "Reconfirm the real human's consent before starting.",
     "Start with Demo.",
     "Run only one real-project read-only preflight.",
     "Stop before Apply on every real project.",
-    "After the call, fill records and run trial:record-draft if local notes need mapping."
+    "After the call, run trial:record-draft, fill only confirmed records, then run trial:after-live."
   ];
 }
 
@@ -377,7 +379,7 @@ function nextSteps(decision) {
     return [
       "Host the first real tester only when the human tester is available.",
       "Keep the session limited to Demo and real-read-only.",
-      "After the call, fill records, run trial:record-draft if useful, then run trial:after-live."
+      "After the call, capture explicit notes, run trial:record-draft, confirm missing answers with the human, then run trial:after-live."
     ];
   }
   if (decision === "FIRST_LIVE_STANDBY_WAITING_FOR_TESTER") {

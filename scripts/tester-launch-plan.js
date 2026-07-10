@@ -98,7 +98,7 @@ async function buildReport() {
     rosterChecklist: rosterChecklist(testerId || "tester-2"),
     commandSequence: commandSequence(testerId || "<tester-id>", firstLive),
     nextCommand: state.nextCommand,
-    nextSteps: nextSteps(state.decision, testerId)
+    nextSteps: nextSteps(state.decision, testerId, firstLive)
   };
 }
 
@@ -172,7 +172,7 @@ function decideState(reports, testerId, blockers) {
     return state(true, "TESTER_LAUNCH_READY_FOR_LIVE_CAPTURE", "live-capture", `npm.cmd run trial:live-capture -- --tester ${testerId || "<tester-id>"}`, []);
   }
   if (firstLive) {
-    return state(true, "TESTER_LAUNCH_READY_TO_HOST", "host", "Open LIVE_SESSION_CAPTURE.md and HOST_RUNBOOK.md", []);
+    return state(true, "TESTER_LAUNCH_READY_TO_HOST", "host", "Open BEGINNER_FIRST_LIVE_GUIDE.md, LIVE_SESSION_CAPTURE.md, and HOST_RUNBOOK.md", []);
   }
   if (!reports.nextLive.exists || !["NEXT_LIVE_READY", "NEXT_LIVE_READY_WITH_REVIEW"].includes(reports.nextLive.data?.decision)) {
     return state(true, "TESTER_LAUNCH_READY_FOR_NEXT_LIVE", "next-live", `npm.cmd run trial:next-live -- --tester ${testerId || "<tester-id>"} --accept-review --accepted-by <host-id>`, []);
@@ -229,7 +229,7 @@ function commandSequence(testerId, isFirstLive) {
   ];
 }
 
-function nextSteps(decision, testerId) {
+function nextSteps(decision, testerId, firstLive) {
   if (decision === "TESTER_LAUNCH_BLOCKED") return ["Fix blockers, then rerun trial:tester-launch-plan."];
   if (decision === "TESTER_LAUNCH_WAITING_FOR_INTAKE") {
     return [
@@ -239,10 +239,17 @@ function nextSteps(decision, testerId) {
     ];
   }
   if (decision === "TESTER_LAUNCH_READY_TO_HOST") {
+    if (firstLive) {
+      return [
+        "Open BEGINNER_FIRST_LIVE_GUIDE.md, LIVE_SESSION_CAPTURE.md, and HOST_RUNBOOK.md.",
+        "Host only the selected anonymous tester within Demo plus real-read-only scope.",
+        "After the call, use record-draft, human confirmation, then after-live."
+      ];
+    }
     return [
       "Open NEXT_LIVE_HOST_HANDOFF.md.",
       "Host only the selected anonymous tester.",
-      "After the call, fill records and run trial:after-live."
+      "After the call, use record-draft, human confirmation, then after-live."
     ];
   }
   return [

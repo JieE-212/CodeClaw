@@ -58,6 +58,12 @@ test("host-run writes a live runbook when host-ready and intake-session are read
   assert.match(runbook, /CodeClaw Live Host Runbook/);
   assert.match(runbook, /Tester language: zh-CN/);
   assert.match(runbook, /W1 Watch language switch/);
+  assert.match(runbook, /BEGINNER_FIRST_LIVE_GUIDE\.md/);
+  assert.match(runbook, /trial:record-draft/);
+  assert.match(runbook, /trial:after-live/);
+  assert.doesNotMatch(runbook, /trial:post-session -- --session/);
+  assert.ok(report.nextCommands.some((item) => item.includes("trial:record-draft")));
+  assert.ok(report.nextCommands.some((item) => item.includes("trial:after-live")));
 });
 
 test("host-run blocks when host-ready is not ready", async () => {
@@ -68,6 +74,7 @@ test("host-run blocks when host-ready is not ready", async () => {
   const markdownPath = path.join(tempRoot, "host-run-report.md");
 
   await fs.mkdir(sessionPath, { recursive: true });
+  await fs.writeFile(path.join(sessionPath, "BEGINNER_FIRST_LIVE_GUIDE.md"), "# Beginner Guide\n", "utf8");
   await writeJson(hostReadyPath, {
     ok: false,
     mode: "trial-host-ready",
@@ -93,6 +100,7 @@ test("host-run blocks when host-ready is not ready", async () => {
 
 async function writeSessionPack(sessionPath, testerId) {
   await fs.mkdir(sessionPath, { recursive: true });
+  await fs.writeFile(path.join(sessionPath, "BEGINNER_FIRST_LIVE_GUIDE.md"), "# Beginner Guide\n", "utf8");
   await fs.writeFile(path.join(sessionPath, "SESSION_BRIEF.md"), "# Session Brief\n", "utf8");
   await fs.writeFile(path.join(sessionPath, "HUMAN_TRIAL_OBSERVATION.md"), "# Observation\n", "utf8");
   await fs.writeFile(path.join(sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), "# Feedback\n", "utf8");

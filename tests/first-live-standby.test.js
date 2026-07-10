@@ -22,6 +22,7 @@ test("first-live-standby reports ready when first-live reports and files align",
   assert.equal(report.readyToHost, true);
   assert.equal(report.testerId, "tester-2");
   assert.equal(report.blockers.length, 0);
+  assert.ok(report.nextSteps.some((item) => item.includes("trial:record-draft") && item.includes("trial:after-live")));
 });
 
 test("first-live-standby waits when tester intake is not filled", async () => {
@@ -84,6 +85,19 @@ test("first-live-standby blocks missing live capture file", async () => {
   assert.ok(report.blockers.some((item) => item.includes("LIVE_SESSION_CAPTURE.md")));
 });
 
+test("first-live-standby blocks a session pack without the beginner host guide", async () => {
+  const fixture = await makeFixture();
+  await writeReadyReports(fixture, "tester-2");
+  await writeReadySession(fixture.sessionPath, "tester-2", { omit: "BEGINNER_FIRST_LIVE_GUIDE.md" });
+
+  const result = await runStandby(fixture);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "FIRST_LIVE_STANDBY_BLOCKED");
+  assert.ok(report.blockers.some((item) => item.includes("BEGINNER_FIRST_LIVE_GUIDE.md")));
+});
+
 async function makeFixture() {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-first-live-standby-"));
   const reportsPath = path.join(tempRoot, "reports");
@@ -133,6 +147,7 @@ async function writeReadyReports(fixture, testerId, options = {}) {
 
 async function writeReadySession(sessionPath, testerId, options = {}) {
   const files = {
+    "BEGINNER_FIRST_LIVE_GUIDE.md": "# Beginner Host Guide\n\nReconfirm consent before starting.\n",
     "SESSION_BRIEF.md": "# Session Brief\n\nStart with Demo and real-read-only.\n",
     "HOST_RUNBOOK.md": "# Host Runbook\n\nStop before Apply on every real project.\n",
     "LIVE_SESSION_CAPTURE.md": "# Live Capture\n\nStop before Apply on every real project.\n",

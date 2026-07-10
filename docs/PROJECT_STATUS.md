@@ -547,6 +547,36 @@ Latest verification:
 - `npm.cmd run trial:post-call-rehearsal -- --force`: `POST_CALL_REHEARSAL_READY_WITH_REVIEW`; record draft, after-live, and tester-2 standby all remained ready with no rehearsal blockers.
 - The in-app browser was unavailable in this Codex session, so screenshot and real-click layout verification remains a launch-day check; HTTP health and packaged UI marker checks passed.
 
+Stage 3.0.8a is complete: beginner first-live session flow hardening while the real tester is unavailable.
+
+Implemented and verified:
+
+- Added `TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md`, a concise Chinese host sheet with live consent, beginner instructions, stop conditions, anonymous identity values, required decision values, and guarded after-call commands.
+- Generated each session pack with a tester-specific `BEGINNER_FIRST_LIVE_GUIDE.md` and made it required by host-run, pre-live, live-capture, and first-live standby gates.
+- Replaced ambiguous `Proceed to tester 2` template fields with neutral next-tester wording.
+- Kept completion, record-draft, and feedback-ingest parsers compatible with legacy tester-2 field names while accepting the neutral next-tester fields and question-style bullets.
+- Unified session brief, host-ready, host-run, pre-live, live-capture, completion, launch-plan, and standby guidance around:
+
+```text
+explicit local notes -> trial:record-draft -> human confirmation -> trial:after-live
+```
+
+- Removed direct post-session command sequences from newly generated host-facing files while keeping `trial:after-live` responsible for the guarded lower-level pipeline.
+- Regenerated the local empty tester-2 session pack and refreshed intake-session, host-ready, host-run, pre-live, live-capture, first-live launch-plan, and standby reports without creating tester feedback.
+- Added regression coverage for the generated beginner guide, the two-command after-call flow, neutral fields, legacy aliases, feedback ingest decisions, and the missing-guide standby blocker.
+
+Latest verification:
+
+- Focused standby, feedback-ingest, and post-call rehearsal tests: passed, 11 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 124 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local package; package hygiene reported 0 missing, 0 disallowed, and 170 files.
+- `npm.cmd run trial:post-call-rehearsal -- --force`: `POST_CALL_REHEARSAL_READY_WITH_REVIEW`; feedback ingest returned `READY_WITH_WATCH_ITEMS` with 0 blockers instead of requesting a missing host decision.
+- Empty tester-2 `trial:record-draft`: `RECORD_DRAFT_READY_WITH_GAPS`, 0 suggestions, 20 missing human fields, 0 blockers, 0 warnings.
+- `trial:tester-launch-plan -- --tester tester-2 --first-live`: `TESTER_LAUNCH_READY_TO_HOST`, 0 blockers.
+- `trial:first-live-standby -- --tester tester-2`: `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`, 0 blockers and 5 warnings.
+
 ## Next Planned Phase
 
 Stage 3.0.8: first real tester-2 session and after-live evidence, waiting on a real human tester.

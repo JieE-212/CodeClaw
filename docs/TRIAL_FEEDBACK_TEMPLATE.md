@@ -4,7 +4,7 @@ Use this template after a local CodeClaw trial.
 
 If the trial is observed live, also use `docs/HUMAN_TRIAL_OBSERVATION.md` during the session. This template is for the post-trial write-up.
 
-After the host collects completed records, run `npm.cmd run trial:ingest-feedback -- <completed-feedback-folder>` and `npm.cmd run trial:fix-backlog` to create the summary and tester-2 repair backlog.
+After the host collects completed records, run `npm.cmd run trial:record-draft -- --session <session-folder>`, copy only confirmed values into the final records, then run `npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id> --force`.
 
 ## Tester
 
@@ -108,4 +108,4 @@ List bugs, confusing moments, or missing information.
 - Main observed friction:
 - Main trust concern:
 - Did the tester need help? Yes / No
-- Should this build go to tester 2? Yes / No
+- Should this build continue to the next tester? Yes / No

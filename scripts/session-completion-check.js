@@ -10,6 +10,12 @@ const sessionPath = path.resolve(rootPath, args.session || path.join("dist", "tr
 const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_SESSION_COMPLETION_REPORT.json"));
 const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_SESSION_COMPLETION_REPORT.md"));
 const checklistPath = path.resolve(rootPath, args.checklist || path.join(sessionPath, "HOST_COMPLETION_CHECKLIST.md"));
+const FIELD_ALIASES = {
+  "Safe to continue to the next tester": ["Safe to continue to tester 2"],
+  "Should this build continue to the next tester?": ["Should this build go to tester 2?"],
+  "Proceed to the next tester": ["Proceed to tester 2"],
+  "Required fix before the next tester": ["Required fix before tester 2"]
+};
 
 const report = await buildReport();
 
@@ -92,10 +98,10 @@ async function buildReport() {
     warnings: unique(warnings),
     privacyFindings,
     nextCommands: blockers.length ? [
+      `npm.cmd run trial:record-draft -- --session ${relative(sessionPath)}`,
       `npm.cmd run trial:complete-session -- --session ${relative(sessionPath)}`,
-      `npm.cmd run trial:privacy-check -- ${relative(sessionPath)}`
     ] : [
-      `npm.cmd run trial:post-session -- --session ${relative(sessionPath)} --next-tester ${nextTesterId(inferTesterId(sessionPath))}`,
+      `npm.cmd run trial:after-live -- --session ${relative(sessionPath)} --tester ${inferTesterId(sessionPath)} --force`,
       "npm.cmd run trial:status"
     ],
     nextSteps: nextSteps(blockers.length === 0, warnings.length > 0)
@@ -172,10 +178,10 @@ function checkResult(analysis, blockers, warnings) {
   if (decision && !/^(continue|fix first|stop)$/i.test(decision)) {
     blockers.push("Result decision must be Continue, Fix first, or Stop.");
   }
-  const proceed = fieldValue(analysis, "Proceed to tester 2");
-  if (proceed && !/^(yes|no)$/i.test(proceed)) blockers.push("Proceed to tester 2 must be Yes or No.");
-  if (/^yes$/i.test(proceed) && isPlaceholder(fieldValue(analysis, "Required fix before tester 2"))) {
-    warnings.push("Proceed is Yes but Required fix before tester 2 is empty; write None if no fix is needed.");
+  const proceed = fieldValue(analysis, "Proceed to the next tester");
+  if (proceed && !/^(yes|no)$/i.test(proceed)) blockers.push("Proceed to the next tester must be Yes or No.");
+  if (/^yes$/i.test(proceed) && isPlaceholder(fieldValue(analysis, "Required fix before the next tester"))) {
+    warnings.push("Proceed is Yes but Required fix before the next tester is empty; write None if no fix is needed.");
   }
 }
 
@@ -185,7 +191,7 @@ function missingObservationFields(analysis) {
     "Biggest trust concern",
     "First point where host helped",
     "Recommended product fix",
-    "Safe to continue to tester 2"
+    "Safe to continue to the next tester"
   ]);
 }
 
@@ -197,7 +203,7 @@ function missingFeedbackFields(analysis) {
     "Would you try one disposable patch next?",
     "Most useful part",
     "Most confusing part",
-    "Should this build go to tester 2?"
+    "Should this build continue to the next tester?"
   ]);
 }
 
@@ -209,8 +215,8 @@ function missingResultFields(analysis) {
     "Severity",
     "Strongest trust-building moment",
     "Strongest trust concern",
-    "Proceed to tester 2",
-    "Required fix before tester 2"
+    "Proceed to the next tester",
+    "Required fix before the next tester"
   ]);
 }
 
@@ -269,7 +275,7 @@ function renderChecklist({ blockers, warnings, analyses }) {
     "",
     ...analyses.map((item) => `- ${item.name}: ${item.answeredRows.length} answered rows, ${item.answeredFields.length} answered fields, ${item.issueNotes.length} issue notes`),
     "",
-    "## Before Post-Session",
+    "## Before After-Live",
     "",
     "- [ ] Observation checklist is filled.",
     "- [ ] Feedback template is filled.",
@@ -375,8 +381,8 @@ function parseIssueNotes(file) {
 }
 
 function fieldValue(analysis, key) {
-  const normalized = cleanCell(key).toLowerCase();
-  const field = analysis.fields.find((item) => item.key.toLowerCase() === normalized);
+  const candidates = [key, ...(FIELD_ALIASES[key] || [])].map((item) => cleanCell(item).toLowerCase());
+  const field = analysis.fields.find((item) => candidates.includes(item.key.toLowerCase()));
   return field?.value || "";
 }
 
@@ -425,27 +431,22 @@ function nextSteps(ready, hasWarnings) {
   if (!ready) {
     return [
       "Fill or redact the listed items.",
+      "Use trial:record-draft to map only explicit local notes into draft values.",
       "Rerun npm.cmd run trial:complete-session -- --session <completed-session-folder>.",
-      "Do not run trial:post-session until this report is ready."
+      "Do not run trial:after-live until this report is ready."
     ];
   }
   if (hasWarnings) {
     return [
-      "Host must accept warnings before post-session.",
-      "Run trial:post-session against this session folder.",
-      "Archive only after privacy and post-session reports pass."
+      "Host must accept warnings before after-live.",
+      "Run trial:after-live against this session folder.",
+      "Keep the resulting evidence packet local."
     ];
   }
   return [
-    "Run trial:post-session against this completed session folder.",
-    "Rerun trial:status after post-session finishes."
+    "Run trial:after-live against this completed session folder.",
+    "Rerun trial:status after after-live finishes."
   ];
-}
-
-function nextTesterId(value) {
-  const match = String(value || "").match(/^(.*?)(\d+)$/);
-  if (!match) return `${sanitizeTesterId(value) || "tester"}-next`;
-  return `${match[1]}${Number(match[2]) + 1}`;
 }
 
 function inferTesterId(folder) {

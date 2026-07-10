@@ -8,6 +8,8 @@ const args = parseArgs(process.argv.slice(2));
 const testerId = sanitizeTesterId(args.tester || "tester-1");
 const outputPath = path.resolve(rootPath, args.out || path.join("dist", "trial-session-packs", testerId));
 const backlogPath = path.resolve(rootPath, args.backlog || path.join("dist", "TRIAL_FIX_BACKLOG.json"));
+const beginnerGuideSource = path.join(rootPath, "docs", "TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md");
+const beginnerGuideName = "BEGINNER_FIRST_LIVE_GUIDE.md";
 const templateFiles = [
   "docs/TRIAL_FEEDBACK_TEMPLATE.md",
   "docs/HUMAN_TRIAL_OBSERVATION.md",
@@ -30,6 +32,8 @@ for (const file of templateFiles) {
   const text = await fs.readFile(source, "utf8");
   await fs.writeFile(target, injectTemplateHeader(file, text, { backlog, watchItems }), "utf8");
 }
+const beginnerGuide = await fs.readFile(beginnerGuideSource, "utf8");
+await fs.writeFile(path.join(outputPath, beginnerGuideName), renderBeginnerGuide(beginnerGuide, { testerId, outputPath }), "utf8");
 
 const sessionBrief = renderSessionBrief({ testerId, outputPath, backlog, watchItems });
 const manifest = renderManifest({ testerId, outputPath, backlog, watchItems });
@@ -45,6 +49,7 @@ console.log(JSON.stringify({
   mustFix: (backlog.mustFixBeforeTester2 || []).length,
   watch: (backlog.watchDuringTester2 || []).length,
   files: [
+    beginnerGuideName,
     "SESSION_BRIEF.md",
     "TRIAL_FEEDBACK_TEMPLATE.md",
     "HUMAN_TRIAL_OBSERVATION.md",
@@ -153,7 +158,8 @@ function renderSessionBrief({ testerId, outputPath, backlog, watchItems }) {
     "",
     "## Before The Session",
     "",
-    "- Keep `docs/START_GUIDE.md`, `docs/TRIAL_5_MIN_PRECHECK.md`, and this session folder open.",
+    "- Keep `BEGINNER_FIRST_LIVE_GUIDE.md`, `HOST_RUNBOOK.md`, and `LIVE_SESSION_CAPTURE.md` open.",
+    "- Reconfirm real human consent at the start; a prepared intake value does not replace live consent.",
     "- Start with Demo, then run one real-project read-only preflight.",
     "- Stop before Apply on a non-disposable real project.",
     "- Do not ask for API keys in the first hosted trial.",
@@ -165,6 +171,7 @@ function renderSessionBrief({ testerId, outputPath, backlog, watchItems }) {
     "",
     "## Files To Fill",
     "",
+    "- `BEGINNER_FIRST_LIVE_GUIDE.md` is the host's step-by-step operating sheet; do not ask the tester to fill it.",
     "- `HUMAN_TRIAL_OBSERVATION.md` during the live session.",
     "- `TRIAL_FEEDBACK_TEMPLATE.md` after the tester finishes.",
     "- `TRIAL_RESULT_RECORD.md` after the host reviews the outcome.",
@@ -175,10 +182,10 @@ function renderSessionBrief({ testerId, outputPath, backlog, watchItems }) {
     "",
     "## After The Session",
     "",
-    "Run these from the project root, replacing the path with this session folder if needed:",
+    "Run record-draft first. Copy only confirmed values into the final records, ask the human for missing answers, then run after-live:",
     "",
     "```bash",
-    `npm.cmd run trial:post-session -- --session ${toPortablePath(path.relative(rootPath, outputPath))} --next-tester ${nextTesterId(testerId)}`,
+    ...afterSessionCommands(outputPath, testerId),
     "```",
     ""
   ].join("\n");
@@ -198,6 +205,21 @@ function privacyGuardrails() {
     "- Do not record real names, phone numbers, email addresses, company names, account URLs, or private project names.",
     "- Do not paste screenshots, logs, source snippets, local absolute paths, API keys, or secret tokens.",
     "- Keep raw tester notes in this local session folder only; do not commit or share them."
+  ];
+}
+
+function renderBeginnerGuide(text, { testerId, outputPath }) {
+  const session = toPortablePath(path.relative(rootPath, outputPath));
+  return text
+    .replaceAll("{{TESTER_ID}}", testerId)
+    .replaceAll("{{SESSION_FOLDER}}", session);
+}
+
+function afterSessionCommands(sessionPath, selectedTesterId) {
+  const session = toPortablePath(path.relative(rootPath, sessionPath));
+  return [
+    `npm.cmd run trial:record-draft -- --session ${session}`,
+    `npm.cmd run trial:after-live -- --session ${session} --tester ${selectedTesterId} --force`
   ];
 }
 
@@ -222,14 +244,13 @@ function renderManifest({ testerId, outputPath, backlog, watchItems }) {
       evidence: item.evidence || []
     })),
     files: [
+      beginnerGuideName,
       "SESSION_BRIEF.md",
       "TRIAL_FEEDBACK_TEMPLATE.md",
       "HUMAN_TRIAL_OBSERVATION.md",
       "TRIAL_RESULT_RECORD.md"
     ],
-    afterSessionCommands: [
-      `npm.cmd run trial:post-session -- --session ${toPortablePath(path.relative(rootPath, outputPath))} --next-tester ${nextTesterId(testerId)}`
-    ]
+    afterSessionCommands: afterSessionCommands(outputPath, testerId)
   };
 }
 
@@ -296,12 +317,6 @@ function parseArgs(rawArgs) {
 function sanitizeTesterId(value) {
   const cleaned = String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "tester-1";
-}
-
-function nextTesterId(value) {
-  const match = String(value || "").match(/^(.*?)(\d+)$/);
-  if (!match) return `${sanitizeTesterId(value)}-next`;
-  return `${match[1]}${Number(match[2]) + 1}`;
 }
 
 function toPortablePath(value) {

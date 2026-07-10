@@ -1,8 +1,8 @@
 # CodeClaw Trial Session Completion
 
-Use this after a hosted tester session and before `trial:post-session`.
+Use this after a hosted tester session as the first gate inside `trial:after-live`.
 
-`trial:complete-session` checks whether the three raw session records are filled enough to ingest. It also catches obvious personal data and secret leaks before the post-session pipeline starts.
+`trial:complete-session` checks whether the three raw session records are filled enough to ingest. It also catches obvious personal data and secret leaks before the guarded after-live pipeline starts.
 
 ## Run
 
@@ -34,21 +34,20 @@ The report says `SESSION_COMPLETION_READY` only when:
 - key host summary fields are filled
 - feedback has enough answered rows and issue notes
 - result record has a clear `Decision after trial`
-- `Proceed to tester 2` is answered
+- `Proceed to the next tester` is answered
 - obvious emails, phone numbers, secret tokens, and personal identity fields are not present
 
-`SESSION_COMPLETION_READY_WITH_REVIEW` means the host must accept warnings before post-session.
+`SESSION_COMPLETION_READY_WITH_REVIEW` means the host must accept warnings before after-live.
 
-`SESSION_COMPLETION_HOLD` blocks post-session.
+`SESSION_COMPLETION_HOLD` blocks after-live.
 
 ## Next
 
 When completion is ready, run:
 
 ```bash
-npm.cmd run trial:post-session -- --session dist/trial-session-packs/tester-1 --next-tester tester-2
+npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-1 --tester tester-1 --force
 npm.cmd run trial:status
 ```
 
-`trial:post-session` also runs `trial:complete-session` automatically before privacy check and feedback ingest.
-
+`trial:after-live` runs `trial:complete-session` automatically before privacy check, post-session, review, and local evidence packaging.
