@@ -477,13 +477,36 @@ Latest verification:
 - `npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2`: `RECORD_DRAFT_READY_WITH_GAPS` with no privacy blockers.
 - `npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live`: `TESTER_LAUNCH_READY_TO_HOST`.
 
+Stage 3.0.5 is complete: first-live standby checker while tester-2 is pending.
+
+Implemented and verified:
+
+- Added `trial:first-live-standby` to confirm tester-2 remains ready for first-live hosting without creating real tester data.
+- The checker reads intake, intake-session, host-ready, host-run, pre-live, live-capture, tester-launch-plan, and status reports.
+- It verifies all active reports point to the same anonymous tester id.
+- It checks the session folder for `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, host summary, final record templates, and the session manifest.
+- It blocks dry-run tester ids, tester mismatches, missing live files, raw screenshots/logs/source-like files, personal contact data, and likely secret tokens.
+- It emits `FIRST_LIVE_STANDBY_WAITING_FOR_TESTER`, `FIRST_LIVE_STANDBY_NEEDS_REFRESH`, `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`, `FIRST_LIVE_STANDBY_READY`, or `FIRST_LIVE_STANDBY_BLOCKED`.
+- Trial package, status, tester launch, and package manifest docs were updated.
+- Automated tests cover ready standby, waiting for tester intake, stale launch plan refresh, tester mismatch blocking, and missing live capture blocking.
+
+Latest verification:
+
+- `node --check scripts\first-live-standby.js`: passed.
+- `node --test tests\first-live-standby.test.js`: passed, 5 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 118 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:first-live-standby -- --tester tester-2`: `FIRST_LIVE_STANDBY_READY_WITH_REVIEW` with no blockers.
+
 ## Next Planned Phase
 
-Stage 3.0.5: keep tester-2 launch ready while waiting for a human tester.
+Stage 3.0.6: simulated post-call record-to-after-live rehearsal.
 
 Recommended order:
 
-1. Keep the current tester-2 first-live plan paused until a real human tester is available.
-2. When a human tester is available, host tester-2 using first-live mode.
-3. After the call, run `trial:record-draft` if the host has local notes.
-4. Fill generated records and run `trial:after-live` for tester-2.
+1. Add a safe anonymous fixture that clearly marks itself as rehearsal, not real tester feedback.
+2. Rehearse `trial:record-draft` into completion, privacy, and after-live without inventing real tester data.
+3. Confirm the first-live standby path still remains ready for tester-2 after the rehearsal.
+4. When a human tester is available, host tester-2 using first-live mode.

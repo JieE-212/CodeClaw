@@ -86,3 +86,11 @@ npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live
 ```
 
 Host only if it says `TESTER_LAUNCH_READY_TO_HOST`.
+
+While waiting for the human tester, run the standby checker:
+
+```bash
+npm.cmd run trial:first-live-standby -- --tester tester-2
+```
+
+Host only when standby says `FIRST_LIVE_STANDBY_READY` or `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`.

@@ -102,6 +102,14 @@ To see a privacy-safe tester-2 launch checklist before or after filling the rost
 npm.cmd run trial:tester-launch-plan -- --tester tester-2
 ```
 
+If tester-2 is the first real human tester and you are waiting for the tester to be available, run:
+
+```bash
+npm.cmd run trial:first-live-standby -- --tester tester-2
+```
+
+This confirms the first-live path is still ready without creating real tester data.
+
 If intake is ready, the next command should be:
 
 ```bash
