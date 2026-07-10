@@ -405,16 +405,40 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:status`: `NEEDS_TESTER_INTAKE`.
 
+Stage 3.0.2b is paused: real tester-2 launch is waiting for a human tester.
+
+Current local status:
+
+- `tester-1` has no completed real session records; only empty templates exist.
+- `tester-2` has a local anonymous roster entry and a generated session pack.
+- `trial:tester-launch-plan -- --tester tester-2 --first-live` allows tester-2 to be hosted as the first real tester without inventing tester-1 after-live evidence.
+- The current decision is `TESTER_LAUNCH_READY_TO_HOST` in first-live mode.
+- The host must keep tester-2 limited to Demo and real-read-only; do not use Apply on a real project.
+
+Stage 3.0.2c is complete: first-live launch and tester-friction UI hardening.
+
+Implemented and verified:
+
+- Added first-live mode to `trial:tester-launch-plan`.
+- Isolated intake-review dry-run reports under the dry-run output folder so local `dist` reports cannot pollute the test.
+- Made Demo, example, and real project path modes visually distinct in the workspace.
+- Strengthened Apply and Verify safety copy around write and command execution boundaries.
+
+Latest verification:
+
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 110 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live`: `TESTER_LAUNCH_READY_TO_HOST`.
+- Local dev server responded at `http://localhost:4173/`.
+
 ## Next Planned Phase
 
-Stage 3.0.2b: real tester-2 launch and after-live evidence.
+Stage 3.0.3: continue product hardening while tester-2 is pending.
 
-Planned order:
+Recommended order:
 
-1. The host fills a real anonymous tester-2 entry in `.codeclaw/trial-intake/TESTER_ROSTER.json`.
-2. Run `trial:intake` and `trial:tester-launch-plan -- --tester tester-2`.
-3. Follow the launch plan through intake-session, host-ready, host-run, pre-live, live-capture, and next-live.
-4. Host tester 2 using `NEXT_LIVE_HOST_HANDOFF.md`.
-5. After the call, fill generated records and run `trial:after-live` for tester 2.
-6. Run `trial:cohort-summary` and `trial:cohort-handoff`.
-7. Use `COHORT_EXPANSION_HANDOFF.md` to decide whether to fix first or expand to 3-5 testers.
+1. Improve the first-run host/tester guide so a non-technical host can run tester-2 without reading long Markdown.
+2. Add a lightweight in-app trial checklist or exportable host notes for Demo and real-read-only sessions.
+3. When a human tester is available, host tester-2 using first-live mode.
+4. After the call, fill generated records and run `trial:after-live` for tester-2.

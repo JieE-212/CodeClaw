@@ -1261,16 +1261,21 @@ function renderPathModeForInput(value) {
   const pathValue = String(value || "").trim();
   let titleKey = "path.mode.empty.title";
   let bodyKey = "path.mode.empty.body";
+  let modeClass = "empty";
   if (pathValue === "C:\\Users\\you\\project") {
     titleKey = "path.mode.example.title";
     bodyKey = "path.mode.example.body";
+    modeClass = "example";
   } else if (systemInfo?.demoPath && pathValue && normalizePathForCompare(pathValue) === normalizePathForCompare(systemInfo.demoPath)) {
     titleKey = "path.mode.demo.title";
     bodyKey = "path.mode.demo.body";
+    modeClass = "demo";
   } else if (pathValue) {
     titleKey = "path.mode.real.title";
     bodyKey = "path.mode.real.body";
+    modeClass = "real";
   }
+  pathMode.className = `path-mode ${modeClass}`;
   pathMode.innerHTML = `<strong>${escapeHtml(t(titleKey))}</strong><span>${escapeHtml(t(bodyKey))}</span>`;
 }
 

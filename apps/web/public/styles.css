@@ -55,8 +55,14 @@ input:focus,textarea:focus,select:focus { border-color:var(--accent); background
 .path-helper.warn { border-color:#d4aa51; background:#fffaf0; color:#866321; }
 .path-helper.error { border-color:#c76b6b; background:#fff7f7; color:#9f3838; }
 .path-helper-copy { overflow-wrap:anywhere; }
-.path-mode { display:grid; gap:2px; border:1px solid rgba(15,139,141,.22); border-radius:6px; padding:8px 10px; background:#fff; color:var(--muted); }
-.path-mode strong { color:var(--ink); font-size:12px; }
+.path-mode { display:grid; gap:3px; border:1px solid rgba(15,139,141,.22); border-left:5px solid var(--accent); border-radius:6px; padding:9px 10px; background:#fff; color:var(--muted); }
+.path-mode.empty { border-left-color:#879397; }
+.path-mode.example { border-left-color:#d4aa51; background:#fffaf0; }
+.path-mode.demo { border-color:#9bc8b0; border-left-color:var(--good); background:#f4fbf6; }
+.path-mode.real { border-color:#d4aa51; border-left-color:#d1495b; background:#fffaf0; }
+.path-mode strong { color:var(--ink); font-size:13px; }
+.path-mode.demo strong { color:var(--good); }
+.path-mode.real strong,.path-mode.example strong { color:#866321; }
 .path-mode span { font-size:12px; overflow-wrap:anywhere; }
 .path-tips { display:grid; gap:4px; margin:0; padding-left:18px; color:var(--muted); }
 .path-tips code { color:var(--ink); font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
