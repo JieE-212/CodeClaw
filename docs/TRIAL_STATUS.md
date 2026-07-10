@@ -110,6 +110,14 @@ npm.cmd run trial:first-live-standby -- --tester tester-2
 
 This confirms the first-live path is still ready without creating real tester data.
 
+If no human tester is available yet and you want to rehearse the post-call loop safely, run:
+
+```bash
+npm.cmd run trial:post-call-rehearsal -- --force
+```
+
+This uses synthetic `tester-rehearsal-*` ids and must not be counted as real tester feedback.
+
 If intake is ready, the next command should be:
 
 ```bash

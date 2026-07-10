@@ -500,13 +500,37 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:first-live-standby -- --tester tester-2`: `FIRST_LIVE_STANDBY_READY_WITH_REVIEW` with no blockers.
 
+Stage 3.0.6 is complete: synthetic post-call record-to-after-live rehearsal.
+
+Implemented and verified:
+
+- Added `trial:post-call-rehearsal` for an isolated synthetic rehearsal of the post-call pipeline.
+- The rehearsal creates only `tester-rehearsal-*` synthetic records and refuses real-looking tester ids such as `tester-2`.
+- The command runs `trial:record-draft`, verifies the draft is local-only and not held, then runs `trial:after-live`.
+- It marks reports with `rehearsalOnly: true` and `realTesterFeedback: false`.
+- It writes `dist/TRIAL_POST_CALL_REHEARSAL_REPORT.md` and `.json`.
+- Rehearsal output stays under `dist/trial-post-call-rehearsals/<run-id>/`.
+- It confirms the tester-2 first-live standby check still works after rehearsal.
+- Trial package, status, first-live standby, and package manifest docs were updated.
+- Automated tests cover successful rehearsal and refusal of real-looking tester ids.
+
+Latest verification:
+
+- `node --check scripts\post-call-rehearsal.js`: passed.
+- `node --test tests\post-call-rehearsal.test.js`: passed, 2 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 120 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:post-call-rehearsal -- --force`: `POST_CALL_REHEARSAL_READY_WITH_REVIEW`; `RECORD_DRAFT_READY`; `AFTER_LIVE_READY_WITH_REVIEW`; first-live standby remained `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`.
+
 ## Next Planned Phase
 
-Stage 3.0.6: simulated post-call record-to-after-live rehearsal.
+Stage 3.0.7: pre-human-tester operator polish.
 
 Recommended order:
 
-1. Add a safe anonymous fixture that clearly marks itself as rehearsal, not real tester feedback.
-2. Rehearse `trial:record-draft` into completion, privacy, and after-live without inventing real tester data.
-3. Confirm the first-live standby path still remains ready for tester-2 after the rehearsal.
+1. Improve the in-app host checklist around what to do while waiting, during the call, and immediately after the call.
+2. Surface `trial:first-live-standby` and `trial:post-call-rehearsal` in beginner-friendly docs or UI copy.
+3. Keep tester-2 first-live paused until a real human tester is available.
 4. When a human tester is available, host tester-2 using first-live mode.

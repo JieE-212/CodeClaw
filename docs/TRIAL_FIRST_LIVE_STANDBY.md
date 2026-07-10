@@ -65,3 +65,13 @@ Then run:
 ```bash
 npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-2 --tester tester-2 --force
 ```
+
+## Rehearsal While Waiting
+
+If no human tester is available yet, rehearse the post-call pipeline with synthetic data:
+
+```bash
+npm.cmd run trial:post-call-rehearsal -- --force
+```
+
+This does not count as tester feedback. It only confirms `trial:record-draft`, `trial:after-live`, and this standby check still work together.
