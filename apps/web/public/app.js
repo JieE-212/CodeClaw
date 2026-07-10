@@ -78,6 +78,8 @@ const quickStartCopy = document.querySelector("#quickStartCopy");
 const quickStartList = document.querySelector("#quickStartList");
 const quickStartPrimary = document.querySelector("#quickStartPrimary");
 const quickStartSecondary = document.querySelector("#quickStartSecondary");
+const trialCommandList = document.querySelector("#trialCommandList");
+const trialCommandStatus = document.querySelector("#trialCommandStatus");
 let repoProfile = null;
 let currentTask = null;
 let currentMemory = null;
@@ -141,6 +143,7 @@ boot();
 syncToolInputs();
 bindNavigation();
 bindI18n();
+bindTrialCommandCopies();
 setActiveView(activeView);
 renderRecentRepos();
 renderPathHelperForInput(repoPath?.value || "");
@@ -191,6 +194,7 @@ function bindNavigation() {
 
 function bindI18n() {
   window.addEventListener("codeclaw:languagechange", () => {
+    if (trialCommandStatus) trialCommandStatus.textContent = "";
     setActiveView(activeView);
     renderSystemCheck(systemInfo);
     renderRecentRepos();
@@ -205,6 +209,54 @@ function bindI18n() {
     syncToolInputs();
     updateControls();
   });
+}
+
+function bindTrialCommandCopies() {
+  if (!trialCommandList) return;
+  trialCommandList.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("[data-trial-command]");
+    if (!button || !trialCommandList.contains(button)) return;
+    copyTrialCommand(button);
+  });
+}
+
+async function copyTrialCommand(button) {
+  const command = button.closest(".trial-command-row")?.querySelector("code")?.textContent?.trim();
+  if (!command) return;
+  const label = t(button.dataset.commandLabelKey || "trialHost.commands.title");
+  button.disabled = true;
+  try {
+    await writeClipboardText(command);
+    button.textContent = t("trialHost.command.copied");
+    if (trialCommandStatus) trialCommandStatus.textContent = t("trialHost.command.copySuccess", { label });
+    window.setTimeout(() => {
+      button.textContent = t("trialHost.command.copy");
+    }, 1600);
+  } catch {
+    button.textContent = t("trialHost.command.copy");
+    if (trialCommandStatus) trialCommandStatus.textContent = t("trialHost.command.copyFailed");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function writeClipboardText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const buffer = document.createElement("textarea");
+  buffer.className = "clipboard-buffer";
+  buffer.value = value;
+  buffer.setAttribute("readonly", "");
+  document.body.append(buffer);
+  buffer.select();
+  try {
+    if (!document.execCommand("copy")) throw new Error("Copy command failed");
+  } finally {
+    buffer.remove();
+  }
 }
 
 function setActiveView(view) {

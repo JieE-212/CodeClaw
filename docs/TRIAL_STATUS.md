@@ -68,6 +68,38 @@ When the status report lists blockers, fix those before hosting or expanding.
 
 When there are no blockers, run the `Next command` shown at the top of `TRIAL_STATUS_REPORT.md`.
 
+## Tester-2 Operator Rhythm
+
+While no real human tester is available, keep tester-2 paused. Use these two commands only:
+
+```bash
+npm.cmd run trial:first-live-standby -- --tester tester-2
+npm.cmd run trial:post-call-rehearsal -- --force
+```
+
+The standby command checks the real first-live path without creating tester data. The rehearsal uses only synthetic `tester-rehearsal-*` records and never counts as real feedback.
+
+When a real human tester is scheduled, rerun standby and host only when it returns `FIRST_LIVE_STANDBY_READY` or `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`. Read and accept every warning before hosting. During the call, keep these files open:
+
+```text
+HOST_RUNBOOK.md
+LIVE_SESSION_CAPTURE.md
+HUMAN_TRIAL_OBSERVATION.md
+TRIAL_FEEDBACK_TEMPLATE.md
+TRIAL_RESULT_RECORD.md
+```
+
+Keep the session limited to Demo plus real-project read-only preflight, and stop before Apply on every real project.
+
+Immediately after the real call, keep raw notes local and run:
+
+```bash
+npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2
+npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force
+```
+
+Run `trial:after-live` only after a human has confirmed and filled the three final record files. Do not turn rehearsal output or missing answers into tester feedback.
+
 ## Examples
 
 Use an alternate report folder:

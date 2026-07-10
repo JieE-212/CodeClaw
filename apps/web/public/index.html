@@ -49,28 +49,81 @@
               <button class="secondary" id="quickStartSecondary" type="button">运行预检</button>
             </div>
           </div>
-          <div class="panel trial-host-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.trialHost">Trial host checklist</h3><span data-i18n="trialHost.state.pending">Waiting for human tester</span></div>
+          <div class="panel trial-host-panel" data-view="workspace" data-ui-marker="trial-operator-guide">
+            <div class="panel-header"><h3 data-i18n="panel.trialHost">Trial host checklist</h3><span data-i18n="trialHost.state.pending">Paused until a human tester is available</span></div>
+            <p class="trial-host-note" data-i18n="trialHost.state.detail">There is no completed real tester session yet. Keep tester-2 paused and use synthetic rehearsal only while waiting.</p>
             <div class="trial-host-grid">
+              <fieldset class="trial-checklist waiting">
+                <legend data-i18n="trialHost.waiting">While waiting</legend>
+                <label><input type="checkbox" /><span data-i18n="trialHost.waiting.pause">Keep tester-2 paused until a real person is scheduled.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.waiting.standby">Check standby without creating tester data.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.waiting.rehearsal">Use tester-rehearsal-* only; rehearsal is never real feedback.</span></label>
+              </fieldset>
               <fieldset class="trial-checklist">
                 <legend data-i18n="trialHost.before">Before the call</legend>
+                <label><input type="checkbox" /><span data-i18n="trialHost.before.standby">Rerun standby and read every warning before hosting.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.before.consent">Tester consent and privacy rules accepted.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.before.scope">Scope is Demo plus real-read-only only.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.before.records">No real names, contacts, screenshots, logs, secrets, or private repo names in notes.</span></label>
               </fieldset>
               <fieldset class="trial-checklist">
                 <legend data-i18n="trialHost.during">During the call</legend>
+                <label><input type="checkbox" /><span data-i18n="trialHost.during.open">Keep HOST_RUNBOOK.md, LIVE_SESSION_CAPTURE.md, and the three record templates open.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.during.demo">Start with Demo and let the tester think aloud.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.during.readonly">Run real-project read-only preflight only.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.during.stop">Stop before Apply on any real project.</span></label>
               </fieldset>
-              <fieldset class="trial-checklist">
-                <legend data-i18n="trialHost.after">After the call</legend>
+              <fieldset class="trial-checklist after">
+                <legend data-i18n="trialHost.after">Immediately after</legend>
                 <label><input type="checkbox" /><span data-i18n="trialHost.after.friction">Record the first stuck moment and trust concern.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.after.go">Record whether this build should continue, fix first, or stop.</span></label>
                 <label><input type="checkbox" /><span data-i18n="trialHost.after.local">Keep raw tester records local-only.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.after.commands">Draft confirmed notes, fill the final records, then run after-live.</span></label>
               </fieldset>
             </div>
+            <section class="trial-command-guide" aria-labelledby="trialCommandTitle">
+              <div class="trial-command-heading">
+                <div>
+                  <h4 id="trialCommandTitle" data-i18n="trialHost.commands.title">Operator commands</h4>
+                  <p data-i18n="trialHost.commands.detail">Run these from the CodeClaw project root at the stage shown.</p>
+                </div>
+                <span class="trial-command-status" id="trialCommandStatus" aria-live="polite"></span>
+              </div>
+              <div class="trial-command-list" id="trialCommandList">
+                <div class="trial-command-row">
+                  <div class="trial-command-copy">
+                    <strong data-i18n="trialHost.command.standby.title">Check tester-2 standby</strong>
+                    <span data-i18n="trialHost.command.standby.detail">Run while waiting and again before the real call.</span>
+                    <code>npm.cmd run trial:first-live-standby -- --tester tester-2</code>
+                  </div>
+                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.standby.title" data-i18n="trialHost.command.copy">Copy</button>
+                </div>
+                <div class="trial-command-row">
+                  <div class="trial-command-copy">
+                    <strong data-i18n="trialHost.command.rehearsal.title">Rehearse the post-call flow</strong>
+                    <span data-i18n="trialHost.command.rehearsal.detail">Safe while waiting. Synthetic only, never real feedback.</span>
+                    <code>npm.cmd run trial:post-call-rehearsal -- --force</code>
+                  </div>
+                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.rehearsal.title" data-i18n="trialHost.command.copy">Copy</button>
+                </div>
+                <div class="trial-command-row">
+                  <div class="trial-command-copy">
+                    <strong data-i18n="trialHost.command.draft.title">Draft confirmed notes</strong>
+                    <span data-i18n="trialHost.command.draft.detail">Run after the call, then review gaps before editing final records.</span>
+                    <code>npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2</code>
+                  </div>
+                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.draft.title" data-i18n="trialHost.command.copy">Copy</button>
+                </div>
+                <div class="trial-command-row">
+                  <div class="trial-command-copy">
+                    <strong data-i18n="trialHost.command.afterLive.title">Close and package the session</strong>
+                    <span data-i18n="trialHost.command.afterLive.detail">Run only after the confirmed final records are filled.</span>
+                    <code>npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force</code>
+                  </div>
+                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.afterLive.title" data-i18n="trialHost.command.copy">Copy</button>
+                </div>
+              </div>
+            </section>
           </div>
           <div class="panel repo-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.repo">项目仓库</h3><span id="scanState">未扫描</span></div>

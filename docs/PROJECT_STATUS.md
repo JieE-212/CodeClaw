@@ -524,13 +524,38 @@ Latest verification:
 - `npm.cmd run trial:ready`: passed in source and generated local trial package.
 - `npm.cmd run trial:post-call-rehearsal -- --force`: `POST_CALL_REHEARSAL_READY_WITH_REVIEW`; `RECORD_DRAFT_READY`; `AFTER_LIVE_READY_WITH_REVIEW`; first-live standby remained `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`.
 
+Stage 3.0.7 is complete: pre-human-tester operator polish.
+
+Implemented and verified:
+
+- Expanded the in-app trial host checklist into waiting, before-call, during-call, and immediately-after-call stages.
+- Kept the real-session boundary explicit: tester-2 remains paused until a real human tester is scheduled.
+- Added the files the host should keep open during the call and repeated the stop-before-Apply boundary for every real project.
+- Added beginner-friendly command rows for `trial:first-live-standby`, `trial:post-call-rehearsal`, `trial:record-draft`, and `trial:after-live`.
+- Added working copy actions with localized success/failure feedback and a legacy clipboard fallback.
+- Updated English, zh-CN, and Russian operator copy with full dictionary parity.
+- Added the operator guide to the health-check UI markers and documented the same rhythm in the trial status and local package guides.
+
+Latest verification:
+
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 120 tests.
+- `npm.cmd run health`: passed with `trialOperator: true`.
+- `npm.cmd run i18n:check`: passed with 506 keys in each language and no warnings.
+- `npm.cmd run trial:ready`: passed in source and the generated local trial package; package hygiene had no missing or disallowed files.
+- `npm.cmd run trial:first-live-standby -- --tester tester-2`: `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`, 0 blockers and 5 warnings that still require host review.
+- `npm.cmd run trial:post-call-rehearsal -- --force`: `POST_CALL_REHEARSAL_READY_WITH_REVIEW`; record draft, after-live, and tester-2 standby all remained ready with no rehearsal blockers.
+- The in-app browser was unavailable in this Codex session, so screenshot and real-click layout verification remains a launch-day check; HTTP health and packaged UI marker checks passed.
+
 ## Next Planned Phase
 
-Stage 3.0.7: pre-human-tester operator polish.
+Stage 3.0.8: first real tester-2 session and after-live evidence, waiting on a real human tester.
 
-Recommended order:
+Do not start this phase until a real person is available. Planned order:
 
-1. Improve the in-app host checklist around what to do while waiting, during the call, and immediately after the call.
-2. Surface `trial:first-live-standby` and `trial:post-call-rehearsal` in beginner-friendly docs or UI copy.
-3. Keep tester-2 first-live paused until a real human tester is available.
-4. When a human tester is available, host tester-2 using first-live mode.
+1. Run a real-browser visual pass of the operator panel in English, zh-CN, and Russian at desktop and narrow widths, including one copy action.
+2. Run `trial:first-live-standby -- --tester tester-2` immediately before the call and read all warnings.
+3. Host only on `FIRST_LIVE_STANDBY_READY` or accepted `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`.
+4. Keep the session limited to Demo plus real-project read-only preflight and stop before Apply on every real project.
+5. Fill only confirmed, privacy-safe tester records after the call.
+6. Run `trial:record-draft`, then `trial:after-live`, and preserve only local privacy-safe evidence.

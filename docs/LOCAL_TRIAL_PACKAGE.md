@@ -173,6 +173,30 @@ This command:
 
 Treat a package as shareable only when this command exits successfully.
 
+## Pre-Human-Tester Operator Flow
+
+The in-app `Trial host checklist` is the compact operator view for tester-2. It separates waiting, before-call, during-call, and immediately-after-call work and includes copyable commands.
+
+While waiting for a real person, keep tester-2 paused and use only:
+
+```bash
+npm.cmd run trial:first-live-standby -- --tester tester-2
+npm.cmd run trial:post-call-rehearsal -- --force
+```
+
+The rehearsal is synthetic-only and must never be counted as real feedback.
+
+When a real tester is scheduled, rerun standby. Host only on `FIRST_LIVE_STANDBY_READY` or `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`, after reading every warning. Keep `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, and the three final record templates open. Stay within Demo plus real-project read-only preflight, and stop before Apply on every real project.
+
+Immediately after the real call, keep raw notes local and run in this order:
+
+```bash
+npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2
+npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force
+```
+
+Copy only confirmed draft values into the final records. Leave unanswered fields for human follow-up, then run `trial:after-live` only after those records are complete.
+
 ## Freeze Candidate
 
 After `trial:simulate` and `trial:ready` pass, freeze the candidate:

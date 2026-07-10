@@ -39,6 +39,7 @@ try {
     i18n: html.includes("languageSelect") && appJs.includes("initI18n") && i18nJs.includes("SUPPORTED_LANGUAGES") && i18nJs.includes("zh-CN") && i18nJs.includes("ru"),
     trustStrip: html.includes("trust-strip") && html.includes("trust.local.title") && html.includes("trust.confirm.title") && styles.includes(".trust-strip"),
     quickStart: html.includes("quickStartPrimary") && appJs.includes("function quickStartModel"),
+    trialOperator: html.includes("trial-operator-guide") && html.includes("trial:first-live-standby") && html.includes("trial:post-call-rehearsal") && html.includes("trial:record-draft") && html.includes("trial:after-live") && appJs.includes("function copyTrialCommand") && i18nJs.includes("trialHost.waiting.rehearsal") && styles.includes(".trial-command-row"),
     modelCostHint: html.includes("modelCostHint") && appJs.includes("MODEL_COST_GUIDE") && styles.includes(".model-cost-hint"),
     preflightPanel: html.includes("preflightButton") && appJs.includes("/api/preflight/run"),
     realProjectPathInput: html.includes("real-project-path-helper") && html.includes("examplePathButton") && styles.includes(".path-helper") && appJs.includes("PATH_IS_FILE"),
