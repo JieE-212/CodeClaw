@@ -10,6 +10,12 @@ The command does not create real tester data and does not run a live session. It
 npm.cmd run trial:tester-launch-plan -- --tester tester-2
 ```
 
+If there is no completed real previous tester and the next tester is actually the first real hosted tester, use first-live mode instead of inventing a previous `after-live` record:
+
+```bash
+npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live
+```
+
 It writes:
 
 ```text
@@ -72,3 +78,11 @@ npm.cmd run trial:live-capture -- --tester tester-2
 npm.cmd run trial:next-live -- --tester tester-2 --accept-review --accepted-by <host-id>
 npm.cmd run trial:tester-launch-plan -- --tester tester-2
 ```
+
+For first-live mode, stop after `trial:live-capture` and rerun:
+
+```bash
+npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live
+```
+
+Host only if it says `TESTER_LAUNCH_READY_TO_HOST`.

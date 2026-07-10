@@ -77,6 +77,21 @@ test("tester-launch-plan reaches ready-to-host after next-live passes", async ()
   assert.match(report.nextCommand, /NEXT_LIVE_HOST_HANDOFF/);
 });
 
+test("tester-launch-plan can launch a first real tester without previous after-live", async () => {
+  const fixture = await makeFixture(["--first-live"]);
+  await writeFirstLiveReports(fixture.reportsPath, "tester-2");
+
+  const result = await runPlan(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.equal(result.code, 0);
+  assert.equal(report.decision, "TESTER_LAUNCH_READY_TO_HOST");
+  assert.equal(report.firstLive, true);
+  assert.equal(report.previousTester, "");
+  assert.match(report.nextCommand, /LIVE_SESSION_CAPTURE/);
+  assert.ok(!report.commandSequence.some((item) => item.includes("trial:next-live")));
+});
+
 test("tester-launch-plan blocks mismatched tester ids", async () => {
   const fixture = await makeFixture();
   await writeReadyIntake(fixture.reportsPath, "tester-2");
@@ -98,7 +113,7 @@ test("tester-launch-plan blocks mismatched tester ids", async () => {
   assert.ok(report.blockers.some((item) => item.includes("does not match target tester tester-2")));
 });
 
-async function makeFixture() {
+async function makeFixture(extraArgs = []) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-launch-plan-"));
   const reportsPath = path.join(tempRoot, "reports");
   const jsonPath = path.join(tempRoot, "TRIAL_TESTER_LAUNCH_PLAN.json");
@@ -111,7 +126,8 @@ async function makeFixture() {
       "--tester", "tester-2",
       "--reports", path.relative(rootPath, reportsPath),
       "--json", path.relative(rootPath, jsonPath),
-      "--markdown", path.relative(rootPath, markdownPath)
+      "--markdown", path.relative(rootPath, markdownPath),
+      ...extraArgs
     ]
   };
 }
@@ -145,6 +161,15 @@ async function writeFullLaunchReports(reportsPath, testerId) {
   await writeJson(path.join(reportsPath, "TRIAL_PRE_LIVE_REPORT.json"), readyReport("trial-pre-live", "PRE_LIVE_READY_TO_HOST", testerId));
   await writeJson(path.join(reportsPath, "TRIAL_LIVE_CAPTURE_REPORT.json"), readyReport("trial-live-capture", "LIVE_CAPTURE_READY", testerId));
   await writeJson(path.join(reportsPath, "TRIAL_NEXT_LIVE_REPORT.json"), readyReport("trial-next-live", "NEXT_LIVE_READY", testerId));
+}
+
+async function writeFirstLiveReports(reportsPath, testerId) {
+  await writeReadyIntake(reportsPath, testerId);
+  await writeJson(path.join(reportsPath, "TRIAL_INTAKE_SESSION_REPORT.json"), readyReport("trial-intake-session", "INTAKE_SESSION_READY", testerId));
+  await writeJson(path.join(reportsPath, "TRIAL_HOST_READY_REPORT.json"), readyReport("trial-host-ready", "READY_TO_HOST", testerId));
+  await writeJson(path.join(reportsPath, "TRIAL_HOST_RUN_REPORT.json"), readyReport("trial-host-run", "HOST_RUN_READY", testerId));
+  await writeJson(path.join(reportsPath, "TRIAL_PRE_LIVE_REPORT.json"), readyReport("trial-pre-live", "PRE_LIVE_READY_TO_HOST", testerId));
+  await writeJson(path.join(reportsPath, "TRIAL_LIVE_CAPTURE_REPORT.json"), readyReport("trial-live-capture", "LIVE_CAPTURE_READY", testerId));
 }
 
 function tester(testerId) {

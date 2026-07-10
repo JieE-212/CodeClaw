@@ -15,6 +15,7 @@ const runPath = path.resolve(rootPath, args.out || path.join("dist", "trial-dry-
 const packagePath = path.join(runPath, "package");
 const sessionPath = path.join(runPath, "session");
 const rosterPath = path.join(runPath, "TESTER_ROSTER.json");
+const dryRunReportsPath = path.join(runPath, "reports");
 const finalJsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json"));
 const finalMarkdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.md"));
 
@@ -44,8 +45,8 @@ try {
     args: [
       "--",
       "--input", relative(path.join(runPath, "MISSING_FEEDBACK_SUMMARY.json")),
-      "--json", path.join("dist", "TRIAL_FIX_BACKLOG.json"),
-      "--markdown", path.join("dist", "TRIAL_FIX_BACKLOG.md")
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_FIX_BACKLOG.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_FIX_BACKLOG.md"))
     ]
   }));
   steps.push(await runNpmStep({
@@ -54,8 +55,8 @@ try {
     args: [
       "--",
       "--roster", relative(rosterPath),
-      "--json", relative(path.join(runPath, "TRIAL_TESTER_INTAKE_REPORT.json")),
-      "--markdown", relative(path.join(runPath, "TRIAL_TESTER_INTAKE_REPORT.md"))
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_TESTER_INTAKE_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_TESTER_INTAKE_REPORT.md"))
     ]
   }));
   steps.push(await runNpmStep({
@@ -63,12 +64,12 @@ try {
     script: "trial:intake-session",
     args: [
       "--",
-      "--intake", relative(path.join(runPath, "TRIAL_TESTER_INTAKE_REPORT.json")),
+      "--intake", relative(path.join(dryRunReportsPath, "TRIAL_TESTER_INTAKE_REPORT.json")),
       "--tester", testerId,
       "--out", relative(sessionPath),
-      "--backlog", path.join("dist", "TRIAL_FIX_BACKLOG.json"),
-      "--json", relative(path.join(runPath, "TRIAL_INTAKE_SESSION_REPORT.json")),
-      "--markdown", relative(path.join(runPath, "TRIAL_INTAKE_SESSION_REPORT.md")),
+      "--backlog", relative(path.join(dryRunReportsPath, "TRIAL_FIX_BACKLOG.json")),
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_INTAKE_SESSION_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_INTAKE_SESSION_REPORT.md")),
       "--force"
     ]
   }));
@@ -78,11 +79,11 @@ try {
     args: [
       "--",
       "--tester", testerId,
-      "--dispatch", path.join("dist", "TRIAL_DISPATCH_NOTE.json"),
-      "--backlog", path.join("dist", "TRIAL_FIX_BACKLOG.json"),
+      "--dispatch", relative(path.join(dryRunReportsPath, "TRIAL_DISPATCH_NOTE.json")),
+      "--backlog", relative(path.join(dryRunReportsPath, "TRIAL_FIX_BACKLOG.json")),
       "--session", relative(path.join(sessionPath, "SESSION_PACK_MANIFEST.json")),
-      "--json", relative(path.join(runPath, "TRIAL_HOST_READY_REPORT.json")),
-      "--markdown", relative(path.join(runPath, "TRIAL_HOST_READY_REPORT.md"))
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_HOST_READY_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_HOST_READY_REPORT.md"))
     ]
   }));
   steps.push(await runNpmStep({
@@ -92,10 +93,10 @@ try {
       "--",
       "--tester", testerId,
       "--session", relative(sessionPath),
-      "--host-ready", relative(path.join(runPath, "TRIAL_HOST_READY_REPORT.json")),
-      "--intake-session", relative(path.join(runPath, "TRIAL_INTAKE_SESSION_REPORT.json")),
-      "--json", relative(path.join(runPath, "TRIAL_HOST_RUN_REPORT.json")),
-      "--markdown", relative(path.join(runPath, "TRIAL_HOST_RUN_REPORT.md"))
+      "--host-ready", relative(path.join(dryRunReportsPath, "TRIAL_HOST_READY_REPORT.json")),
+      "--intake-session", relative(path.join(dryRunReportsPath, "TRIAL_INTAKE_SESSION_REPORT.json")),
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_HOST_RUN_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_HOST_RUN_REPORT.md"))
     ]
   }));
 
@@ -107,25 +108,37 @@ try {
     args: [
       "--",
       "--session", relative(sessionPath),
-      "--json", relative(path.join(runPath, "TRIAL_SESSION_COMPLETION_REPORT.json")),
-      "--markdown", relative(path.join(runPath, "TRIAL_SESSION_COMPLETION_REPORT.md")),
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_SESSION_COMPLETION_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_SESSION_COMPLETION_REPORT.md")),
       "--checklist", relative(path.join(sessionPath, "HOST_COMPLETION_CHECKLIST.md"))
     ]
   }));
   steps.push(await runNpmStep({
     name: "trial:post-session",
     script: "trial:post-session",
-    args: ["--", "--session", relative(sessionPath), "--next-tester", nextTester]
+    args: ["--", "--session", relative(sessionPath), "--next-tester", nextTester, "--reports", relative(dryRunReportsPath)]
   }));
   steps.push(await runNpmStep({
     name: "trial:review-session",
     script: "trial:review-session",
-    args: ["--", "--session", relative(sessionPath), "--reports", "dist", "--tester", testerId]
+    args: [
+      "--",
+      "--session", relative(sessionPath),
+      "--reports", relative(dryRunReportsPath),
+      "--tester", testerId,
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_REVIEW_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_REVIEW_REPORT.md"))
+    ]
   }));
   steps.push(await runNpmStep({
     name: "trial:status",
     script: "trial:status",
-    args: []
+    args: [
+      "--",
+      "--dist", relative(dryRunReportsPath),
+      "--json", relative(path.join(dryRunReportsPath, "TRIAL_STATUS_REPORT.json")),
+      "--markdown", relative(path.join(dryRunReportsPath, "TRIAL_STATUS_REPORT.md"))
+    ]
   }));
 
   report = await buildReport({ error: "" });
@@ -155,17 +168,17 @@ console.log(JSON.stringify({
 if (!report.ok) process.exitCode = 1;
 
 async function buildReport({ error }) {
-  const intake = await readJson(path.join(runPath, "TRIAL_TESTER_INTAKE_REPORT.json"));
-  const intakeSession = await readJson(path.join(runPath, "TRIAL_INTAKE_SESSION_REPORT.json"));
-  const hostReady = await readJson(path.join(runPath, "TRIAL_HOST_READY_REPORT.json"));
-  const hostRun = await readJson(path.join(runPath, "TRIAL_HOST_RUN_REPORT.json"));
-  const completion = await readJson(path.join(runPath, "TRIAL_SESSION_COMPLETION_REPORT.json"));
-  const privacy = await readJson(path.join(distPath, "TRIAL_PRIVACY_REPORT.json"));
-  const feedback = await readJson(path.join(distPath, "TRIAL_FEEDBACK_SUMMARY.json"));
-  const backlog = await readJson(path.join(distPath, "TRIAL_FIX_BACKLOG.json"));
-  const postSession = await readJson(path.join(distPath, "TRIAL_POST_SESSION_REPORT.json"));
-  const review = await readJson(path.join(distPath, "TRIAL_REVIEW_REPORT.json"));
-  const status = await readJson(path.join(distPath, "TRIAL_STATUS_REPORT.json"));
+  const intake = await readJson(path.join(dryRunReportsPath, "TRIAL_TESTER_INTAKE_REPORT.json"));
+  const intakeSession = await readJson(path.join(dryRunReportsPath, "TRIAL_INTAKE_SESSION_REPORT.json"));
+  const hostReady = await readJson(path.join(dryRunReportsPath, "TRIAL_HOST_READY_REPORT.json"));
+  const hostRun = await readJson(path.join(dryRunReportsPath, "TRIAL_HOST_RUN_REPORT.json"));
+  const completion = await readJson(path.join(dryRunReportsPath, "TRIAL_SESSION_COMPLETION_REPORT.json"));
+  const privacy = await readJson(path.join(dryRunReportsPath, "TRIAL_PRIVACY_REPORT.json"));
+  const feedback = await readJson(path.join(dryRunReportsPath, "TRIAL_FEEDBACK_SUMMARY.json"));
+  const backlog = await readJson(path.join(dryRunReportsPath, "TRIAL_FIX_BACKLOG.json"));
+  const postSession = await readJson(path.join(dryRunReportsPath, "TRIAL_POST_SESSION_REPORT.json"));
+  const review = await readJson(path.join(dryRunReportsPath, "TRIAL_REVIEW_REPORT.json"));
+  const status = await readJson(path.join(dryRunReportsPath, "TRIAL_STATUS_REPORT.json"));
   const packageInspection = await inspectGeneratedPaths();
   const blockers = [];
   const warnings = [];
@@ -283,9 +296,9 @@ async function writeDispatchFixture(targetPackagePath) {
       "Stop before Apply on a non-disposable real project."
     ]
   };
-  await fs.mkdir(distPath, { recursive: true });
-  await fs.writeFile(path.join(distPath, "TRIAL_DISPATCH_NOTE.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  await fs.writeFile(path.join(distPath, "TRIAL_DISPATCH_NOTE.md"), renderDispatchMarkdown(report), "utf8");
+  await fs.mkdir(dryRunReportsPath, { recursive: true });
+  await fs.writeFile(path.join(dryRunReportsPath, "TRIAL_DISPATCH_NOTE.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(dryRunReportsPath, "TRIAL_DISPATCH_NOTE.md"), renderDispatchMarkdown(report), "utf8");
 }
 
 async function writeCompletedSessionRecords(targetSessionPath, id) {
@@ -621,13 +634,13 @@ function artifactLinks() {
   return {
     dryRunReport: relative(finalMarkdownPath),
     roster: relative(rosterPath),
-    intakeReport: relative(path.join(runPath, "TRIAL_TESTER_INTAKE_REPORT.md")),
-    intakeSessionReport: relative(path.join(runPath, "TRIAL_INTAKE_SESSION_REPORT.md")),
-    hostRunReport: relative(path.join(runPath, "TRIAL_HOST_RUN_REPORT.md")),
-    completionReport: relative(path.join(runPath, "TRIAL_SESSION_COMPLETION_REPORT.md")),
-    postSessionReport: "dist/TRIAL_POST_SESSION_REPORT.md",
-    reviewReport: "dist/TRIAL_REVIEW_REPORT.md",
-    statusReport: "dist/TRIAL_STATUS_REPORT.md"
+    intakeReport: relative(path.join(dryRunReportsPath, "TRIAL_TESTER_INTAKE_REPORT.md")),
+    intakeSessionReport: relative(path.join(dryRunReportsPath, "TRIAL_INTAKE_SESSION_REPORT.md")),
+    hostRunReport: relative(path.join(dryRunReportsPath, "TRIAL_HOST_RUN_REPORT.md")),
+    completionReport: relative(path.join(dryRunReportsPath, "TRIAL_SESSION_COMPLETION_REPORT.md")),
+    postSessionReport: relative(path.join(dryRunReportsPath, "TRIAL_POST_SESSION_REPORT.md")),
+    reviewReport: relative(path.join(dryRunReportsPath, "TRIAL_REVIEW_REPORT.md")),
+    statusReport: relative(path.join(dryRunReportsPath, "TRIAL_STATUS_REPORT.md"))
   };
 }
 

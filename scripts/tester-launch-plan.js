@@ -7,6 +7,7 @@ const rootPath = path.resolve(path.dirname(scriptPath), "..");
 const args = parseArgs(process.argv.slice(2));
 const reportsPath = path.resolve(rootPath, args.reports || "dist");
 const testerIdOverride = sanitizeTesterId(args.tester || "");
+const firstLive = Boolean(args.firstLive);
 const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_TESTER_LAUNCH_PLAN.json"));
 const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_TESTER_LAUNCH_PLAN.md"));
 
@@ -43,7 +44,7 @@ async function buildReport() {
     nextLive: await readReport("TRIAL_NEXT_LIVE_REPORT.json"),
     status: await readReport("TRIAL_STATUS_REPORT.json")
   };
-  const previousTester = sanitizeTesterId(reports.afterLive.data?.testerId || "");
+  const previousTester = firstLive ? "" : sanitizeTesterId(reports.afterLive.data?.testerId || "");
   const testerId = inferTesterId(reports, previousTester);
   const blockers = [];
   const warnings = [];
@@ -74,7 +75,7 @@ async function buildReport() {
     inspectAlignedReport({ label: "live-capture", report: reports.liveCapture, testerId, readyDecisions: ["LIVE_CAPTURE_READY", "LIVE_CAPTURE_READY_WITH_REVIEW"], blockers, warnings });
   }
   const liveCaptureReady = preLiveReady && ["LIVE_CAPTURE_READY", "LIVE_CAPTURE_READY_WITH_REVIEW"].includes(reports.liveCapture.data?.decision);
-  if (liveCaptureReady) {
+  if (liveCaptureReady && !firstLive) {
     inspectAlignedReport({ label: "next-live", report: reports.nextLive, testerId, readyDecisions: ["NEXT_LIVE_READY", "NEXT_LIVE_READY_WITH_REVIEW"], blockers, warnings, optional: true });
   }
 
@@ -87,6 +88,7 @@ async function buildReport() {
     currentStep: state.currentStep,
     testerId,
     previousTester,
+    firstLive,
     tester: intakeTester,
     reportsPath,
     reportsRelativePath: relative(reportsPath),
@@ -94,7 +96,7 @@ async function buildReport() {
     blockers: unique([...blockers, ...state.blockers]),
     warnings: unique(warnings),
     rosterChecklist: rosterChecklist(testerId || "tester-2"),
-    commandSequence: commandSequence(testerId || "<tester-id>"),
+    commandSequence: commandSequence(testerId || "<tester-id>", firstLive),
     nextCommand: state.nextCommand,
     nextSteps: nextSteps(state.decision, testerId)
   };
@@ -169,6 +171,9 @@ function decideState(reports, testerId, blockers) {
   if (!reports.liveCapture.exists || !["LIVE_CAPTURE_READY", "LIVE_CAPTURE_READY_WITH_REVIEW"].includes(reports.liveCapture.data?.decision)) {
     return state(true, "TESTER_LAUNCH_READY_FOR_LIVE_CAPTURE", "live-capture", `npm.cmd run trial:live-capture -- --tester ${testerId || "<tester-id>"}`, []);
   }
+  if (firstLive) {
+    return state(true, "TESTER_LAUNCH_READY_TO_HOST", "host", "Open LIVE_SESSION_CAPTURE.md and HOST_RUNBOOK.md", []);
+  }
   if (!reports.nextLive.exists || !["NEXT_LIVE_READY", "NEXT_LIVE_READY_WITH_REVIEW"].includes(reports.nextLive.data?.decision)) {
     return state(true, "TESTER_LAUNCH_READY_FOR_NEXT_LIVE", "next-live", `npm.cmd run trial:next-live -- --tester ${testerId || "<tester-id>"} --accept-review --accepted-by <host-id>`, []);
   }
@@ -206,15 +211,20 @@ function rosterChecklist(testerId) {
   ];
 }
 
-function commandSequence(testerId) {
-  return [
+function commandSequence(testerId, isFirstLive) {
+  const sequence = [
     "npm.cmd run trial:intake",
     `npm.cmd run trial:intake-session -- --tester ${testerId} --force`,
     `npm.cmd run trial:host-ready -- --tester ${testerId}`,
     `npm.cmd run trial:host-run -- --tester ${testerId}`,
     `npm.cmd run trial:pre-live -- --tester ${testerId}`,
-    `npm.cmd run trial:live-capture -- --tester ${testerId}`,
-    `npm.cmd run trial:next-live -- --tester ${testerId} --accept-review --accepted-by <host-id>`,
+    `npm.cmd run trial:live-capture -- --tester ${testerId}`
+  ];
+  if (!isFirstLive) {
+    sequence.push(`npm.cmd run trial:next-live -- --tester ${testerId} --accept-review --accepted-by <host-id>`);
+  }
+  return [
+    ...sequence,
     "npm.cmd run trial:status"
   ];
 }
@@ -274,6 +284,7 @@ function renderMarkdown(report) {
     `Current step: ${report.currentStep}`,
     `Tester: ${report.testerId || "Not selected"}`,
     `Previous tester: ${report.previousTester || "Unknown"}`,
+    `First live tester mode: ${report.firstLive ? "Yes" : "No"}`,
     `Next command: ${report.nextCommand}`,
     "",
     "## Roster Checklist",
@@ -308,9 +319,13 @@ function renderMarkdown(report) {
 }
 
 function parseArgs(rawArgs) {
-  const parsed = { tester: "", reports: "", json: "", markdown: "" };
+  const parsed = { tester: "", reports: "", json: "", markdown: "", firstLive: false };
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
+    if (arg === "--first-live" || arg === "--first-real-tester") {
+      parsed.firstLive = true;
+      continue;
+    }
     let handled = false;
     for (const key of ["tester", "reports", "json", "markdown"]) {
       if (arg === `--${key}`) {
