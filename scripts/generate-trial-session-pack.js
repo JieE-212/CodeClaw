@@ -85,6 +85,10 @@ function injectTemplateHeader(file, text, { backlog, watchItems }) {
       "",
       ...renderWatchItems(watchItems),
       "",
+      "## Local-Only Privacy Guardrails",
+      "",
+      ...privacyGuardrails(),
+      "",
       "---",
       "",
       text
@@ -105,6 +109,10 @@ function injectTemplateHeader(file, text, { backlog, watchItems }) {
       "npm.cmd run trial:fix-backlog",
       "```",
       "",
+      "## Local-Only Privacy Guardrails",
+      "",
+      ...privacyGuardrails(),
+      "",
       "---",
       "",
       text
@@ -115,6 +123,10 @@ function injectTemplateHeader(file, text, { backlog, watchItems }) {
     "",
     `Tester folder: ${path.basename(outputPath)}`,
     "Fill this file after the hosted trial, then run feedback ingest against this session folder.",
+    "",
+    "## Local-Only Privacy Guardrails",
+    "",
+    ...privacyGuardrails(),
     "",
     "---",
     "",
@@ -145,6 +157,7 @@ function renderSessionBrief({ testerId, outputPath, backlog, watchItems }) {
     "- Start with Demo, then run one real-project read-only preflight.",
     "- Stop before Apply on a non-disposable real project.",
     "- Do not ask for API keys in the first hosted trial.",
+    "- Keep notes anonymous: do not write real names, contact details, account URLs, private project names, screenshots, logs, source snippets, local paths, or secrets.",
     "",
     "## Watch Items",
     "",
@@ -155,6 +168,10 @@ function renderSessionBrief({ testerId, outputPath, backlog, watchItems }) {
     "- `HUMAN_TRIAL_OBSERVATION.md` during the live session.",
     "- `TRIAL_FEEDBACK_TEMPLATE.md` after the tester finishes.",
     "- `TRIAL_RESULT_RECORD.md` after the host reviews the outcome.",
+    "",
+    "## Local-Only Privacy Guardrails",
+    "",
+    ...privacyGuardrails(),
     "",
     "## After The Session",
     "",
@@ -173,6 +190,15 @@ function renderWatchItems(items) {
     const evidence = Array.isArray(item.evidence) ? item.evidence.join("; ") : item.evidence || "No evidence recorded.";
     return `- ${item.id || item.priority || "WATCH"} ${item.title || "Watch item"}: ${item.action || "Observe and record."} Evidence: ${evidence}`;
   });
+}
+
+function privacyGuardrails() {
+  return [
+    "- Use only anonymous tester ids such as tester-2.",
+    "- Do not record real names, phone numbers, email addresses, company names, account URLs, or private project names.",
+    "- Do not paste screenshots, logs, source snippets, local absolute paths, API keys, or secret tokens.",
+    "- Keep raw tester notes in this local session folder only; do not commit or share them."
+  ];
 }
 
 function renderManifest({ testerId, outputPath, backlog, watchItems }) {

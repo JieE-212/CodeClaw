@@ -55,6 +55,14 @@ The generated observation and result files include session-specific headers befo
 
 ## After The Session
 
+If the host has local notes and wants a safe draft before filling the final record files, run:
+
+```bash
+npm.cmd run trial:record-draft -- --session dist/trial-session-packs/tester-1
+```
+
+This writes `dist/TRIAL_RECORD_DRAFT.md` and `.json`. Copy only confirmed values into the session files and ask for missing fields instead of guessing.
+
 Run the post-session loop against the generated folder:
 
 ```bash

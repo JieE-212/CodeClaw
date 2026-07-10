@@ -1,6 +1,6 @@
 # CodeClaw Project Status
 
-Updated: 2026-07-09
+Updated: 2026-07-10
 
 ## Completed Phase
 
@@ -451,13 +451,39 @@ Latest verification:
 - `npm.cmd run i18n:check`: passed.
 - Local dev server responded at `http://localhost:4173/`.
 
+Stage 3.0.4 is complete: local-only post-test record draft handoff.
+
+Implemented and verified:
+
+- Added `trial:record-draft` for turning explicit host/tester notes into draft values for the three session record files.
+- The helper writes `dist/TRIAL_RECORD_DRAFT.md` and `dist/TRIAL_RECORD_DRAFT.json`.
+- It reports missing fields instead of inventing feedback.
+- It blocks personal email, phone numbers, and likely secret tokens.
+- It warns on local paths, public account URLs, screenshots, logs, and source snippets.
+- It supports generated session files or a separate local notes file.
+- Generated session packs now include stronger local-only privacy guardrails.
+- Trial package, session-pack, after-live, and package manifest docs were updated.
+- Automated tests cover explicit extraction, privacy blocking, zh-CN labels, and tester wording that should not be mistaken for instructions.
+
+Latest verification:
+
+- `node --check scripts\trial-record-draft.js`: passed.
+- `node --check scripts\generate-trial-session-pack.js`: passed.
+- `node --test tests\trial-record-draft.test.js`: passed, 3 tests.
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 113 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run trial:ready`: passed in source and generated local trial package.
+- `npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2`: `RECORD_DRAFT_READY_WITH_GAPS` with no privacy blockers.
+- `npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live`: `TESTER_LAUNCH_READY_TO_HOST`.
+
 ## Next Planned Phase
 
-Stage 3.0.4: improve post-test record handoff while tester-2 is pending.
+Stage 3.0.5: keep tester-2 launch ready while waiting for a human tester.
 
 Recommended order:
 
-1. Add a small local-only helper to summarize tester notes into the existing after-live record fields without inventing feedback.
-2. Add clearer guardrails around screenshots, logs, paths, and contact info in generated tester session files.
-3. When a human tester is available, host tester-2 using first-live mode.
-4. After the call, fill generated records and run `trial:after-live` for tester-2.
+1. Keep the current tester-2 first-live plan paused until a real human tester is available.
+2. When a human tester is available, host tester-2 using first-live mode.
+3. After the call, run `trial:record-draft` if the host has local notes.
+4. Fill generated records and run `trial:after-live` for tester-2.

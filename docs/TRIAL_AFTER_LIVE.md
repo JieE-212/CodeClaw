@@ -2,6 +2,8 @@
 
 Use this after the first real tester call, after the host has filled the generated session records.
 
+If the host has local notes but has not filled the three final record files yet, run `npm.cmd run trial:record-draft -- --session <session-folder>` first. Copy only confirmed draft values into the records and leave missing feedback for a human follow-up.
+
 ## Command
 
 ```bash
