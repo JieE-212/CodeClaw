@@ -432,13 +432,32 @@ Latest verification:
 - `npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live`: `TESTER_LAUNCH_READY_TO_HOST`.
 - Local dev server responded at `http://localhost:4173/`.
 
+Stage 3.0.3 is complete: in-app host checklist for first real tester sessions.
+
+Implemented and verified:
+
+- Added a `Trial host checklist` panel to the workspace.
+- The checklist is split into before-call, during-call, and after-call steps.
+- It keeps tester-2 scope explicit: Demo plus real-read-only only.
+- It makes stop conditions visible in the app: stop before Apply on any real project.
+- It reminds the host to keep raw tester records local-only and out of public repos.
+- English, zh-CN, and ru dictionaries were updated.
+
+Latest verification:
+
+- `npm.cmd run check`: passed.
+- `npm.cmd test`: passed, 110 tests.
+- `npm.cmd run health`: passed.
+- `npm.cmd run i18n:check`: passed.
+- Local dev server responded at `http://localhost:4173/`.
+
 ## Next Planned Phase
 
-Stage 3.0.3: continue product hardening while tester-2 is pending.
+Stage 3.0.4: improve post-test record handoff while tester-2 is pending.
 
 Recommended order:
 
-1. Improve the first-run host/tester guide so a non-technical host can run tester-2 without reading long Markdown.
-2. Add a lightweight in-app trial checklist or exportable host notes for Demo and real-read-only sessions.
+1. Add a small local-only helper to summarize tester notes into the existing after-live record fields without inventing feedback.
+2. Add clearer guardrails around screenshots, logs, paths, and contact info in generated tester session files.
 3. When a human tester is available, host tester-2 using first-live mode.
 4. After the call, fill generated records and run `trial:after-live` for tester-2.

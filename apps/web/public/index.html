@@ -49,6 +49,29 @@
               <button class="secondary" id="quickStartSecondary" type="button">运行预检</button>
             </div>
           </div>
+          <div class="panel trial-host-panel" data-view="workspace">
+            <div class="panel-header"><h3 data-i18n="panel.trialHost">Trial host checklist</h3><span data-i18n="trialHost.state.pending">Waiting for human tester</span></div>
+            <div class="trial-host-grid">
+              <fieldset class="trial-checklist">
+                <legend data-i18n="trialHost.before">Before the call</legend>
+                <label><input type="checkbox" /><span data-i18n="trialHost.before.consent">Tester consent and privacy rules accepted.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.before.scope">Scope is Demo plus real-read-only only.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.before.records">No real names, contacts, screenshots, logs, secrets, or private repo names in notes.</span></label>
+              </fieldset>
+              <fieldset class="trial-checklist">
+                <legend data-i18n="trialHost.during">During the call</legend>
+                <label><input type="checkbox" /><span data-i18n="trialHost.during.demo">Start with Demo and let the tester think aloud.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.during.readonly">Run real-project read-only preflight only.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.during.stop">Stop before Apply on any real project.</span></label>
+              </fieldset>
+              <fieldset class="trial-checklist">
+                <legend data-i18n="trialHost.after">After the call</legend>
+                <label><input type="checkbox" /><span data-i18n="trialHost.after.friction">Record the first stuck moment and trust concern.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.after.go">Record whether this build should continue, fix first, or stop.</span></label>
+                <label><input type="checkbox" /><span data-i18n="trialHost.after.local">Keep raw tester records local-only.</span></label>
+              </fieldset>
+            </div>
+          </div>
           <div class="panel repo-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.repo">项目仓库</h3><span id="scanState">未扫描</span></div>
             <div class="system-check" id="systemCheck">正在检查本地环境。</div>
