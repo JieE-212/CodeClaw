@@ -4,7 +4,7 @@ Updated: 2026-07-10
 
 ## One-Sentence State
 
-CodeClaw is complete through 3.0.7. The pre-human-tester operator flow is polished and verified, but no real human tester has completed a session; 3.0.8 is the real tester-2 first-live and after-live phase and must wait for a real person.
+CodeClaw is complete through 3.0.8a. The beginner first-live host flow, neutral next-tester fields, and guarded post-call sequence are hardened and verified, but no real human tester has completed a session; the real tester-2 first-live and after-live phase must wait until the user's friend is available.
 
 ## Start Here
 
@@ -19,7 +19,7 @@ git log -5 --oneline
 Latest completed implementation commit:
 
 ```text
-b6fee7c Polish pre-human tester operator flow
+31be5fb Harden beginner first-live session flow
 ```
 
 The branch may be ahead until the user runs:
@@ -35,6 +35,7 @@ Read these before changing code or starting a real session:
 ```text
 docs/HANDOFF_RESTART.md
 docs/PROJECT_STATUS.md
+docs/TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md
 docs/TRIAL_FIRST_LIVE_STANDBY.md
 docs/TRIAL_RECORD_DRAFT.md
 docs/TRIAL_AFTER_LIVE.md
@@ -51,34 +52,31 @@ apps/web/public/i18n.js
 apps/web/public/styles.css
 ```
 
-## What 3.0.7 Added
+## What 3.0.8a Added
 
-The in-app `Trial host checklist` now has four operational stages:
+Each generated session pack now contains a tester-specific Chinese host sheet:
 
 ```text
-while waiting -> before the call -> during the call -> immediately after
+BEGINNER_FIRST_LIVE_GUIDE.md
 ```
 
-It includes copyable commands for:
+It covers live consent, anonymous IDs, Demo/read-only scope, stop conditions, required field values, and this guarded post-call order:
 
-```powershell
-npm.cmd run trial:first-live-standby -- --tester tester-2
-npm.cmd run trial:post-call-rehearsal -- --force
-npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2
-npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force
+```text
+explicit local notes -> trial:record-draft -> human confirmation -> trial:after-live
 ```
 
 Other completed work:
 
-- Copy success and failure feedback works with a clipboard fallback.
-- English, zh-CN, and Russian operator copy has full key parity.
-- Health checks require the operator guide and all four commands.
-- Trial status and local package docs use the same operator rhythm.
-- Tester-2 remains explicitly paused until a real person is available.
+- Host-run, pre-live, live-capture, tester launch-plan, and first-live standby require and point to the beginner guide.
+- Host-facing command sequences now use `trial:record-draft` followed by `trial:after-live`; lower-level post-session steps remain guarded inside after-live.
+- Ambiguous template labels now say “the next tester”; completion, record-draft, and feedback-ingest still accept legacy tester-2 labels.
+- Feedback ingest accepts both colon fields and question-style bullets. Synthetic rehearsal now returns `READY_WITH_WATCH_ITEMS` instead of a false missing-decision review.
+- The empty local tester-2 pack was regenerated and checked without creating suggestions, feedback, or real after-live evidence.
 
 ## Verification Baseline
 
-These passed after 3.0.7:
+These passed after 3.0.8a:
 
 ```powershell
 npm.cmd run check
@@ -86,25 +84,30 @@ npm.cmd test
 npm.cmd run health
 npm.cmd run i18n:check
 npm.cmd run trial:ready
+npm.cmd run trial:tester-launch-plan -- --tester tester-2 --first-live
 npm.cmd run trial:first-live-standby -- --tester tester-2
+npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2
 npm.cmd run trial:post-call-rehearsal -- --force
 ```
 
 Results:
 
 ```text
-120 tests passed
+124 tests passed in source and generated package
 trialOperator: true
 506 i18n keys per language, no warnings
-trial:ready passed in source and generated package
+trial:ready package hygiene: missingRequired 0, disallowed 0, files 170
+TESTER_LAUNCH_READY_TO_HOST
 FIRST_LIVE_STANDBY_READY_WITH_REVIEW
 standby blockers: 0
 standby warnings: 5
 POST_CALL_REHEARSAL_READY_WITH_REVIEW
 rehearsal blockers: 0
+feedback ingest: READY_WITH_WATCH_ITEMS, blockers 0
+empty tester-2 record draft: 0 suggestions, 20 missing human fields, blockers 0
 ```
 
-The in-app browser had no available browser instance during 3.0.7. HTTP health and packaged UI marker checks passed, but the first 3.0.8 action is a real-browser visual and copy check before the live call.
+No new real-browser visual pass was performed in 3.0.8a because this substage changed the host workflow and generated files, not the operator UI. HTTP health and packaged UI marker checks passed; do a visual and copy check immediately before the live call.
 
 ## Current Human-Tester Reality
 
@@ -122,7 +125,7 @@ Keep raw records, screenshots, logs, contact details, private paths, source snip
 
 ## Next Task: 3.0.8
 
-Start only when the user confirms a real human tester is available.
+Start only when the user confirms their friend or another real human tester is available.
 
 Planned order:
 
@@ -130,10 +133,10 @@ Planned order:
 2. Run `npm.cmd run trial:first-live-standby -- --tester tester-2` immediately before the call.
 3. Host only on `FIRST_LIVE_STANDBY_READY` or accepted `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`.
 4. Read all five current warnings; refresh any stale report if the warning list changes into a blocker.
-5. Keep `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, `HUMAN_TRIAL_OBSERVATION.md`, `TRIAL_FEEDBACK_TEMPLATE.md`, and `TRIAL_RESULT_RECORD.md` open.
+5. Keep `BEGINNER_FIRST_LIVE_GUIDE.md`, `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, `HUMAN_TRIAL_OBSERVATION.md`, `TRIAL_FEEDBACK_TEMPLATE.md`, and `TRIAL_RESULT_RECORD.md` open.
 6. Limit the live session to Demo plus real-project read-only preflight and stop before Apply.
-7. After the call, fill only confirmed anonymous records and keep raw notes local.
-8. Run `trial:record-draft`, copy only confirmed values, fill remaining human answers, then run `trial:after-live`.
+7. After the call, capture only explicit anonymous notes and keep raw notes local.
+8. Run `trial:record-draft`, copy only confirmed values, ask the human for every missing answer, then run `trial:after-live`.
 9. Review the after-live decision and preserve only the local privacy-safe evidence packet.
 
 ## Stop Conditions
