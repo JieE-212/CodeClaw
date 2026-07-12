@@ -187,6 +187,8 @@ test("trial-status requests remediation when a preserved after-live blocks", asy
   await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
   await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "READY_FOR_NEXT_TESTER", blockers: [] });
   await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: false, mode: "trial-after-live", decision: "AFTER_LIVE_BLOCKED", blockers: ["review failed"] });
+  await writeJson(tempRoot, "TRIAL_HOST_READY_REPORT.json", { ok: false, mode: "trial-host-ready", decision: "HOLD", blockers: ["stale host-ready blocker"] });
+  await writeJson(tempRoot, "TRIAL_NEXT_LIVE_REPORT.json", { ok: false, mode: "trial-next-live", decision: "NEXT_LIVE_HOLD", blockers: ["stale next-live blocker"] });
 
   const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
@@ -195,7 +197,31 @@ test("trial-status requests remediation when a preserved after-live blocks", asy
   assert.equal(report.decision, "NEEDS_REMEDIATION");
   assert.equal(report.currentStage, "remediation");
   assert.ok(report.blockers.some((item) => item.includes("review failed")));
+  assert.ok(!report.blockers.some((item) => item.includes("stale host-ready blocker")));
+  assert.ok(!report.blockers.some((item) => item.includes("stale next-live blocker")));
   assert.match(report.nextCommand, /trial:remediation/);
+});
+
+test("trial-status keeps a failed remediation ahead of stale hosting reports", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-remediation-hold-"));
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_HOST_READY_REPORT.json", { ok: false, mode: "trial-host-ready", decision: "HOLD", blockers: ["stale host-ready blocker"] });
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "FIX_BEFORE_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: false, mode: "trial-after-live", decision: "AFTER_LIVE_BLOCKED", testerId: "tester-2", blockers: ["historical blocker"] });
+  await writeJson(tempRoot, "TRIAL_REMEDIATION_REPORT.json", { ok: false, mode: "trial-remediation-gate", decision: "REMEDIATION_HOLD", testerId: "tester-2", blockers: [{ code: "HOST_ACCEPTANCE_MISSING", message: "Host acceptance is missing." }] });
+
+  const result = await runStatus(["--dist", tempRoot, "--json", jsonPath, "--markdown", markdownPath]);
+  const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "REMEDIATION_BLOCKED");
+  assert.equal(report.currentStage, "remediation");
+  assert.ok(report.blockers.some((item) => item.includes("Host acceptance is missing")));
+  assert.ok(!report.blockers.some((item) => item.includes("stale host-ready blocker")));
 });
 
 test("trial-status moves to new intake after a current remediation closes historical blockers", async () => {

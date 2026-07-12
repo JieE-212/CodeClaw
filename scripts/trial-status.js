@@ -5,6 +5,20 @@ import { fileURLToPath } from "node:url";
 import { inspectSourceVersion, sourceVersionBindingIssues } from "./source-version.js";
 import { hasAllRequiredRemediationHostChecks } from "./trial-remediation-contract.js";
 
+const REMEDIATION_STAGE_REPORT_KEYS = new Set([
+  "readiness",
+  "freeze",
+  "dispatch",
+  "completion",
+  "privacy",
+  "feedback",
+  "backlog",
+  "postSession",
+  "review",
+  "afterLive",
+  "remediation"
+]);
+
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
 const args = parseArgs(process.argv.slice(2));
@@ -135,10 +149,10 @@ function decideState(reports, blockers, { remediationReady = false } = {}) {
   if (reports.dispatch.decision !== "READY_TO_SEND") {
     return state("DISPATCH_BLOCKED", "package", "npm.cmd run trial:dispatch", "Fix dispatch blockers before sending.");
   }
-  if (!reports.hostReady.exists) {
+  if (!reports.postSession.exists && !reports.hostReady.exists) {
     return state("NEEDS_HOST_READY", "hosting", "npm.cmd run trial:session-pack -- --force; npm.cmd run trial:host-ready", "Generate and verify the session pack.");
   }
-  if (reports.hostReady.decision === "HOLD") {
+  if (!reports.postSession.exists && reports.hostReady.decision === "HOLD") {
     return state("HOST_READY_BLOCKED", "hosting", "npm.cmd run trial:host-ready", "Fix host-ready blockers before hosting.");
   }
   if (reports.privacy.decision === "PRIVACY_HOLD") {
@@ -245,7 +259,9 @@ function decideState(reports, blockers, { remediationReady = false } = {}) {
 function collectBlockers(reports, { remediationReady = false } = {}) {
   const blockers = [];
   const remediatedHistoricalKeys = new Set(["afterLive", "feedback", "backlog", "postSession", "review", "archive"]);
+  const remediationStage = reports.afterLive.decision === "AFTER_LIVE_BLOCKED" && !remediationReady;
   for (const [key, report] of Object.entries(reports)) {
+    if (remediationStage && !REMEDIATION_STAGE_REPORT_KEYS.has(key)) continue;
     if (key === "intakeReviewDryRun") continue;
     if (key === "hostRun" && reports.postSession.exists) continue;
     if (key === "completion" && reports.postSession.exists) continue;
@@ -266,13 +282,15 @@ function collectBlockers(reports, { remediationReady = false } = {}) {
 
 function collectWarnings(reports, artifacts, { remediationReady = false } = {}) {
   const warnings = [];
-  for (const report of Object.values(reports)) {
+  const remediationStage = reports.afterLive.decision === "AFTER_LIVE_BLOCKED" && !remediationReady;
+  for (const [key, report] of Object.entries(reports)) {
+    if (remediationStage && !REMEDIATION_STAGE_REPORT_KEYS.has(key)) continue;
     if (!report.exists) warnings.push(`${report.fileName} has not been generated yet.`);
     for (const item of report.warnings) warnings.push(`${report.key}: ${item}`);
   }
   if (!artifacts.latestPackage) warnings.push("No local trial package folder was found.");
-  if (!artifacts.latestSessionPack) warnings.push("No trial session pack folder was found.");
-  if (!artifacts.latestArchive) warnings.push("No trial archive folder was found.");
+  if (!remediationStage && !artifacts.latestSessionPack) warnings.push("No trial session pack folder was found.");
+  if (!remediationStage && !artifacts.latestArchive) warnings.push("No trial archive folder was found.");
   if (remediationReady) warnings.push("The previous AFTER_LIVE_BLOCKED result remains historical; current progress comes from an independent remediation closure.");
   return unique(warnings);
 }
