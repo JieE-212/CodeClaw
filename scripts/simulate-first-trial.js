@@ -21,7 +21,12 @@ const originalDemoTest = await fs.readFile(demoTestPath, "utf8");
 
 const server = spawn(process.execPath, ["apps/web/server.js"], {
   cwd: appRoot,
-  env: { ...process.env, CODECLAW_PORT: String(port), CODECLAW_STATE_DIR: stateDir },
+  env: {
+    ...process.env,
+    CODECLAW_PORT: String(port),
+    CODECLAW_STATE_DIR: stateDir,
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });

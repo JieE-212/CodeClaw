@@ -1,13 +1,13 @@
-# CodeClaw 重启交接：Stage 3.0.9 修复闭环
+# CodeClaw 重启交接：暂停真人测试的工程加固循环
 
-更新日期：2026-07-12
+更新日期：2026-07-13
 
 这是当前唯一有效的 Codex 重启交接文件。它替代此前“等待 tester-2 首次真人测试”的说明；tester-2 已完成，当前不要再次主持该会话。
 
 ## 重启后的第一条指令
 
 ```text
-请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后接管 CodeClaw Stage 3.0.9。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建下一位真人反馈。先检查 Git 和现有工作树，再继续修复闭环门禁、Apply/Revert 安全加固及 host-1 内部验收准备。不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码，也不要直接 push。
+请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.10 崩溃安全事务已完成机器验证，下一阶段是 3.0.11 可丢弃项目副本；之后依次推进 3.0.12、3.0.13、3.0.14 和 4B。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。每阶段实现、验证、清理并独立提交；不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码，也不要直接 push。
 ```
 
 ## 当前结论
@@ -17,15 +17,18 @@
 - 现场同意已明确确认。实际只使用 Demo；因没有安全副本，真实项目只读预检为 `N/A`。
 - 未点击 Apply，未写入项目文件，未确认项目命令，未创建临时项目或测试代码。
 - host-1 已确认三份最终记录准确；最终决定为 `Fix first`，下一位测试者为 `No`。
-- 当前产品修复基线为：
+- 进入本轮工程循环前的产品修复基线为：
 
 ```text
+c402b45 Prioritize remediation in trial status
+62d1ec5 Complete Stage 3.0.9 remediation safety
 61f3786 Fix first-live feedback issues
-c7eaf30 Replace handoff for first live tester session
 ```
 
-- `61f3786` 已在本地 `main`、`github/main` 和 `gitee/main`。后续提交仍由用户决定何时运行 `git pushall`；Codex 不直接 push。
-- 下一轮真人测试明确暂缓。当前阶段是 `Stage 3.0.9`，详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
+- 最新阶段提交以 `git log -1 --oneline` 为准。后续提交仍由用户决定何时运行 `git pushall`；Codex 不直接 push。
+- 下一轮真人测试明确暂缓。`Stage 3.0.10` 已完成机器验证，当前下一阶段是 `Stage 3.0.11`，详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
+- `Stage 3.0.9` 的工程映射完成不代表复测准入通过：host-1 七项人工验收仍缺失，真实状态保持 `REMEDIATION_HOLD`；tester-3 仍为 `not scheduled`。
+- Stage 3.0.10 的最终机器证据为 `npm.cmd test` 187/187、`npm.cmd run check` 通过，以及 health、smoke、四个 pilot 全部通过。它实现了三阶段全局 claim、写前 journal、root/parent/临时文件实体身份绑定和跨 state-dir 恢复阻断，但没有宣称真实断电、自定义 ACL、杀毒软件/网络盘或真人原项目写入已验收。
 
 ## 重启后先检查
 
@@ -122,7 +125,9 @@ candidate: dist/CodeClaw-local-trial-20260712
 
 除非代码又发生变化或当前实现需要验证，不要为了“看起来更完整”无意义重跑整套耗时检查。修改后按风险先跑聚焦测试，再跑完整门禁。
 
-## Stage 3.0.9 当前执行顺序
+## Stage 3.0.9 历史执行顺序与仍待人工项
+
+以下工程工作已经实现；涉及 host-1 的人工视觉、核心交互和候选接受仍未完成，因此 remediation 继续保持 `REMEDIATION_HOLD`。本节是恢复条件，不是当前待自动重跑的命令清单。
 
 ### 1. 同步文档和事实
 
@@ -202,7 +207,7 @@ git status --short
 git diff --cached --name-only
 ```
 
-## Stage 3.0.9 完成标准
+## Stage 3.0.9 仍待满足的人工完成标准
 
 - tester-2 原始 `AFTER_LIVE_BLOCKED` 和计数保持可追溯且未改写。
 - 独立 remediation 报告逐项映射所有 must-fix，并验证证据新鲜度。

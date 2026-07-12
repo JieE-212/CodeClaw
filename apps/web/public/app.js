@@ -29,7 +29,6 @@ const timeline = document.querySelector("#timeline");
 const planIntent = document.querySelector("#planIntent");
 const toolSelect = document.querySelector("#toolSelect");
 const toolArg = document.querySelector("#toolArg");
-const patchContent = document.querySelector("#patchContent");
 const callToolButton = document.querySelector("#callToolButton");
 const toolOutput = document.querySelector("#toolOutput");
 const toolState = document.querySelector("#toolState");
@@ -193,8 +192,9 @@ function renderSystemCheck(info, error = "") {
   }
   const demoState = info.demoExists ? t("system.demo.available") : t("system.demo.missing");
   const model = info.model?.configured ? `${info.model.type}:${info.model.model}` : t("system.model.unconfigured");
-  systemCheck.className = `system-check ${info.demoExists ? "ok" : "warn"}`;
-  systemCheck.textContent = `${info.node} / ${demoState} / ${model}`;
+  const recovery = info.recovery?.ok === false ? t("system.recovery.blocked") : t("system.recovery.ready");
+  systemCheck.className = `system-check ${info.demoExists && info.recovery?.ok !== false ? "ok" : "warn"}`;
+  systemCheck.textContent = `${info.node} / ${demoState} / ${model} / ${recovery}`;
 }
 
 function bindNavigation() {
@@ -441,7 +441,6 @@ function startFreshClientWorkflow() {
   patchState.textContent = t("patch.state.none");
   patchOutput.textContent = t("patch.output.readContextFirst");
   toolArg.value = "";
-  patchContent.value = "";
   toolOutput.textContent = t("tool.output.scanFirst");
   renderPathHelperForInput("");
   renderPathModeForInput("");
@@ -786,7 +785,8 @@ proposePatchButton.addEventListener("click", async () => {
 });
 
 applyPatchButton.addEventListener("click", async () => {
-  const files = patchProposalFiles(currentTask?.patchProposal);
+  const approvedProposal = currentTask?.patchProposal;
+  const files = patchProposalFiles(approvedProposal);
   if (!files.length) {
     patchState.textContent = t("patch.state.noAvailable");
     return;
@@ -797,9 +797,9 @@ applyPatchButton.addEventListener("click", async () => {
     patchOutput.textContent = gate.detail;
     return;
   }
-  const review = patchReviewModel(currentTask.patchProposal, currentTask);
+  const review = patchReviewModel(approvedProposal, currentTask);
   const approved = window.confirm([
-    t("confirm.apply.title", { target: patchTargetLabel(currentTask.patchProposal) }),
+    t("confirm.apply.title", { target: patchTargetLabel(approvedProposal) }),
     "",
     t("confirm.apply.review", { count: review.files.length, added: review.total.added, removed: review.total.removed }),
     t("confirm.apply.risks", { risks: review.risks.slice(0, 2).join("; ") }),
@@ -812,7 +812,12 @@ applyPatchButton.addEventListener("click", async () => {
   applyPatchButton.disabled = true;
   patchState.textContent = t("patch.state.applying");
   try {
-    const result = await request("/api/tasks/apply-patch", { taskId: currentTask.id, approved: true });
+    const result = await request("/api/tasks/apply-patch", {
+      taskId: currentTask.id,
+      proposalId: approvedProposal.proposalId,
+      proposalDigest: approvedProposal.proposalDigest,
+      approved: true
+    });
     if (result.task) currentTask = result.task;
     patchState.textContent = t("patch.state.applied");
     patchOutput.textContent = result.result?.diff || currentTask.patchProposal.diff || t("patch.output.appliedFallback");
@@ -843,7 +848,13 @@ revertPatchButton.addEventListener("click", async () => {
   revertPatchButton.disabled = true;
   patchState.textContent = t("patch.state.reverting");
   try {
-    const result = await request("/api/tasks/revert-patch", { taskId: currentTask.id, patchIndex: Number.isNaN(selectedIndex) ? undefined : selectedIndex, approved: true });
+    const result = await request("/api/tasks/revert-patch", {
+      taskId: currentTask.id,
+      patchIndex: Number.isNaN(selectedIndex) ? undefined : selectedIndex,
+      patchIdentity: selectedPatch?.patchIdentity,
+      workspaceIdentity: currentTask.rootIdentity,
+      approved: true
+    });
     if (result.task) currentTask = result.task;
     patchState.textContent = t("patch.state.reverted");
     patchOutput.textContent = result.result?.diff || t("patch.output.revertedFallback");
@@ -968,10 +979,9 @@ fixFailureButton.addEventListener("click", async () => {
 
 function syncToolInputs() {
   const tool = toolSelect.value;
-  const usesArg = tool === "read_file" || tool === "search_code" || tool === "write_patch";
+  const usesArg = tool === "read_file" || tool === "search_code";
   toolArg.disabled = !usesArg;
-  toolArg.placeholder = tool === "read_file" ? "README.md" : tool === "search_code" ? "createTaskPlan" : tool === "write_patch" ? "src/example.js" : t("tool.arg.noArgs");
-  patchContent.classList.toggle("visible", tool === "write_patch");
+  toolArg.placeholder = tool === "read_file" ? "README.md" : tool === "search_code" ? "createTaskPlan" : t("tool.arg.noArgs");
   if (!usesArg) toolArg.value = "";
   updateControls();
 }
@@ -1397,7 +1407,6 @@ function argsForTool(tool) {
   const value = toolArg.value.trim();
   if (tool === "read_file") return { path: value };
   if (tool === "search_code") return { query: value };
-  if (tool === "write_patch") return { path: value, content: patchContent.value };
   return {};
 }
 
@@ -1931,6 +1940,14 @@ function friendlyErrorMessage(error) {
   const message = String(error?.message || error || "未知错误");
   const codeMessage = `${error?.code || ""} ${message}`;
   const structuredRules = [
+    [/PATCH_APPROVAL_STALE/, t("error.patchApprovalStale")],
+    [/PROJECT_WRITE_LOCKED/, t("error.projectWriteLocked")],
+    [/TASK_STORE_LOCKED/, t("error.taskStoreLocked")],
+    [/PATCH_RECOVERY_REQUIRED/, t("error.patchRecoveryRequired")],
+    [/PATCH_TRANSACTION_REQUIRED/, t("error.patchTransactionRequired")],
+    [/PATCH_TRANSACTION_STATE_ERROR/, t("error.patchTransactionState")],
+    [/PATCH_WRITE_VERIFY_FAILED/, t("error.patchWriteVerify")],
+    [/PATCH_NON_UTF8_REFUSED/, t("error.patchNonUtf8")],
     [/PATCH_BASELINE_CONFLICT/, t("error.patchBaselineConflict")],
     [/PATCH_BASELINE_MISSING/, t("error.patchBaselineMissing")],
     [/PATCH_DUPLICATE_PATH/, t("error.patchDuplicatePath")],

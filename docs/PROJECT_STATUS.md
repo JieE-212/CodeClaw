@@ -1,6 +1,6 @@
 # CodeClaw Project Status
 
-Updated: 2026-07-12
+Updated: 2026-07-13
 
 ## Completed Phase
 
@@ -633,17 +633,51 @@ Latest verification for that commit:
 - The ignored candidate package is `dist/CodeClaw-local-trial-20260712`.
 - Automated visual QA was not available because the in-app browser had no connected instance. Pixel-level visual verification remains an explicit host acceptance item; it has not been claimed as passed.
 
+## Stage 3.0.9 remediation status clarification
+
+The remediation mapping, candidate-binding checks, and engineering safeguards are implemented, but the seven required host-1 manual acceptance checks have not been completed. The truthful current gate remains `REMEDIATION_HOLD`; it is not `REMEDIATION_READY_FOR_RETEST`. This does not modify tester-2's historical `AFTER_LIVE_BLOCKED`, schedule tester-3, or authorize writes to an original real project.
+
 ## Next Planned Phase
 
-Stage 3.0.9 is in progress: remediation closure and controlled retest admission.
+Stage 3.0.11 is next: build a server-authoritative disposable-copy workflow before allowing any original-project write. Real-person testing remains intentionally postponed.
 
-The next real tester is intentionally postponed. Do not create or host tester-3 merely because product fixes exist. Follow [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md) in this order:
+The engineering order is:
 
-1. Preserve tester-2's blocked result and add a separate remediation report/gate that maps every must-fix item to a change, automated check, and host acceptance item.
-2. Teach status/next-live/cohort gates to accept a completed remediation as permission for a future retest without rewriting the previous after-live result.
-3. Harden Apply/Revert with baseline hashes, conflict refusal, partial-failure rollback, safe Revert conflict handling, and path-boundary tests before allowing any real-project write.
-4. Have host-1 perform the desktop/narrow visual and interaction acceptance matrix on the exact candidate commit. This is internal acceptance, not another human trial.
-5. Re-run candidate simulation/readiness/freeze/dispatch only after remediation and safety work is complete, and require all outputs to identify the same commit/package.
-6. Advance to tester-3 only on an explicit `REMEDIATION_READY_FOR_RETEST` plus a later host-1 scheduling decision.
+1. Stage 3.0.11 disposable project copies and workspace capabilities.
+2. Stage 3.0.12 exact model outbound preview/approval and local-state privacy reduction.
+3. Stage 3.0.13 beginner UI and accessibility semantics, with real visual/NVDA checks kept manual.
+4. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
+5. Stage 4B candidate-aware Windows launcher and hashed candidate package.
 
-Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code must be removed after verification; do not retain tombstone code.
+Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code and fixture copies must be deleted after verification; do not retain tombstone code.
+
+## Stage 3.0.10 - Crash-safe patch transactions
+
+Stage 3.0.10 is machine verified. Real-person testing remains paused, tester-3 is not scheduled, and tester-2's historical `AFTER_LIVE_BLOCKED` result is unchanged.
+
+Implemented:
+
+- Added a durable local patch transaction store with before/after hashes, private before-content backups, startup reconciliation, idempotent Apply/Revert commit markers, and fail-closed conflict handling.
+- Added a persistent per-user project ownership claim with `reserved -> journaled -> complete` phases and a random state-directory owner identity. A foreign state directory, missing claim, missing journal, or mismatched transaction stops recovery and subsequent writes.
+- Switched project writes and TaskStore JSON updates to same-directory fsync + atomic rename. TaskStore mutations are serialized to prevent concurrent read-modify-write loss.
+- Serialized Apply/Revert per real canonical project root across processes and state directories, and placed locked recovery before the server listen barrier. TaskStore mutations also coordinate across instances.
+- Bound tasks, approvals, journals, live writes, rollback, and cleanup to the reviewed workspace root and every target parent-directory entity. Same-path normal-directory replacement and junction replacement both fail closed.
+- Persisted each patch temporary file's 64-bit filesystem identity in the journal; recovery never deletes an unowned same-name file. Lock and atomic cleanup identities use bigint-backed device/inode/birth-time values.
+- Bound approval to immutable proposal digests and applied-patch identities, with a second check after queue/lock acquisition.
+- Removed the direct `write_patch` advanced-UI entry and blocked the generic API bypass with `PATCH_TRANSACTION_REQUIRED`.
+- Added Windows-safe portable path validation, protected metadata-directory refusal, bounded file-lock retries, strict UTF-8 refusal, and BOM preservation for exact text rollback.
+- Bound the local web service to `127.0.0.1` and exposed only anonymized patch-recovery status.
+
+Machine evidence for this stage: `npm.cmd test` passed `187/187`; `npm.cmd run check` passed with 563 keys in each of `en`, `zh-CN`, and `ru` and no warnings/failures; `health`, `smoke`, `pilot:self`, `pilot:fixture`, `pilot:inbox`, and `pilot:model` passed. Fault tests cover partial Apply, pre-commit interruption, both uncommitted Revert shapes, committed cleanup, human-edit conflict, corrupted backup, temporary-file impersonation, root/parent replacement, startup recovery, cross-state durable ownership, double-instance competition, and direct-write bypass refusal.
+
+Honest remaining limits:
+
+- Windows directory fsync and sudden-power durability are best effort, not an absolute filesystem guarantee.
+- Automated tests construct post-interruption disk states; they are not evidence of real power loss or process termination at every machine instruction.
+- Different operating-system users or instances explicitly configured with different project-lock directories do not share the same lock; Stage 4B must still enforce candidate-aware single-instance behavior.
+- Windows custom ACL preservation is not guaranteed by Node's POSIX-style mode handling. Antivirus/file-lock contention, network drives, and unusual filesystems remain unverified.
+- Node path APIs leave a very small, unavoidable interval between the final identity check and rename/unlink; the implementation is fail-closed and best effort, not a distributed transaction guarantee.
+- Browser automation is unavailable because the bundled browser plugin is missing `scripts/browser-client.mjs`; no pixel-level or real keyboard/NVDA acceptance is claimed.
+- The seven host-1 manual checks, a disposable-copy real-project exercise, and real forced-termination/power-loss acceptance remain pending. Original-project writes are not declared open.
+
+Next: Stage 3.0.11 builds a server-authoritative disposable-copy workflow and keeps original projects read-only. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).

@@ -41,7 +41,12 @@ await listen(fakeModelServer, modelPort);
 
 const appServer = spawn(process.execPath, ["apps/web/server.js"], {
   cwd: rootPath,
-  env: { ...process.env, CODECLAW_PORT: String(appPort), CODECLAW_STATE_DIR: stateDir },
+  env: {
+    ...process.env,
+    CODECLAW_PORT: String(appPort),
+    CODECLAW_STATE_DIR: stateDir,
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });
@@ -115,7 +120,7 @@ try {
   if (!proposal.proposal.applicable) throw new Error(`Fixture proposal was not applicable: ${proposal.proposal.reason}`);
   if (proposal.proposal.files.length !== 2) throw new Error("Fixture proposal should update two files.");
 
-  await appRequest("/api/tasks/apply-patch", { taskId: task.task.id, approved: true });
+  const applied = await appRequest("/api/tasks/apply-patch", { taskId: task.task.id, proposalId: proposal.proposal.proposalId, proposalDigest: proposal.proposal.proposalDigest, approved: true });
   const verification = await appRequest("/api/tools/call", {
     tool: "run_command",
     args: { command: "npm run test" },
@@ -130,8 +135,8 @@ try {
     summary: "Priority filtering was added to the task-board fixture and verified."
   });
 
-  await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: 1, approved: true });
-  await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: 0, approved: true });
+  await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: 1, patchIdentity: applied.task.appliedPatches[1].patchIdentity, workspaceIdentity: applied.task.rootIdentity, approved: true });
+  await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: 0, patchIdentity: applied.task.appliedPatches[0].patchIdentity, workspaceIdentity: applied.task.rootIdentity, approved: true });
 
   const finalFilter = await fs.readFile(filterPath, "utf8");
   const finalFilterTest = await fs.readFile(filterTestPath, "utf8");

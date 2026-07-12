@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_PORT } from "../../packages/shared/src/constants.js";
@@ -8,16 +9,33 @@ import { createTaskPlan } from "../../packages/agent-core/src/index.js";
 import { classifyToolCall } from "../../packages/permission-engine/src/index.js";
 import { ToolRegistry, hashContent } from "../../packages/tool-registry/src/index.js";
 import { AuditLog, summarizeToolResult } from "../../packages/audit-log/src/index.js";
-import { TaskStore, buildTaskReviewDraft, summarizeTask } from "../../packages/task-store/src/index.js";
+import { TaskStore, appliedPatchIdentity, buildTaskReviewDraft, patchProposalDigest, summarizeTask } from "../../packages/task-store/src/index.js";
 import { MemoryStore } from "../../packages/memory-store/src/index.js";
 import { ModelProvider, publicModelConfig, sanitizeModelConfig, selectContextFiles } from "../../packages/model-provider/src/index.js";
 import { decidePreflightGate, pickSearchQuery, summarizeContextCoverage } from "../../packages/preflight/src/index.js";
+import { PatchTransactionStore, recoverPatchTransactions } from "../../packages/patch-transaction/src/index.js";
+import { PatchTransactionClaimStore, loadPatchStateOwnerId } from "../../packages/patch-transaction/src/claim-store.js";
+import { CrossProcessLockManager, canonicalPathLockKey } from "../../packages/shared/src/cross-process-lock.js";
+import { captureWorkspaceIdentity, captureWorkspaceParentIdentity } from "../../packages/shared/src/workspace-identity.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
 const localStateDir = path.resolve(process.env.CODECLAW_STATE_DIR || path.join(process.cwd(), ".codeclaw"));
 const auditLog = new AuditLog({ storagePath: path.join(localStateDir, "audit.jsonl") });
 const taskStore = new TaskStore({ storagePath: path.join(localStateDir, "tasks.json") });
+const patchTransactionStore = new PatchTransactionStore({ storagePath: path.join(localStateDir, "patch-transactions") });
+const projectLockDir = path.resolve(process.env.CODECLAW_PROJECT_LOCK_DIR || defaultProjectCoordinationDir());
+const projectWriteLockManager = new CrossProcessLockManager({
+  storagePath: projectLockDir,
+  namespace: "project-write",
+  timeoutMs: 5000,
+  lockedCode: "PROJECT_WRITE_LOCKED",
+  lockedMessage: "Another CodeClaw process is already changing this project. Wait for it to finish, then retry."
+});
+const patchClaimStore = new PatchTransactionClaimStore({
+  storagePath: path.join(projectLockDir, "claims"),
+  ownerId: await loadPatchStateOwnerId(localStateDir)
+});
 const memoryStore = new MemoryStore({ storagePath: path.join(localStateDir, "memory.json") });
 const modelConfigPath = path.join(localStateDir, "model.json");
 const MAX_CONTEXT_CONTENT_CHARS = 50000;
@@ -26,6 +44,15 @@ let lastRepoProfile = null;
 let toolRegistry = null;
 let modelConfig = sanitizeModelConfig({ type: "mock", name: "mock", model: "mock-codeclaw" });
 let modelProvider = new ModelProvider(modelConfig);
+let patchRecoveryStatus = emptyPatchRecoveryStatus();
+const patchOperationQueues = new Map();
+
+function defaultProjectCoordinationDir() {
+  if (process.platform === "win32") {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "CodeClaw", "transaction-coordination-v1");
+  }
+  return path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "codeclaw", "transaction-coordination-v1");
+}
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -37,6 +64,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/memory") return await getMemory(url, response);
     if (request.method === "POST" && url.pathname === "/api/memory/notes") return await updateMemoryNotes(request, response);
     if (request.method === "GET" && url.pathname === "/api/model/status") return await getModelStatus(response);
+    if (request.method === "GET" && url.pathname === "/api/patch-recovery/status") return json(response, { ok: true, recovery: patchRecoveryStatus });
     if (request.method === "POST" && url.pathname === "/api/model/config") return await setModelConfig(request, response);
     if (request.method === "POST" && url.pathname === "/api/model/suggest") return await suggestWithModel(request, response);
     if (request.method === "POST" && url.pathname === "/api/model/context-files") return await suggestContextFiles(request, response);
@@ -59,11 +87,25 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`CodeClaw workspace running at http://localhost:${port}`);
-});
+await startServer();
 
-loadModelConfig();
+async function startServer() {
+  await loadModelConfig();
+  patchRecoveryStatus = await recoverPatchTransactions({
+    store: patchTransactionStore,
+    taskStore,
+    registryFactory: (rootPath) => new ToolRegistry({ rootPath }),
+    beforeRemove: markPatchClaimComplete,
+    withRootLock: async (rootPath, recovery) => projectWriteLockManager.withLock(
+      await canonicalPathLockKey(rootPath),
+      () => withPatchRecoveryOwnership(rootPath, recovery),
+      { timeoutMs: 1000 }
+    )
+  });
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`CodeClaw workspace running at http://127.0.0.1:${port}`);
+  });
+}
 
 async function getAuditEvents(url, response) {
   const rootPath = url.searchParams.get("rootPath");
@@ -121,7 +163,8 @@ async function systemCheck(response) {
     cwd: process.cwd(),
     demoPath,
     demoExists,
-    model: modelProvider.status()
+    model: modelProvider.status(),
+    recovery: patchRecoveryStatus
   });
 }
 
@@ -146,7 +189,7 @@ async function assertRepositoryDirectory(inputPath, action = "scan") {
   if (!stat.isDirectory()) {
     throw pathInputError("PATH_IS_FILE", `Project path must be a folder, not a file: ${resolved}`, 400);
   }
-  return resolved;
+  return fs.realpath(resolved);
 }
 
 function pathInputError(code, message, status) {
@@ -255,7 +298,7 @@ async function proposePatch(request, response) {
     rootPath: task.rootPath,
     metadata: { taskId: task.id, provider: proposal.provider, model: proposal.model, path: proposal.path }
   });
-  return json(response, { ok: true, proposal, task: updatedTask });
+  return json(response, { ok: true, proposal: updatedTask.patchProposal, task: updatedTask });
 }
 
 async function suggestFailureFix(request, response) {
@@ -374,7 +417,9 @@ async function runPreflight(request, response) {
 
 async function createTask(request, response) {
   const body = await readJson(request);
-  const task = await taskStore.create({ goal: body.goal, rootPath: body.rootPath || lastRepoProfile?.rootPath });
+  const requestedRoot = body.rootPath || lastRepoProfile?.rootPath;
+  const rootPath = requestedRoot ? await assertRepositoryDirectory(requestedRoot, "create a task") : null;
+  const task = await taskStore.create({ goal: body.goal, rootPath });
   await recordAudit({ type: "task.create", title: "Task created", detail: task.goal, rootPath: task.rootPath, metadata: { taskId: task.id } });
   return json(response, { ok: true, task });
 }
@@ -406,9 +451,8 @@ async function addTaskContextFile(request, response) {
 
 async function applyPatch(request, response) {
   const body = await readJson(request);
-  const task = await taskStore.get(body.taskId);
-  const proposal = task.patchProposal;
-  const proposalFiles = getProposalFiles(proposal);
+  const initialTask = await taskStore.get(body.taskId);
+  const proposalFiles = getProposalFiles(initialTask.patchProposal);
   if (!proposalFiles.length) throw new Error("No applicable patch proposal.");
   if (!body.approved) {
     return json(response, {
@@ -418,56 +462,120 @@ async function applyPatch(request, response) {
       message: "Patch application requires approval."
     });
   }
-
-  const registry = getToolRegistry(task.rootPath);
-  const files = await preparePatchWrites(registry, task, proposalFiles, proposal);
-  const writes = [];
-  const written = [];
-  const batchId = `apply-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  let updatedTask;
-  try {
-    for (const file of files) {
-      const write = await registry.call("write_patch", {
+  assertProposalApproval(initialTask.patchProposal, body, initialTask.rootIdentity);
+  return serializePatchOperation(initialTask.rootPath, async () => {
+    let task = await taskStore.get(body.taskId);
+    task = await canonicalizeTaskRoot(task, "apply a patch");
+    await ensurePatchRecoveryReady(task.rootPath, task.rootIdentity);
+    task = await canonicalizeTaskRoot(await taskStore.get(body.taskId), "apply a patch");
+    const proposal = task.patchProposal;
+    assertProposalApproval(proposal, body, task.rootIdentity);
+    const currentProposalFiles = getProposalFiles(proposal);
+    if (!currentProposalFiles.length) throw new Error("No applicable patch proposal.");
+    const registry = getToolRegistry(task.rootPath);
+    const files = await preparePatchWrites(registry, task, currentProposalFiles, proposal);
+    const writes = [];
+    const batchId = `apply-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    let transaction;
+    let claimCreated = false;
+    let committed = false;
+    try {
+      await patchClaimStore.begin({
+        rootPath: task.rootPath,
+        rootIdentity: task.rootIdentity,
+        transactionId: batchId,
+        operation: "apply"
+      });
+      claimCreated = true;
+      transaction = await patchTransactionStore.begin({
+        id: batchId,
+        operation: "apply",
+        taskId: task.id,
+        rootPath: task.rootPath,
+        rootIdentity: task.rootIdentity,
+        items: files.map((file) => ({
+          path: file.path,
+          parentIdentity: file.parentIdentity,
+          beforeExists: file.snapshot.exists,
+          beforeContent: file.snapshot.content,
+          afterExists: true,
+          afterContent: file.content
+        }))
+      });
+      await patchClaimStore.markJournaled({
+        rootPath: transaction.rootPath,
+        rootIdentity: transaction.rootIdentity,
+        transactionId: transaction.id
+      });
+      for (const file of files) {
+        const write = await registry.call("write_patch", {
+          path: file.path,
+          content: file.content,
+          expectedBaseline: file.expectedBaseline,
+          transactionId: transaction.id,
+          rootIdentity: transaction.rootIdentity,
+          parentIdentity: file.parentIdentity,
+          onTemporaryReady: (identity) => patchTransactionStore.recordTemporaryIdentity(transaction.id, file.path, identity)
+        }, { approved: true });
+        writes.push(write.result);
+      }
+      const appliedRecords = files.map((file, index) => ({
+        batchId: transaction.id,
+        transactionId: transaction.id,
         path: file.path,
-        content: file.content,
-        expectedBaseline: file.expectedBaseline
-      }, { approved: true });
-      written.push(file);
-      writes.push(write.result);
+        previousExists: file.snapshot.exists,
+          previousContent: file.snapshot.content,
+          nextContent: file.content,
+          parentIdentity: file.parentIdentity,
+        diff: writes[index]?.diff || file.diff || "",
+        summary: file.summary || proposal.summary || ""
+      }));
+      const updatedTask = await taskStore.recordAppliedPatches(task.id, appliedRecords.map((appliedPatch) => ({
+        ...appliedPatch,
+        patchIdentity: appliedPatchIdentity(appliedPatch)
+      })));
+      committed = true;
+      const cleanupPending = !(await cleanupCommittedPatchTransaction(transaction));
+      await recordAudit({ type: "task.patch.apply", title: "Patch applied", detail: `${files.length} file(s)`, rootPath: task.rootPath, metadata: { taskId: task.id, batchId: transaction.id, paths: files.map((file) => file.path), cleanupPending } });
+      return json(response, { ok: true, result: { files: writes, diff: writes.map((item) => item.diff).join("\n\n"), cleanupPending }, task: updatedTask });
+    } catch (error) {
+      if (committed) throw error;
+      if (!transaction) {
+        if (!claimCreated) throw error;
+        try {
+          await patchClaimStore.remove({ rootPath: task.rootPath, rootIdentity: task.rootIdentity, transactionId: batchId });
+        } catch {
+          throw patchOperationError("PATCH_TRANSACTION_STATE_ERROR", "The patch safety claim could not be cleared after journal creation failed. No project file was changed; restart CodeClaw before retrying.", 500);
+        }
+        if (error.code?.startsWith("PATCH_")) throw error;
+        throw patchOperationError("PATCH_TRANSACTION_STATE_ERROR", "The patch safety journal could not be created, so no project file was changed.", 500);
+      }
+      const recovery = await withPatchRecoveryOwnership(task.rootPath, () => recoverPatchTransactions({
+        store: patchTransactionStore,
+        taskStore,
+        registryFactory: (rootPath) => new ToolRegistry({ rootPath }),
+        beforeRemove: markPatchClaimComplete,
+        rootPath: task.rootPath
+      }), task.rootIdentity);
+      await updateGlobalPatchRecoveryStatus(recovery);
+      if (recovery.committedCleanup) {
+        const updatedTask = await taskStore.get(task.id);
+        await recordAudit({ type: "task.patch.apply", title: "Patch applied", detail: `${files.length} file(s)`, rootPath: task.rootPath, metadata: { taskId: task.id, batchId: transaction.id, recoveredCommit: true } });
+        return json(response, { ok: true, result: { files: writes, diff: writes.map((item) => item.diff).join("\n\n"), recoveredCommit: true }, task: updatedTask });
+      }
+      if (!recovery.ok) {
+        throw patchOperationError("PATCH_APPLY_ROLLBACK_INCOMPLETE", "Patch application stopped and automatic recovery needs review. CodeClaw will not write again until the recovery conflict is resolved.", 500);
+      }
+      if (error.code === "PATCH_BASELINE_CONFLICT") throw error;
+      throw patchOperationError("PATCH_APPLY_FAILED", "Patch application failed. Files written during this attempt were restored; resolve the workspace write or ignore-rule problem and retry.", 409);
     }
-    updatedTask = await taskStore.recordAppliedPatches(task.id, files.map((file, index) => ({
-      batchId,
-      path: file.path,
-      previousExists: file.snapshot.exists,
-      previousContent: file.snapshot.content,
-      nextContent: file.content,
-      diff: writes[index]?.diff || file.diff || "",
-      summary: file.summary || proposal.summary || ""
-    })));
-  } catch (error) {
-    const rollbackFailures = await rollbackPatchWrites(registry, written);
-    if (rollbackFailures.length) {
-      throw patchOperationError(
-        "PATCH_APPLY_ROLLBACK_INCOMPLETE",
-        `Patch application stopped, but automatic rollback could not safely restore ${rollbackFailures.length} file(s): ${rollbackFailures.join(", ")}. Inspect those files before retrying.`,
-        500
-      );
-    }
-    if (error.code === "PATCH_BASELINE_CONFLICT") throw error;
-    throw patchOperationError(
-      "PATCH_APPLY_FAILED",
-      "Patch application failed. Files written during this attempt were restored; resolve the workspace write or ignore-rule problem and retry.",
-      409
-    );
-  }
-  await recordAudit({ type: "task.patch.apply", title: "Patch applied", detail: `${files.length} file(s)`, rootPath: task.rootPath, metadata: { taskId: task.id, batchId, paths: files.map((file) => file.path) } });
-  return json(response, { ok: true, result: { files: writes, diff: writes.map((item) => item.diff).join("\n\n") }, task: updatedTask });
+  });
 }
 
 async function revertPatch(request, response) {
   const body = await readJson(request);
-  const task = await taskStore.get(body.taskId);
-  const patches = task.appliedPatches || [];
+  const initialTask = await taskStore.get(body.taskId);
+  const patches = initialTask.appliedPatches || [];
   const patchIndex = Number.isInteger(body.patchIndex)
     ? body.patchIndex
     : body.path
@@ -483,34 +591,117 @@ async function revertPatch(request, response) {
       message: "Patch revert requires approval."
     });
   }
+  assertRevertApproval(patch, body, initialTask.rootIdentity);
 
-  const registry = getToolRegistry(task.rootPath);
-  if (typeof patch.nextContent !== "string") {
-    throw patchOperationError("PATCH_REVERT_BASELINE_MISSING", `The saved patch baseline is unavailable for ${patch.path}. Inspect the file and revert it manually.`, 409);
-  }
-  const expectedCurrent = { exists: true, sha256: hashContent(patch.nextContent) };
-  await assertCurrentBaseline(registry, patch.path, expectedCurrent, "PATCH_REVERT_CONFLICT", "The file changed after CodeClaw applied the patch. Review those edits before deciding how to revert.");
-
-  const restoreArgs = patch.previousExists === false
-    ? { path: patch.path, remove: true, expectedBaseline: expectedCurrent }
-    : { path: patch.path, content: patch.previousContent ?? "", expectedBaseline: expectedCurrent };
-  const write = await registry.call("write_patch", restoreArgs, { approved: true });
-  let updatedTask;
-  try {
-    updatedTask = await taskStore.markPatchReverted(task.id, patchIndex);
-  } catch {
-    const restoredBaseline = patch.previousExists === false
-      ? { exists: false, sha256: null }
-      : { exists: true, sha256: hashContent(patch.previousContent ?? "") };
-    try {
-      await registry.call("write_patch", { path: patch.path, content: patch.nextContent, expectedBaseline: restoredBaseline }, { approved: true });
-    } catch {
-      throw patchOperationError("PATCH_REVERT_STATE_ERROR", `The file and task record could not be synchronized for ${patch.path}. Inspect the file before taking another action.`, 500);
+  return serializePatchOperation(initialTask.rootPath, async () => {
+    let task = await taskStore.get(body.taskId);
+    task = await canonicalizeTaskRoot(task, "revert a patch");
+    await ensurePatchRecoveryReady(task.rootPath, task.rootIdentity);
+    task = await canonicalizeTaskRoot(await taskStore.get(body.taskId), "revert a patch");
+    const currentPatch = (task.appliedPatches || [])[patchIndex];
+    if (!currentPatch || currentPatch.revertedAt) throw new Error("No active applied patch to revert.");
+    assertRevertApproval(currentPatch, body, task.rootIdentity);
+    const currentParentIdentity = (await captureWorkspaceParentIdentity(task.rootPath, currentPatch.path)).digest;
+    if (!currentPatch.parentIdentity || currentParentIdentity !== currentPatch.parentIdentity) {
+      throw patchOperationError("PATCH_PARENT_CHANGED", "The applied patch parent directory changed after review. Revert was stopped before any write.", 409);
     }
-    throw patchOperationError("PATCH_REVERT_STATE_ERROR", "The revert could not be recorded, so the patch content was restored. Retry after checking local state storage.", 500);
-  }
-  await recordAudit({ type: "task.patch.revert", title: "Patch reverted", detail: patch.path, rootPath: task.rootPath, metadata: { taskId: task.id, path: patch.path } });
-  return json(response, { ...write, task: updatedTask });
+    const registry = getToolRegistry(task.rootPath);
+    if (typeof currentPatch.nextContent !== "string") {
+      throw patchOperationError("PATCH_REVERT_BASELINE_MISSING", `The saved patch baseline is unavailable for ${currentPatch.path}. Inspect the file and revert it manually.`, 409);
+    }
+    const expectedCurrent = { exists: true, sha256: hashContent(currentPatch.nextContent) };
+    const snapshot = await assertCurrentBaseline(registry, currentPatch.path, expectedCurrent, "PATCH_REVERT_CONFLICT", "The file changed after CodeClaw applied the patch. Review those edits before deciding how to revert.");
+    const transactionId = `revert-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    let transaction;
+    let claimCreated = false;
+    let write;
+    let committed = false;
+    try {
+      await patchClaimStore.begin({
+        rootPath: task.rootPath,
+        rootIdentity: task.rootIdentity,
+        transactionId,
+        operation: "revert"
+      });
+      claimCreated = true;
+      transaction = await patchTransactionStore.begin({
+        id: transactionId,
+        operation: "revert",
+        taskId: task.id,
+        rootPath: task.rootPath,
+        rootIdentity: task.rootIdentity,
+        patchIndex,
+        items: [{
+          path: currentPatch.path,
+          parentIdentity: currentPatch.parentIdentity,
+          beforeExists: snapshot.exists,
+          beforeContent: snapshot.content,
+          afterExists: currentPatch.previousExists !== false,
+          afterContent: currentPatch.previousExists === false ? "" : currentPatch.previousContent ?? ""
+        }]
+      });
+      await patchClaimStore.markJournaled({
+        rootPath: transaction.rootPath,
+        rootIdentity: transaction.rootIdentity,
+        transactionId: transaction.id
+      });
+      const restoreArgs = currentPatch.previousExists === false
+        ? {
+            path: currentPatch.path,
+            remove: true,
+            expectedBaseline: expectedCurrent,
+            transactionId: transaction.id,
+            rootIdentity: transaction.rootIdentity,
+            parentIdentity: currentPatch.parentIdentity,
+            onTemporaryReady: (identity) => patchTransactionStore.recordTemporaryIdentity(transaction.id, currentPatch.path, identity)
+          }
+        : {
+            path: currentPatch.path,
+            content: currentPatch.previousContent ?? "",
+            expectedBaseline: expectedCurrent,
+            transactionId: transaction.id,
+            rootIdentity: transaction.rootIdentity,
+            parentIdentity: currentPatch.parentIdentity,
+            onTemporaryReady: (identity) => patchTransactionStore.recordTemporaryIdentity(transaction.id, currentPatch.path, identity)
+          };
+      write = await registry.call("write_patch", restoreArgs, { approved: true });
+      const updatedTask = await taskStore.markPatchReverted(task.id, patchIndex, { revertTransactionId: transaction.id });
+      committed = true;
+      const cleanupPending = !(await cleanupCommittedPatchTransaction(transaction));
+      await recordAudit({ type: "task.patch.revert", title: "Patch reverted", detail: currentPatch.path, rootPath: task.rootPath, metadata: { taskId: task.id, path: currentPatch.path, transactionId: transaction.id, cleanupPending } });
+      return json(response, { ...write, cleanupPending, task: updatedTask });
+    } catch (error) {
+      if (committed) throw error;
+      if (!transaction) {
+        if (!claimCreated) throw error;
+        try {
+          await patchClaimStore.remove({ rootPath: task.rootPath, rootIdentity: task.rootIdentity, transactionId });
+        } catch {
+          throw patchOperationError("PATCH_TRANSACTION_STATE_ERROR", "The revert safety claim could not be cleared after journal creation failed. No project file was changed; restart CodeClaw before retrying.", 500);
+        }
+        if (error.code?.startsWith("PATCH_")) throw error;
+        throw patchOperationError("PATCH_TRANSACTION_STATE_ERROR", "The revert safety journal could not be created, so no project file was changed.", 500);
+      }
+      const recovery = await withPatchRecoveryOwnership(task.rootPath, () => recoverPatchTransactions({
+        store: patchTransactionStore,
+        taskStore,
+        registryFactory: (rootPath) => new ToolRegistry({ rootPath }),
+        beforeRemove: markPatchClaimComplete,
+        rootPath: task.rootPath
+      }), task.rootIdentity);
+      await updateGlobalPatchRecoveryStatus(recovery);
+      if (recovery.committedCleanup) {
+        const updatedTask = await taskStore.get(task.id);
+        await recordAudit({ type: "task.patch.revert", title: "Patch reverted", detail: currentPatch.path, rootPath: task.rootPath, metadata: { taskId: task.id, transactionId: transaction.id, recoveredCommit: true } });
+        return json(response, { ok: true, result: write?.result, recoveredCommit: true, task: updatedTask });
+      }
+      if (!recovery.ok) {
+        throw patchOperationError("PATCH_REVERT_STATE_ERROR", "The revert stopped and automatic recovery needs review. CodeClaw will not write again until the recovery conflict is resolved.", 500);
+      }
+      if (error.code === "PATCH_BASELINE_CONFLICT") throw error;
+      throw patchOperationError("PATCH_REVERT_STATE_ERROR", "The revert could not be completed, so the applied patch content was restored. Retry after checking local state storage.", 500);
+    }
+  });
 }
 
 async function attachPatchBaselines(proposal, task, registry) {
@@ -544,7 +735,8 @@ function getProposalFiles(proposal) {
       content: proposal.content,
       summary: proposal.summary,
       diff: proposal.diff,
-      expectedBaseline: proposal.expectedBaseline
+      expectedBaseline: proposal.expectedBaseline,
+      parentIdentity: proposal.parentIdentity
     }];
   }
   return [];
@@ -553,6 +745,7 @@ function getProposalFiles(proposal) {
 async function preparePatchWrites(registry, task, proposalFiles, proposal) {
   const prepared = [];
   const missingBaselines = [];
+  const missingParentIdentities = [];
   const duplicatePaths = new Set();
   const seenPaths = new Set();
 
@@ -567,6 +760,16 @@ async function preparePatchWrites(registry, task, proposalFiles, proposal) {
       missingBaselines.push(file.path);
       continue;
     }
+    const parentIdentity = validIdentityDigest(file.parentIdentity)
+      || (proposalFiles.length === 1 ? validIdentityDigest(proposal?.parentIdentity) : null);
+    if (!parentIdentity) {
+      missingParentIdentities.push(file.path);
+      continue;
+    }
+    const currentParentIdentity = (await captureWorkspaceParentIdentity(task.rootPath, file.path)).digest;
+    if (currentParentIdentity !== parentIdentity) {
+      throw patchOperationError("PATCH_PARENT_CHANGED", `The parent directory for ${file.path} changed after review. No file was written.`, 409);
+    }
     const snapshot = await assertCurrentBaseline(
       registry,
       file.path,
@@ -574,7 +777,7 @@ async function preparePatchWrites(registry, task, proposalFiles, proposal) {
       "PATCH_BASELINE_CONFLICT",
       "The file changed after it was read for this proposal. Reread context and generate a new patch before applying."
     );
-    prepared.push({ ...file, expectedBaseline, snapshot });
+    prepared.push({ ...file, expectedBaseline, parentIdentity, snapshot });
   }
 
   if (duplicatePaths.size) {
@@ -582,6 +785,9 @@ async function preparePatchWrites(registry, task, proposalFiles, proposal) {
   }
   if (missingBaselines.length) {
     throw patchOperationError("PATCH_BASELINE_MISSING", `No complete safety baseline is available for: ${missingBaselines.join(", ")}. Read those files fully and regenerate the patch.`, 409);
+  }
+  if (missingParentIdentities.length) {
+    throw patchOperationError("PATCH_PARENT_IDENTITY_MISSING", `No reviewed parent-directory identity is available for: ${missingParentIdentities.join(", ")}. Regenerate the patch.`, 409);
   }
   return prepared;
 }
@@ -606,22 +812,6 @@ async function readRegistryFileState(registry, filePath) {
   }
 }
 
-async function rollbackPatchWrites(registry, written) {
-  const failures = [];
-  for (const file of [...written].reverse()) {
-    try {
-      const expectedBaseline = { exists: true, sha256: hashContent(file.content) };
-      const args = file.snapshot.exists
-        ? { path: file.path, content: file.snapshot.content, expectedBaseline }
-        : { path: file.path, remove: true, expectedBaseline };
-      await registry.call("write_patch", args, { approved: true });
-    } catch {
-      failures.push(file.path);
-    }
-  }
-  return failures;
-}
-
 function baselineFromTaskContext(task, filePath) {
   const context = (task?.contextFiles || []).find((item) => samePatchPath(item.path, filePath));
   if (!context || typeof context.content !== "string" || context.contentComplete === false) return null;
@@ -633,6 +823,10 @@ function validPatchBaseline(baseline) {
   if (!baseline.exists) return { exists: false, sha256: null };
   if (typeof baseline.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(baseline.sha256)) return null;
   return { exists: true, sha256: baseline.sha256.toLowerCase() };
+}
+
+function validIdentityDigest(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
 
 function samePatchPath(left, right) {
@@ -648,6 +842,46 @@ function patchOperationError(code, message, status) {
   error.code = code;
   error.status = status;
   return error;
+}
+
+function assertProposalApproval(proposal, requestBody, workspaceIdentity) {
+  const digestIsCurrent = proposal?.proposalDigest && proposal.proposalDigest === patchProposalDigest(proposal);
+  if (!proposal?.proposalId
+    || !digestIsCurrent
+    || !workspaceIdentity
+    || proposal.workspaceIdentity !== workspaceIdentity
+    || requestBody.proposalId !== proposal.proposalId
+    || requestBody.proposalDigest !== proposal.proposalDigest) {
+    throw patchOperationError("PATCH_APPROVAL_STALE", "The patch proposal changed after review. Review the current proposal and approve it again.", 409);
+  }
+}
+
+function assertRevertApproval(patch, requestBody, workspaceIdentity) {
+  const identityIsCurrent = patch?.patchIdentity && patch.patchIdentity === appliedPatchIdentity(patch);
+  if (!identityIsCurrent
+    || !workspaceIdentity
+    || patch.workspaceIdentity !== workspaceIdentity
+    || requestBody.workspaceIdentity !== workspaceIdentity
+    || requestBody.patchIdentity !== patch.patchIdentity) {
+    throw patchOperationError("PATCH_APPROVAL_STALE", "The selected applied patch changed after review. Review the current patch record and approve Revert again.", 409);
+  }
+}
+
+async function canonicalizeTaskRoot(task, action) {
+  if (!task?.rootPath || !task.rootIdentity) {
+    throw patchOperationError("PATCH_WORKSPACE_RESCAN_REQUIRED", `The saved workspace identity is unavailable. Rescan the project and create a new task before attempting to ${action}.`, 409);
+  }
+  let current;
+  try {
+    current = await captureWorkspaceIdentity(task.rootPath);
+  } catch {
+    throw patchOperationError("PATCH_WORKSPACE_CHANGED", `The workspace root is unavailable or unsafe. Stop before attempting to ${action}.`, 409);
+  }
+  if (current.digest !== task.rootIdentity) {
+    throw patchOperationError("PATCH_WORKSPACE_CHANGED", `The folder at this path is not the same workspace that was reviewed. No write was started for ${action}.`, 409);
+  }
+  if (current.rootPath === task.rootPath) return task;
+  return taskStore.update(task.id, { rootPath: current.rootPath });
 }
 
 async function scanRepo(request, response) {
@@ -685,6 +919,9 @@ async function createPlan(request, response) {
 
 async function callTool(request, response) {
   const body = await readJson(request);
+  if (body.tool === "write_patch") {
+    throw patchOperationError("PATCH_TRANSACTION_REQUIRED", "Direct file writes are disabled. Generate a patch proposal, review it, and use the transaction-protected Apply action.", 409);
+  }
   const registry = getToolRegistry(body.rootPath);
   const result = await registry.call(body.tool, body.args || {}, { approved: Boolean(body.approved) });
   const rootPath = lastRepoProfile?.rootPath || body.rootPath;
@@ -738,6 +975,160 @@ function getToolRegistry(rootPath) {
   }
   if (!toolRegistry) throw new Error("Scan a repository before calling tools.");
   return toolRegistry;
+}
+
+async function ensurePatchRecoveryReady(rootPath, rootIdentity) {
+  const recovery = await withPatchRecoveryOwnership(rootPath, () => recoverPatchTransactions({
+    store: patchTransactionStore,
+    taskStore,
+    registryFactory: (selectedRoot) => new ToolRegistry({ rootPath: selectedRoot }),
+    beforeRemove: markPatchClaimComplete,
+    rootPath
+  }), rootIdentity);
+  await updateGlobalPatchRecoveryStatus(recovery);
+  const hasUnscopedInvalidJournal = (await patchTransactionStore.listPending()).some((transaction) => transaction.invalid);
+  if (!recovery.ok || hasUnscopedInvalidJournal) {
+    throw patchOperationError("PATCH_RECOVERY_REQUIRED", "An unfinished patch operation needs review. CodeClaw has stopped all Apply and Revert writes for this project to avoid overwriting unknown edits.", 409);
+  }
+}
+
+async function withPatchRecoveryOwnership(rootPath, recovery, expectedRootIdentity = "") {
+  const pendingBefore = await pendingPatchTransactionsForRoot(rootPath);
+  const journalIdentities = [...new Set(pendingBefore.map((transaction) => transaction.rootIdentity))];
+  if (journalIdentities.length > 1) {
+    throw patchOperationError("PATCH_TRANSACTION_CLAIM_MISMATCH", "More than one workspace identity is present in local recovery journals for this project.", 409);
+  }
+  const rootIdentity = expectedRootIdentity || journalIdentities[0] || (await captureWorkspaceIdentity(rootPath)).digest;
+  if (journalIdentities.length && journalIdentities[0] !== rootIdentity) {
+    throw patchOperationError("PATCH_TRANSACTION_CLAIM_ROOT_MISMATCH", "The local recovery journal belongs to a different workspace identity.", 409);
+  }
+  await patchClaimStore.assertCompatible({
+    rootPath,
+    rootIdentity,
+    pendingTransactionIds: pendingBefore.map((transaction) => transaction.id)
+  });
+  const result = await recovery();
+  const pendingAfter = await pendingPatchTransactionsForRoot(rootPath);
+  if (!pendingAfter.length) {
+    await patchClaimStore.assertCompatible({ rootPath, rootIdentity, pendingTransactionIds: [] });
+  }
+  return result;
+}
+
+async function pendingPatchTransactionsForRoot(rootPath) {
+  const selected = canonicalRootPath(rootPath);
+  return (await patchTransactionStore.listPending()).filter((transaction) => !transaction.invalid
+    && transaction.rootPath
+    && canonicalRootPath(transaction.rootPath) === selected);
+}
+
+function canonicalRootPath(rootPath) {
+  const resolved = path.resolve(rootPath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+async function updateGlobalPatchRecoveryStatus(recovery) {
+  const pending = await patchTransactionStore.listPending();
+  if (!pending.length) {
+    patchRecoveryStatus = recovery;
+    return;
+  }
+  patchRecoveryStatus = {
+    ...recovery,
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    pending: pending.length,
+    blocked: Math.max(1, recovery.blocked || 0),
+    transactions: recovery.transactions.length
+      ? recovery.transactions
+      : [{ operation: "unknown", status: "blocked", itemCount: 0, conflicts: 0, code: "PATCH_RECOVERY_REQUIRED" }]
+  };
+}
+
+async function cleanupCommittedPatchTransaction(transaction) {
+  try {
+    await assertCommittedPatchTransactionState(transaction);
+    await markPatchClaimComplete(transaction);
+    await patchTransactionStore.remove(transaction.id);
+    await patchClaimStore.remove({
+      rootPath: transaction.rootPath,
+      rootIdentity: transaction.rootIdentity,
+      transactionId: transaction.id
+    });
+    return true;
+  } catch {
+    patchRecoveryStatus = {
+      ok: false,
+      mode: "patch-transaction-recovery",
+      checkedAt: new Date().toISOString(),
+      pending: 1,
+      recovered: 0,
+      committedCleanup: 0,
+      blocked: 1,
+      transactions: [{ operation: transaction.operation, status: "blocked", itemCount: 0, conflicts: 1, code: "PATCH_TRANSACTION_CLEANUP_FAILED" }]
+    };
+    return false;
+  }
+}
+
+async function assertCommittedPatchTransactionState(transaction) {
+  const workspace = await captureWorkspaceIdentity(transaction.rootPath).catch(() => null);
+  if (!workspace || workspace.digest !== transaction.rootIdentity) {
+    throw patchOperationError("PATCH_TRANSACTION_ROOT_CHANGED", "The committed patch workspace changed before transaction cleanup.", 409);
+  }
+  const registry = new ToolRegistry({ rootPath: transaction.rootPath });
+  for (const item of transaction.items) {
+    const parent = await captureWorkspaceParentIdentity(transaction.rootPath, item.path).catch(() => null);
+    if (!parent || parent.digest !== item.parentIdentity) {
+      throw patchOperationError("PATCH_TRANSACTION_PARENT_CHANGED", "A committed patch parent directory changed before transaction cleanup.", 409);
+    }
+    const current = await readRegistryFileState(registry, item.path);
+    const parentAfterRead = await captureWorkspaceParentIdentity(transaction.rootPath, item.path).catch(() => null);
+    if (!parentAfterRead || parentAfterRead.digest !== item.parentIdentity) {
+      throw patchOperationError("PATCH_TRANSACTION_PARENT_CHANGED", "A committed patch parent directory changed during transaction cleanup verification.", 409);
+    }
+    const matches = current.exists === item.after.exists
+      && (!current.exists || hashContent(current.content) === item.after.sha256);
+    if (!matches) {
+      throw patchOperationError("PATCH_TRANSACTION_COMMITTED_DRIFT", "The committed patch result changed before transaction cleanup.", 409);
+    }
+  }
+}
+
+async function markPatchClaimComplete(transaction) {
+  await patchClaimStore.markComplete({
+    rootPath: transaction.rootPath,
+    rootIdentity: transaction.rootIdentity,
+    transactionId: transaction.id
+  });
+}
+
+function emptyPatchRecoveryStatus() {
+  return {
+    ok: true,
+    mode: "patch-transaction-recovery",
+    checkedAt: null,
+    pending: 0,
+    recovered: 0,
+    committedCleanup: 0,
+    blocked: 0,
+    transactions: []
+  };
+}
+
+async function serializePatchOperation(rootPath, operation) {
+  const resolved = path.resolve(rootPath);
+  const key = await canonicalPathLockKey(resolved);
+  const previous = patchOperationQueues.get(key) || Promise.resolve();
+  const lockedOperation = () => projectWriteLockManager.withLock(key, operation);
+  const result = previous.then(lockedOperation, lockedOperation);
+  const settled = result.catch(() => {});
+  patchOperationQueues.set(key, settled);
+  try {
+    return await result;
+  } finally {
+    if (patchOperationQueues.get(key) === settled) patchOperationQueues.delete(key);
+  }
 }
 
 async function serveStatic(pathname, response) {

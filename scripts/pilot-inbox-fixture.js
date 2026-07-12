@@ -43,7 +43,12 @@ await listen(fakeModelServer, modelPort);
 
 const appServer = spawn(process.execPath, ["apps/web/server.js"], {
   cwd: rootPath,
-  env: { ...process.env, CODECLAW_PORT: String(appPort), CODECLAW_STATE_DIR: stateDir },
+  env: {
+    ...process.env,
+    CODECLAW_PORT: String(appPort),
+    CODECLAW_STATE_DIR: stateDir,
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });
@@ -123,7 +128,7 @@ try {
   if (!proposal.proposal.applicable) throw new Error(`Inbox fixture proposal was not applicable: ${proposal.proposal.reason}`);
   if (proposal.proposal.files.length !== 3) throw new Error("Inbox fixture proposal should update three files.");
 
-  await appRequest("/api/tasks/apply-patch", { taskId: task.task.id, approved: true });
+  const applied = await appRequest("/api/tasks/apply-patch", { taskId: task.task.id, proposalId: proposal.proposal.proposalId, proposalDigest: proposal.proposal.proposalDigest, approved: true });
   const verification = await appRequest("/api/tools/call", {
     tool: "run_command",
     args: { command: "npm run test" },
@@ -139,7 +144,7 @@ try {
   });
 
   for (let index = proposal.proposal.files.length - 1; index >= 0; index -= 1) {
-    await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: index, approved: true });
+    await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: index, patchIdentity: applied.task.appliedPatches[index].patchIdentity, workspaceIdentity: applied.task.rootIdentity, approved: true });
   }
 
   const finalApi = await fs.readFile(apiPath, "utf8");

@@ -18,6 +18,8 @@
 - Mock / OpenAI-compatible 模型建议入口
 - 模型上下文文件推荐和手动读取归档
 - 补丁草案、审查应用和最近补丁回滚
+- 崩溃安全的 Apply/Revert 写前日志、跨 state-dir 所有权 claim、启动恢复和冲突停写
+- 原子文件替换、工作区/父目录实体身份绑定、任务状态串行写入和 Windows 路径别名防护
 - OpenAI-compatible 结构化 JSON patch 解析
 - 多文件 patch proposal 展示和应用
 - 真实模型 patch 输出校验和失败原因提示
@@ -62,7 +64,7 @@
 npm.cmd run dev
 ```
 
-打开：<http://localhost:4173>
+打开：<http://127.0.0.1:4173>
 
 点击 `Demo` 会先运行只读预检；之后按 `Task guide` 依次完成计划、上下文、补丁、验证和完成。
 
@@ -70,7 +72,7 @@ npm.cmd run dev
 
 ## 3 分钟试用路径
 
-1. 在 PowerShell 里运行 `npm.cmd run dev`，打开 <http://localhost:4173>。
+1. 在 PowerShell 里运行 `npm.cmd run dev`，打开 <http://127.0.0.1:4173>。
 2. 点击 `Demo`。CodeClaw 会自动填入内置 demo 仓库、填入默认目标并运行只读预检。
 3. 确认 `Read-only preflight` 通过，`Patch proposal` 里的闸门显示可以继续。
 4. 按 `Task guide` 的 `Next` 依次推进：生成计划、选择上下文、读取文件、生成补丁。
@@ -83,7 +85,7 @@ npm.cmd run dev
 npm run dev
 ```
 
-打开：<http://localhost:4173>
+打开：<http://127.0.0.1:4173>
 
 Windows 试用用户也可以直接运行：
 
@@ -211,7 +213,7 @@ npm.cmd run pilot:real:preflight -- "C:\\path\\to\\repo" "short trial goal"
 npm.cmd run dev
 ```
 
-Open <http://localhost:4173>, click `Demo`, then follow the `Task guide`.
+Open <http://127.0.0.1:4173>, click `Demo`, then follow the `Task guide`.
 
 Demo walkthroughs are in [`docs/DEMOS.md`](docs/DEMOS.md).
 
@@ -248,7 +250,7 @@ Windows 本地启动指南在 [`docs/START_GUIDE.md`](docs/START_GUIDE.md)。
 ## 当前工具能力
 
 - `list_files` / `read_file` / `search_code`：只读工具，自动允许。
-- `write_patch`：写入完整文件内容，需要确认，拒绝敏感文件、忽略文件和越界路径。
+- `write_patch`：仅供事务 Apply/Revert 内部写入完整文件；必须携带有效事务 ID、已审查的工作区身份和父目录身份，拒绝通用工具 API 直接调用、敏感/忽略/受保护目录和越界路径。
 - `run_command`：执行扫描识别出的命令，需要确认，返回 exit code、stdout、stderr、耗时和超时状态。
 - 审计日志：扫描、计划生成、工具调用和验证命令会记录到本地 `.codeclaw/audit.jsonl`。
 - 任务存储：生成计划会创建/更新当前任务，工具调用和验证结果会保存到 `.codeclaw/tasks.json`。
@@ -271,6 +273,8 @@ Windows 本地启动指南在 [`docs/START_GUIDE.md`](docs/START_GUIDE.md)。
 - 发布路线：优先做本地 Web 试用包，再做本地启动器/桌面壳；微信小程序更适合作为后续 companion，而不是第一版核心产品。
 - 试用包：`docs/LOCAL_TRIAL_PACKAGE.md` 记录本地 trial package 应包含/排除的文件、验证命令、试用任务和停止条件。
 - 试用包脚本：`npm.cmd run package:local-trial` 会生成干净的 `dist/CodeClaw-local-trial-YYYYMMDD` 文件夹和 `PACKAGE_MANIFEST.md`。
+
+当前安全边界：Stage 3.0.10 的机器测试覆盖已知中断状态的恢复或 fail-closed，但不等于真实断电、杀毒软件占用、网络盘、自定义 Windows ACL 或真人项目写入已经验收。原项目继续按只读范围对待；写入实验只应在后续 Stage 3.0.11 登记并验证的无秘密可丢弃副本中进行。
 - 发包检查：`npm.cmd run trial:ready` 会生成试用包、检查敏感文件排除、在包内复跑验证并输出 `dist/TRIAL_READINESS_REPORT.json`。
 - 模拟试用：`npm.cmd run trial:simulate` 会扮演第一位安全路径试用者，输出 `dist/SIMULATED_FIRST_TRIAL_REPORT.md`。
 - 夜跑验证：`npm.cmd run nightly:trial` 会跑 2.5 小时安全检查和模拟试用，输出 `dist/nightly-trial/.../summary.md`。

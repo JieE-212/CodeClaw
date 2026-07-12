@@ -43,7 +43,12 @@ await listen(fakeModelServer, modelPort);
 
 const appServer = spawn(process.execPath, ["apps/web/server.js"], {
   cwd: rootPath,
-  env: { ...process.env, CODECLAW_PORT: String(appPort), CODECLAW_STATE_DIR: stateDir },
+  env: {
+    ...process.env,
+    CODECLAW_PORT: String(appPort),
+    CODECLAW_STATE_DIR: stateDir,
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });
@@ -149,13 +154,13 @@ try {
   const failureTask = await createTask(scan.profile, "create controlled failure and ask for repair advice", ["test/calculator.test.js"]);
   const failingPatch = await propose(scan.profile, failureTask.task.id, failureTask.task.goal);
   assertEqual(failingPatch.proposal.applicable, true, "failing patch should be applicable");
-  await appRequest("/api/tasks/apply-patch", { taskId: failureTask.task.id, approved: true });
+  const appliedFailure = await appRequest("/api/tasks/apply-patch", { taskId: failureTask.task.id, proposalId: failingPatch.proposal.proposalId, proposalDigest: failingPatch.proposal.proposalDigest, approved: true });
   const failedVerification = await appRequest("/api/tools/call", { tool: "run_command", args: { command: "npm run test" }, rootPath: scan.profile.rootPath, taskId: failureTask.task.id, approved: true });
   if (failedVerification.result.exitCode === 0) throw new Error("controlled verification unexpectedly passed");
   modelResponses.push("Contract failure fix: inspect the changed assertion and restore the expected quotient to 4.");
   const failureFix = await fixFromFailure(scan.profile, failureTask.task.id);
   assertIncludes(failureFix.suggestion.content, "restore the expected quotient", "failure fix content");
-  await appRequest("/api/tasks/revert-patch", { taskId: failureTask.task.id, patchIndex: 0, approved: true });
+  await appRequest("/api/tasks/revert-patch", { taskId: failureTask.task.id, patchIndex: 0, patchIdentity: appliedFailure.task.appliedPatches[0].patchIdentity, workspaceIdentity: appliedFailure.task.rootIdentity, approved: true });
 
   assertEqual(modelResponses.length, 0, "all fake model responses consumed");
   assertEqual(modelRequests.length, 9, "fake model request count");

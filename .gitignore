@@ -12,4 +12,7 @@ coverage/
 .codeclaw/tasks.json
 .codeclaw/model.json
 .codeclaw/*.json
+.codeclaw/patch-transactions/
+.codeclaw/.task-locks/
+.codeclaw/**/*.tmp
 *.log

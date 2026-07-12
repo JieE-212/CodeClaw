@@ -13,7 +13,12 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const originalDemoTest = await fs.readFile(demoTestPath, "utf8");
 const server = spawn(process.execPath, ["apps/web/server.js"], {
   cwd: rootPath,
-  env: { ...process.env, CODECLAW_PORT: String(port), CODECLAW_STATE_DIR: stateDir },
+  env: {
+    ...process.env,
+    CODECLAW_PORT: String(port),
+    CODECLAW_STATE_DIR: stateDir,
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });
@@ -34,12 +39,12 @@ try {
   await request("/api/tools/call", { tool: "read_file", args: { path: "test/calculator.test.js" }, rootPath: scan.profile.rootPath, taskId: task.task.id });
   const patch = await request("/api/model/patch-proposal", { goal: task.task.goal, repoProfile: scan.profile, rootPath: scan.profile.rootPath, taskId: task.task.id });
   if (patch.proposal.path !== "test/calculator.test.js") throw new Error(`Unexpected patch path: ${patch.proposal.path}`);
-  await request("/api/tasks/apply-patch", { taskId: task.task.id, approved: true });
+  const applied = await request("/api/tasks/apply-patch", { taskId: task.task.id, proposalId: patch.proposal.proposalId, proposalDigest: patch.proposal.proposalDigest, approved: true });
   const verify = await request("/api/tools/call", { tool: "run_command", args: { command: "npm run test" }, rootPath: scan.profile.rootPath, taskId: task.task.id, approved: true });
   if (verify.result.exitCode !== 0) throw new Error(`Verification failed with exit ${verify.result.exitCode}`);
   const completed = await request("/api/tasks/complete", { taskId: task.task.id });
   if (!completed.task.reviewDraft?.includes("Exit code 0")) throw new Error("Review draft did not include verification result.");
-  await request("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: 0, approved: true });
+  await request("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: 0, patchIdentity: applied.task.appliedPatches[0].patchIdentity, workspaceIdentity: applied.task.rootIdentity, approved: true });
   const finalDemoTest = await fs.readFile(demoTestPath, "utf8");
   if (finalDemoTest !== originalDemoTest) throw new Error("Smoke test did not restore the demo test file.");
 

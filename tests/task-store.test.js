@@ -5,10 +5,22 @@ import os from "node:os";
 import path from "node:path";
 import { TaskStore, buildTaskReviewDraft, summarizeTask, summarizeVerificationFailure } from "../packages/task-store/src/index.js";
 
+const temporaryRoots = [];
+
 async function makeStore() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-tasks-"));
+  const root = await makeTemporaryRoot("codeclaw-tasks-");
   return new TaskStore({ storagePath: path.join(root, "tasks.json") });
 }
+
+async function makeTemporaryRoot(prefix) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  temporaryRoots.push(root);
+  return root;
+}
+
+test.after(async () => {
+  for (const root of temporaryRoots) await fs.rm(root, { recursive: true, force: true });
+});
 
 test("TaskStore creates and returns latest tasks", async () => {
   const store = await makeStore();
@@ -83,6 +95,67 @@ test("TaskStore keeps completed status when reverting after completion", async (
   const reverted = await store.markPatchReverted(task.id, 0);
   assert.equal(reverted.status, "completed");
   assert.ok(reverted.appliedPatches[0].revertedAt);
+});
+
+test("TaskStore serializes concurrent read-modify-write updates", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "concurrent updates", rootPath: "C:/repo-a" });
+  await Promise.all(Array.from({ length: 20 }, (_, index) => store.appendSuggestion(task.id, { provider: "mock", content: `suggestion-${index}` })));
+  const updated = await store.get(task.id);
+  assert.equal(updated.suggestions.length, 20);
+  assert.equal(new Set(updated.suggestions.map((item) => item.content)).size, 20);
+});
+
+test("TaskStore coordinates concurrent mutations across instances and Windows path casing", async (t) => {
+  const root = await makeTemporaryRoot("codeclaw-task-cross-process-");
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const storagePath = path.join(root, "tasks.json");
+  const first = new TaskStore({ storagePath });
+  const second = new TaskStore({ storagePath: process.platform === "win32" ? storagePath.toUpperCase() : storagePath });
+
+  await Promise.all([
+    first.create({ goal: "first instance", rootPath: "C:/repo-a" }),
+    second.create({ goal: "second instance", rootPath: "C:/repo-a" })
+  ]);
+
+  const tasks = await first.readAll();
+  assert.equal(tasks.length, 2);
+  assert.deepEqual(new Set(tasks.map((task) => task.goal)), new Set(["first instance", "second instance"]));
+});
+
+test("TaskStore records apply and revert transaction ids idempotently", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "idempotent transaction", rootPath: "C:/repo-a" });
+  const patch = {
+    transactionId: "apply-idempotent-12345678",
+    path: "src/a.js",
+    previousContent: "a1",
+    nextContent: "a2"
+  };
+  await store.recordAppliedPatch(task.id, patch);
+  const replayed = await store.recordAppliedPatch(task.id, patch);
+  assert.equal(replayed.appliedPatches.length, 1);
+
+  await store.markPatchReverted(task.id, 0, { revertTransactionId: "revert-idempotent-12345678" });
+  const revertReplay = await store.markPatchReverted(task.id, 0, { revertTransactionId: "revert-idempotent-12345678" });
+  assert.equal(revertReplay.appliedPatches[0].revertTransactionId, "revert-idempotent-12345678");
+});
+
+test("TaskStore derives a stable identity for legacy applied patches", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "legacy patch", rootPath: "C:/repo-a" });
+  const applied = await store.recordAppliedPatch(task.id, {
+    path: "src/a.js",
+    previousExists: true,
+    previousContent: "a1",
+    nextContent: "a2"
+  });
+  const raw = JSON.parse(await fs.readFile(store.storagePath, "utf8"));
+  delete raw[0].appliedPatches[0].patchIdentity;
+  await fs.writeFile(store.storagePath, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
+
+  const restored = await new TaskStore({ storagePath: store.storagePath }).get(applied.id);
+  assert.match(restored.appliedPatches[0].patchIdentity, /^[0-9a-f]{64}$/);
 });
 
 test("TaskStore marks failed verification", async () => {

@@ -14,7 +14,12 @@ const port = await findFreePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["apps/web/server.js"], {
   cwd: rootPath,
-  env: { ...process.env, CODECLAW_PORT: String(port), CODECLAW_STATE_DIR: stateDir },
+  env: {
+    ...process.env,
+    CODECLAW_PORT: String(port),
+    CODECLAW_STATE_DIR: stateDir,
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });

@@ -4,8 +4,10 @@ import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { classifyToolCall } from "../../permission-engine/src/index.js";
+import { atomicRemoveFile, atomicWriteFile, capturePathIdentity, patchWriteTemporaryPath, removeOwnedTemporaryFile } from "../../shared/src/atomic-file.js";
 import { loadGitignoreMatcher } from "../../shared/src/ignore-utils.js";
 import { isSensitiveFile, isSkippedDirectory, relativePath } from "../../shared/src/path-utils.js";
+import { workspaceIdentityMatches, workspaceParentIdentityMatches } from "../../shared/src/workspace-identity.js";
 
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 30000;
@@ -47,13 +49,47 @@ export class ToolRegistry {
     return { ok: true, permission, result: await handler(args) };
   }
 
+  async cleanupPatchTemporary({ path: filePath, transactionId, rootIdentity, parentIdentity, temporaryIdentity = null }) {
+    await assertWorkspaceWriteIdentity(this.rootPath, filePath, rootIdentity, parentIdentity);
+    const absolutePath = resolveInside(this.rootPath, filePath);
+    await assertNoLinkedPathSegments(this.rootPath, absolutePath, "clean a patch temporary file");
+    const temporaryPath = patchWriteTemporaryPath(absolutePath, transactionId);
+    await assertNoLinkedPathSegments(this.rootPath, temporaryPath, "clean a patch temporary file");
+    const directoryIdentity = await capturePathIdentity(path.dirname(temporaryPath), { requireDirectory: true });
+    await assertNoLinkedPathSegments(this.rootPath, temporaryPath, "clean a patch temporary file");
+    let currentTemporaryIdentity;
+    try {
+      currentTemporaryIdentity = await capturePathIdentity(temporaryPath, { requireFile: true });
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw error;
+    }
+    if (!validTemporaryIdentity(temporaryIdentity)
+      || !temporaryIdentityMatches(currentTemporaryIdentity, temporaryIdentity)
+      || currentTemporaryIdentity.nlink !== 1n) {
+      const error = new Error("The patch temporary file cannot be proven to belong to this transaction. Cleanup was stopped.");
+      error.code = "PATCH_TEMP_OWNERSHIP_UNKNOWN";
+      error.status = 409;
+      throw error;
+    }
+    await assertWorkspaceWriteIdentity(this.rootPath, filePath, rootIdentity, parentIdentity);
+    await removeOwnedTemporaryFile(temporaryPath, { directoryIdentity, temporaryIdentity: currentTemporaryIdentity });
+  }
+
   registerDefaults() {
     this.register("list_files", async () => listFiles(this.rootPath));
     this.register("read_file", async ({ path: filePath }) => readFileSafe(this.rootPath, filePath));
     this.register("search_code", async ({ query }) => searchCode(this.rootPath, query));
     this.register("git_status", async () => runGit(this.rootPath, ["status", "--short"]));
     this.register("git_diff", async () => runGit(this.rootPath, ["diff", "--"]));
-    this.register("write_patch", async ({ path: filePath, content, expectedBaseline, remove = false }) => writePatch(this.rootPath, filePath, content, { expectedBaseline, remove }));
+    this.register("write_patch", async ({ path: filePath, content, expectedBaseline, remove = false, transactionId = "", rootIdentity = "", parentIdentity = "", onTemporaryReady = null }) => writePatch(this.rootPath, filePath, content, {
+      expectedBaseline,
+      remove,
+      transactionId,
+      rootIdentity,
+      parentIdentity,
+      onTemporaryReady
+    }));
     this.register("run_command", async (args) => runCommand(this.rootPath, args, this.allowedCommands));
   }
 }
@@ -85,7 +121,7 @@ async function readFileSafe(rootPath, filePath) {
   const absolutePath = resolveInside(rootPath, filePath);
   if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to read sensitive file.");
   await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
-  return fs.readFile(absolutePath, "utf8");
+  return decodeUtf8(await fs.readFile(absolutePath), absolutePath);
 }
 
 async function searchCode(rootPath, query = "") {
@@ -124,13 +160,33 @@ function findLineMatches(content, normalizedQuery) {
   return matches;
 }
 
-async function writePatch(rootPath, filePath, content, { expectedBaseline = null, remove = false } = {}) {
+async function writePatch(rootPath, filePath, content, {
+  expectedBaseline = null,
+  remove = false,
+  transactionId = "",
+  rootIdentity = "",
+  parentIdentity = "",
+  onTemporaryReady = null
+} = {}) {
   if (!filePath) throw new Error("Missing path.");
   if (!remove && typeof content !== "string") throw new Error("Missing content.");
+  if (!validTransactionId(transactionId)) {
+    const error = new Error("Direct writes require a patch transaction.");
+    error.code = "PATCH_TRANSACTION_REQUIRED";
+    error.status = 409;
+    throw error;
+  }
 
+  await assertWorkspaceWriteIdentity(rootPath, filePath, rootIdentity, parentIdentity);
   const absolutePath = resolveInside(rootPath, filePath);
   const rel = relativePath(rootPath, absolutePath);
   if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to write sensitive file.");
+  if (rel.split("/").some((segment) => isSkippedDirectory(segment.toLowerCase()))) {
+    const error = new Error("Refusing to write inside a protected project metadata or generated directory.");
+    error.code = "PATCH_PROTECTED_PATH_REFUSED";
+    error.status = 409;
+    throw error;
+  }
   await assertNoLinkedPathSegments(rootPath, absolutePath, "write");
 
   const isIgnored = await loadGitignoreMatcher(rootPath);
@@ -140,26 +196,92 @@ async function writePatch(rootPath, filePath, content, { expectedBaseline = null
   assertExpectedBaseline(expectedBaseline, current, rel);
   const previous = current.content;
   const created = !current.exists;
+  const verifyCurrentBaseline = async () => {
+    await assertWorkspaceWriteIdentity(rootPath, filePath, rootIdentity, parentIdentity);
+    await assertNoLinkedPathSegments(rootPath, absolutePath, "write");
+    if ((await loadGitignoreMatcher(rootPath))(rel, false)) throw new Error("Refusing to write ignored file.");
+    assertExpectedBaseline(expectedBaseline, await readFileState(absolutePath), rel);
+  };
 
   if (remove) {
-    if (current.exists) await fs.unlink(absolutePath);
+    const removed = current.exists
+      ? await atomicRemoveFile(absolutePath, { beforeRemove: verifyCurrentBaseline })
+      : false;
     return {
       path: rel,
       created: false,
-      removed: current.exists,
+      removed,
       bytes: 0,
       diff: createSimpleDiff(rel, previous, "")
     };
   }
 
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, content, "utf8");
+  await atomicWriteFile(absolutePath, content, {
+    beforeReplace: verifyCurrentBaseline,
+    onTemporaryReady,
+    mode: current.mode ?? 0o600,
+    ...(transactionId ? { temporaryPath: patchWriteTemporaryPath(absolutePath, transactionId) } : {})
+  });
+  await assertWorkspaceWriteIdentity(rootPath, filePath, rootIdentity, parentIdentity);
+  const applied = await readFileState(absolutePath);
+  if (!applied.exists || hashContent(applied.content) !== hashContent(content)) {
+    const error = new Error(`Workspace file could not be verified after the write: ${rel}.`);
+    error.code = "PATCH_WRITE_VERIFY_FAILED";
+    error.status = 500;
+    throw error;
+  }
   return {
     path: rel,
     created,
     bytes: Buffer.byteLength(content, "utf8"),
     diff: createSimpleDiff(rel, previous, content)
   };
+}
+
+async function assertWorkspaceWriteIdentity(rootPath, filePath, rootIdentity, parentIdentity) {
+  if (!validIdentityDigest(rootIdentity) || !validIdentityDigest(parentIdentity)) {
+    const error = new Error("Patch writes require the reviewed workspace and parent-directory identities.");
+    error.code = "PATCH_TRANSACTION_IDENTITY_REQUIRED";
+    error.status = 409;
+    throw error;
+  }
+  if (!(await workspaceIdentityMatches(rootPath, rootIdentity))) {
+    const error = new Error("The workspace root changed after review. The write was stopped.");
+    error.code = "PATCH_WORKSPACE_CHANGED";
+    error.status = 409;
+    throw error;
+  }
+  if (!(await workspaceParentIdentityMatches(rootPath, filePath, parentIdentity))) {
+    const error = new Error("The target parent directory changed after review. The write was stopped.");
+    error.code = "PATCH_PARENT_CHANGED";
+    error.status = 409;
+    throw error;
+  }
+}
+
+function validIdentityDigest(value) {
+  return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function validTransactionId(value) {
+  return typeof value === "string" && /^(apply|revert)-[a-z0-9-]{8,160}$/i.test(value);
+}
+
+function validTemporaryIdentity(value) {
+  return value
+    && typeof value.dev === "string"
+    && /^\d+$/.test(value.dev)
+    && typeof value.ino === "string"
+    && /^\d+$/.test(value.ino)
+    && typeof value.birthtimeNs === "string"
+    && /^\d+$/.test(value.birthtimeNs)
+    && value.nlink === 1;
+}
+
+function temporaryIdentityMatches(current, expected) {
+  return String(current.dev) === expected.dev
+    && String(current.ino) === expected.ino
+    && String(current.birthtimeNs) === expected.birthtimeNs;
 }
 
 async function assertNoLinkedPathSegments(rootPath, absolutePath, action) {
@@ -190,9 +312,21 @@ async function assertNoLinkedPathSegments(rootPath, absolutePath, action) {
 
 async function readFileState(absolutePath) {
   try {
-    return { exists: true, content: await fs.readFile(absolutePath, "utf8") };
+    const [buffer, stat] = await Promise.all([fs.readFile(absolutePath), fs.stat(absolutePath)]);
+    return { exists: true, content: decodeUtf8(buffer, absolutePath), mode: stat.mode & 0o777 };
   } catch (error) {
-    if (error.code === "ENOENT") return { exists: false, content: "" };
+    if (error.code === "ENOENT") return { exists: false, content: "", mode: null };
+    throw error;
+  }
+}
+
+function decodeUtf8(buffer, filePath) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
+  } catch {
+    const error = new Error(`Refusing to patch a file that is not valid UTF-8 text: ${filePath}.`);
+    error.code = "PATCH_NON_UTF8_REFUSED";
+    error.status = 409;
     throw error;
   }
 }
@@ -356,8 +490,22 @@ function appendOutput(current, chunk) {
 }
 
 function resolveInside(rootPath, filePath) {
+  assertPortableProjectPath(filePath);
   const absolutePath = path.resolve(rootPath, filePath || "");
   const relative = path.relative(rootPath, absolutePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Path escapes project root.");
   return absolutePath;
+}
+
+function assertPortableProjectPath(filePath) {
+  const value = String(filePath || "").replaceAll("\\", "/");
+  if (!value || value.includes("\0") || value.startsWith("/") || /^[a-z]:/i.test(value)) throw new Error("Path must be a relative project file.");
+  const segments = value.split("/");
+  for (const segment of segments) {
+    const stem = segment.split(".")[0];
+    if (segment === "..") throw new Error("Path escapes project root.");
+    if (!segment || segment === "." || segment.includes(":")) throw new Error("Path contains an unsafe segment.");
+    if (/[. ]$/.test(segment)) throw new Error("Path cannot end with a dot or space.");
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem)) throw new Error("Path uses a reserved Windows device name.");
+  }
 }
