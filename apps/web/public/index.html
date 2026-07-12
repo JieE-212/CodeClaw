@@ -29,19 +29,31 @@
           </div>
         </section>
         <section class="trust-strip" data-view="workspace">
-          <div><strong data-i18n="trust.local.title">本机运行</strong><span data-i18n="trust.local.body">项目文件留在你的电脑上。</span></div>
+          <div><strong data-i18n="trust.local.title">本机运行</strong><span data-i18n="trust.local.body">扫描和 Mock 留在本机；在线模型请求可能发送目标、项目元数据、文件路径和所选上下文。</span></div>
           <div><strong data-i18n="trust.preflight.title">先只读预检</strong><span data-i18n="trust.preflight.body">真实项目先读结构和上下文，不写文件。</span></div>
           <div><strong data-i18n="trust.confirm.title">写入前确认</strong><span data-i18n="trust.confirm.body">Apply 和运行命令前都会再次确认。</span></div>
+        </section>
+        <section class="session-recovery" id="sessionRecovery" aria-live="polite" hidden>
+          <div>
+            <strong id="sessionRecoveryTitle"></strong>
+            <span id="sessionRecoveryBody"></span>
+          </div>
+          <div class="session-recovery-actions">
+            <button id="continueSessionButton" type="button"></button>
+            <button class="secondary" id="startFreshButton" type="button"></button>
+          </div>
         </section>
         <section class="grid">
           <div class="panel guide-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.guide">任务引导</h3><span id="guideState">开始</span></div>
+            <p class="panel-purpose" data-i18n="purpose.guide">显示当前进度，并只推荐一个安全的下一步。</p>
             <ol class="guide-steps" id="guideSteps"></ol>
             <div class="next-step" id="nextStepHint">输入项目路径，或点击 Demo 开始。</div>
             <div class="action-row"><button id="guideNextButton" type="button">下一步</button></div>
           </div>
           <div class="panel quick-start-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.quickStart">快速开始</h3><span id="quickStartState">待开始</span></div>
+            <p class="panel-purpose" data-i18n="purpose.quickStart">第一次使用可从 Demo 开始；这里会说明每一步是否已完成。</p>
             <div class="quick-start-copy" id="quickStartCopy">从 Demo 开始，或填入你自己的项目路径。CodeClaw 会先做只读预检，再允许进入补丁流程。</div>
             <ol class="quick-start-list" id="quickStartList"></ol>
             <div class="action-row">
@@ -49,8 +61,12 @@
               <button class="secondary" id="quickStartSecondary" type="button">运行预检</button>
             </div>
           </div>
-          <div class="panel trial-host-panel" data-view="workspace" data-ui-marker="trial-operator-guide">
-            <div class="panel-header"><h3 data-i18n="panel.trialHost">Trial host checklist</h3><span data-i18n="trialHost.state.pending">Paused until a human tester is available</span></div>
+          <details class="panel trial-host-panel" data-view="workspace" data-ui-marker="trial-operator-guide">
+            <summary class="trial-host-summary">
+              <span><strong data-i18n="panel.trialHost">Trial host checklist</strong><small data-i18n="trialHost.state.pending">Paused until a human tester is available</small></span>
+              <span data-i18n="trialHost.disclosure">主持人专用：展开清单和命令</span>
+            </summary>
+            <div class="trial-host-content">
             <p class="trial-host-note" data-i18n="trialHost.state.detail">There is no completed real tester session yet. Keep tester-2 paused and use synthetic rehearsal only while waiting.</p>
             <div class="trial-host-grid">
               <fieldset class="trial-checklist waiting">
@@ -124,9 +140,11 @@
                 </div>
               </div>
             </section>
-          </div>
+            </div>
+          </details>
           <div class="panel repo-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.repo">项目仓库</h3><span id="scanState">未扫描</span></div>
+            <p class="panel-purpose" data-i18n="purpose.repo">选择 Demo 或本地项目文件夹。扫描只识别结构；预检才会读取选中的上下文。</p>
             <div class="system-check" id="systemCheck">正在检查本地环境。</div>
             <label class="field-label" for="repoPath" data-i18n="field.projectPath">项目路径</label>
             <div class="input-row"><input id="repoPath" type="text" placeholder="Paste a folder path, e.g. C:\Users\you\project" data-i18n-placeholder="path.placeholder" autocomplete="off" /><button id="examplePathButton" class="secondary" data-i18n="button.example" type="button">示例</button><button id="demoButton" class="secondary" type="button">Demo</button><button id="scanButton" data-i18n="button.scan" type="button">扫描</button></div>
@@ -145,22 +163,26 @@
           </div>
           <div class="panel preflight-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.preflight">只读预检</h3><span id="preflightState">未运行</span></div>
+            <p class="panel-purpose" data-i18n="purpose.preflight">读取项目结构和少量相关文件，检查能否安全继续；不会写文件或运行项目命令。</p>
             <div class="action-row"><button id="preflightButton" data-i18n="button.runPreflight" type="button">运行预检</button></div>
             <div class="preflight-output" id="preflightOutput" data-i18n="preflight.default">在真实项目上继续前，先运行只读预检。它只读取上下文，不会写入文件。</div>
           </div>
           <div class="panel task-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.taskGoal">任务目标</h3><span data-i18n="state.planningMode">规划模式</span></div>
+            <p class="panel-purpose" data-i18n="purpose.goal">用一句话说明希望 CodeClaw 完成什么，计划会围绕这个目标生成。</p>
             <textarea id="goalInput" rows="5" placeholder="例如：修复当前失败的测试，并解释改动。" data-i18n-placeholder="goal.placeholder"></textarea>
             <div class="action-row"><button id="planButton" data-i18n="button.generatePlan" type="button">生成计划</button><button class="secondary" id="clearButton" data-i18n="button.clear" type="button">清空</button></div>
           </div>
           <div class="panel current-task-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.currentTask">当前任务</h3><span id="taskState" data-i18n="task.state.none">无任务</span></div>
+            <p class="panel-purpose" data-i18n="purpose.currentTask">集中显示当前任务已读取、已建议、已写入和已验证的状态。</p>
             <div id="taskSummary" class="task-summary" data-i18n="task.summary.empty">生成计划后会创建任务。</div>
             <pre class="review-draft" id="reviewDraft" data-i18n="task.review.empty">完成任务后会生成 Review 草稿。</pre>
             <div class="action-row"><button class="secondary" id="completeTaskButton" data-i18n="button.completeTask" type="button">完成任务</button></div>
           </div>
           <div class="panel memory-panel" data-view="memory">
             <div class="panel-header"><h3 data-i18n="panel.memory">项目记忆</h3><span id="memoryState" data-i18n="memory.state.noProject">无项目</span></div>
+            <p class="panel-purpose" data-i18n="purpose.memory">保存本机上的项目概况和备注，方便下次继续；恢复前会先征求你的选择。</p>
             <pre class="memory-output" id="memoryOutput" data-i18n="memory.output.empty">扫描项目后会加载项目记忆。</pre>
             <label class="field-label" for="memoryNotes" data-i18n="field.memoryNotes">项目备注</label>
             <textarea id="memoryNotes" class="memory-notes" rows="5" placeholder="架构说明、偏好、注意事项或项目约定。" data-i18n-placeholder="memory.notes.placeholder"></textarea>
@@ -168,6 +190,7 @@
           </div>
           <div class="panel model-panel" data-view="workspace settings">
             <div class="panel-header"><h3 data-i18n="panel.model">模型</h3><span id="modelState">Mock</span></div>
+            <p class="panel-purpose" data-i18n="purpose.model">Mock 仅本地演示；在线模型请求可能发送目标、项目元数据、候选路径和所选上下文内容。</p>
             <div class="model-form">
               <select id="modelPreset" aria-label="模型预设" data-i18n-aria-label="model.preset.label">
                 <option value="mock" data-i18n="model.preset.mock">mock 本地演示</option>
@@ -195,11 +218,16 @@
           </div>
           <div class="panel patch-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.patch">补丁草案</h3><span id="patchState" data-i18n="patch.state.none">无补丁</span></div>
+            <p class="panel-purpose" data-i18n="purpose.patch">先生成并审阅改动草案。生成草案不写文件；只有“应用（写入文件）”会修改项目。</p>
             <div class="action-row">
               <button id="proposePatchButton" data-i18n="button.generatePatch" type="button">生成补丁</button>
-              <button id="applyPatchButton" data-i18n="button.apply" type="button">应用</button>
+              <button id="applyPatchButton" data-i18n="button.apply" type="button">应用（写入文件）</button>
               <select id="revertPatchSelect" aria-label="要回滚的补丁" data-i18n-aria-label="patch.revert.label"></select>
               <button class="secondary" id="revertPatchButton" data-i18n="button.revert" type="button">回滚</button>
+            </div>
+            <div class="boundary-note write-boundary">
+              <strong data-i18n="applyBoundary.title">写入边界</strong>
+              <span data-i18n="applyBoundary.body">应用会改动下方列出的本地文件。确认对话框出现前不会写入；请先审阅差异并准备可回滚副本或分支。</span>
             </div>
             <div class="patch-gate" id="patchGate"></div>
             <div class="apply-review" id="applyReview" data-ui-marker="dry-run-apply-review"></div>
@@ -207,6 +235,7 @@
           </div>
           <div class="panel tools-panel" data-view="settings">
             <div class="panel-header"><h3 data-i18n="panel.tools">工具调用</h3><span id="toolState" data-i18n="tool.state.waitingProject">等待项目</span></div>
+            <p class="panel-purpose" data-i18n="purpose.tools">高级入口：直接读取、搜索或查看 Git 状态；写入类工具仍需单独确认。</p>
             <div class="tool-form">
               <select id="toolSelect" aria-label="工具" data-i18n-aria-label="tool.label">
                 <option value="list_files">list_files</option>
@@ -224,23 +253,28 @@
           </div>
           <div class="panel verify-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.verify">验证</h3><span id="verifyState" data-i18n="verify.state.noCommand">无命令</span></div>
+            <p class="panel-purpose" data-i18n="purpose.verify">用项目自己提供的测试或检查命令验证改动；运行前会显示完整命令并再次确认。</p>
             <div class="verify-form">
               <select id="verifyCommandSelect" aria-label="验证命令" data-i18n-aria-label="verify.command.label"></select>
-              <button id="runVerifyButton" data-i18n="button.run" type="button">运行</button>
+              <button id="runVerifyButton" data-i18n="button.run" type="button">运行命令</button>
               <button class="secondary" id="fixFailureButton" data-i18n="button.fixFailure" type="button">修复失败</button>
             </div>
+            <div class="boundary-note command-boundary" id="verifyBoundary" aria-live="polite"></div>
             <pre class="verify-output" id="verifyOutput" data-i18n="verify.output.scanFirst">扫描项目后会加载可运行命令。</pre>
           </div>
           <div class="panel timeline-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.timeline">任务时间线</h3><span id="planIntent" data-i18n="state.waiting">等待中</span></div>
+            <p class="panel-purpose" data-i18n="purpose.timeline">把计划拆成可检查的步骤；这是计划说明，不代表步骤已经执行。</p>
             <ol class="timeline" id="timeline"></ol>
           </div>
           <div class="panel context-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.context">项目上下文</h3><span data-i18n="state.scanResults">扫描结果</span></div>
+            <p class="panel-purpose" data-i18n="purpose.context">显示 CodeClaw 已识别的项目结构、关键文件和可用命令，便于核对它读到了什么。</p>
             <pre id="contextOutput" data-i18n="context.output.start">选择本地项目后开始。</pre>
           </div>
           <div class="panel audit-panel" data-view="audit">
             <div class="panel-header"><h3 data-i18n="panel.audit">审计日志</h3><span id="auditState" data-i18n="audit.state.none">无事件</span></div>
+            <p class="panel-purpose" data-i18n="purpose.audit">按时间查看 CodeClaw 读取、建议、阻止、写入或运行过的操作。</p>
             <ol class="audit-list" id="auditList"></ol>
           </div>
         </section>

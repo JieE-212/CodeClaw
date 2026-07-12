@@ -80,6 +80,12 @@ const quickStartPrimary = document.querySelector("#quickStartPrimary");
 const quickStartSecondary = document.querySelector("#quickStartSecondary");
 const trialCommandList = document.querySelector("#trialCommandList");
 const trialCommandStatus = document.querySelector("#trialCommandStatus");
+const sessionRecovery = document.querySelector("#sessionRecovery");
+const sessionRecoveryTitle = document.querySelector("#sessionRecoveryTitle");
+const sessionRecoveryBody = document.querySelector("#sessionRecoveryBody");
+const continueSessionButton = document.querySelector("#continueSessionButton");
+const startFreshButton = document.querySelector("#startFreshButton");
+const verifyBoundary = document.querySelector("#verifyBoundary");
 let repoProfile = null;
 let currentTask = null;
 let currentMemory = null;
@@ -89,6 +95,9 @@ let currentModelStatus = null;
 let suggestedContextFiles = [];
 let systemInfo = null;
 let activeView = "workspace";
+let pendingSessionPayload = null;
+let sessionRecoveryMode = "hidden";
+let sessionRestoreSuperseded = false;
 const RECENT_REPOS_KEY = "codeclaw.recentRepos.v1";
 const MODEL_PRESETS = {
   mock: { type: "mock", baseUrl: "", model: "mock-codeclaw", apiKeyPlaceholder: "API key" },
@@ -144,10 +153,12 @@ syncToolInputs();
 bindNavigation();
 bindI18n();
 bindTrialCommandCopies();
+bindSessionRecovery();
 setActiveView(activeView);
 renderRecentRepos();
 renderPathHelperForInput(repoPath?.value || "");
 renderPathModeForInput(repoPath?.value || "");
+renderVerifyBoundary();
 renderGuide();
 updateControls();
 
@@ -205,6 +216,8 @@ function bindI18n() {
     if (currentModelStatus) renderModelStatus(currentModelStatus);
     else renderModelCostHint();
     renderAudit(currentAuditEvents);
+    renderSessionRecovery();
+    renderVerifyBoundary();
     renderGuide();
     syncToolInputs();
     updateControls();
@@ -277,6 +290,17 @@ function setActiveView(view) {
   }[activeView] || ["CodeClaw", t("view.workspace.title")];
   if (viewEyebrow) viewEyebrow.textContent = copy[0];
   if (viewTitle) viewTitle.textContent = copy[1];
+  renderSessionRecovery();
+}
+
+function bindSessionRecovery() {
+  continueSessionButton?.addEventListener("click", () => {
+    if (!pendingSessionPayload) return;
+    const payload = pendingSessionPayload;
+    pendingSessionPayload = null;
+    hydrateRestoredSession(payload);
+  });
+  startFreshButton?.addEventListener("click", () => startFreshClientWorkflow());
 }
 
 function loadRecentRepos() {
@@ -325,6 +349,7 @@ function renderRecentRepos() {
     button.addEventListener("click", () => {
       const item = recentRepoItems[Number.parseInt(button.dataset.recentIndex, 10)];
       if (!item) return;
+      startFreshClientWorkflow();
       repoPath.value = item.path;
       renderPathHelper("ok", t("path.selectedRecent"));
       renderPathModeForInput(repoPath.value);
@@ -337,11 +362,18 @@ function renderRecentRepos() {
 
 async function restoreLastSession() {
   const payload = await request("/api/session/last");
+  if (sessionRestoreSuperseded) return;
   if (!payload.session || !payload.profile) {
-    await refreshTask();
+    renderTask(null);
     return;
   }
 
+  pendingSessionPayload = payload;
+  sessionRecoveryMode = "pending";
+  renderSessionRecovery();
+}
+
+function hydrateRestoredSession(payload) {
   repoProfile = payload.profile;
   currentTask = payload.task || currentTask;
   currentMemory = payload.memory || currentMemory;
@@ -368,11 +400,66 @@ async function restoreLastSession() {
   renderRestoredPreflightNotice(payload.session);
   scanState.textContent = t("session.state.restored");
   toolState.textContent = t("tool.state.ready");
+  sessionRecoveryMode = "restored";
+  renderSessionRecovery();
+  updateControls();
+}
+
+function renderSessionRecovery() {
+  if (!sessionRecovery) return;
+  const visible = sessionRecoveryMode !== "hidden" && activeView === "workspace";
+  sessionRecovery.hidden = !visible;
+  if (!visible) return;
+
+  const project = pendingSessionPayload?.profile?.name || repoProfile?.name || t("session.recovery.projectFallback");
+  const pending = sessionRecoveryMode === "pending";
+  sessionRecovery.className = `session-recovery ${pending ? "pending" : "restored"}`;
+  sessionRecoveryTitle.textContent = t(pending ? "session.recovery.pending.title" : "session.recovery.restored.title");
+  sessionRecoveryBody.textContent = t(pending ? "session.recovery.pending.body" : "session.recovery.restored.body", { project });
+  continueSessionButton.hidden = !pending;
+  continueSessionButton.textContent = t("session.recovery.continue");
+  startFreshButton.textContent = t("session.recovery.fresh");
+}
+
+function startFreshClientWorkflow() {
+  sessionRestoreSuperseded = true;
+  pendingSessionPayload = null;
+  sessionRecoveryMode = "hidden";
+  repoProfile = null;
+  currentTask = null;
+  currentMemory = null;
+  currentPreflight = null;
+  suggestedContextFiles = [];
+  repoPath.value = "";
+  goalInput.value = "";
+  repoSummary.innerHTML = "";
+  contextOutput.textContent = t("context.output.start");
+  timeline.innerHTML = "";
+  planIntent.textContent = t("state.waiting");
+  scanState.textContent = t("scan.state.notScanned");
+  toolState.textContent = t("tool.state.waitingProject");
+  patchState.textContent = t("patch.state.none");
+  patchOutput.textContent = t("patch.output.readContextFirst");
+  toolArg.value = "";
+  patchContent.value = "";
+  toolOutput.textContent = t("tool.output.scanFirst");
+  renderPathHelperForInput("");
+  renderPathModeForInput("");
+  renderPreflightReport(null);
+  renderContextCandidates([]);
+  renderTask(null);
+  renderMemory(null);
+  renderRevertPatchOptions(null);
+  renderVerifyCommands([]);
+  if (currentModelStatus) renderModelStatus(currentModelStatus);
+  renderSessionRecovery();
+  renderGuide();
   updateControls();
 }
 
 demoButton.addEventListener("click", () => {
   setActiveView("workspace");
+  startFreshClientWorkflow();
   if (systemInfo?.demoPath) repoPath.value = systemInfo.demoPath;
   if (!goalInput.value.trim()) goalInput.value = t("demo.goal.default");
   renderPathHelper("ok", t("path.demo"));
@@ -382,6 +469,7 @@ demoButton.addEventListener("click", () => {
 });
 
 examplePathButton?.addEventListener("click", () => {
+  startFreshClientWorkflow();
   repoPath.value = "C:\\Users\\you\\project";
   currentPreflight = null;
   renderPreflightReport(null);
@@ -393,6 +481,11 @@ examplePathButton?.addEventListener("click", () => {
 });
 
 repoPath.addEventListener("input", () => {
+  if (sessionRecoveryMode !== "hidden") {
+    const nextPath = repoPath.value;
+    startFreshClientWorkflow();
+    repoPath.value = nextPath;
+  }
   currentPreflight = null;
   renderPreflightReport(null);
   renderPathHelperForInput(repoPath.value);
@@ -432,7 +525,6 @@ scanButton.addEventListener("click", async () => {
     toolState.textContent = t("tool.state.ready");
     renderRepoSummary(repoProfile);
     renderVerifyCommands(repoProfile.commands || []);
-    await refreshTask();
     await refreshMemory();
     renderGuide();
     await refreshAudit();
@@ -799,6 +891,10 @@ callToolButton.addEventListener("click", async () => {
 });
 
 toolSelect.addEventListener("change", syncToolInputs);
+verifyCommandSelect.addEventListener("change", () => {
+  renderVerifyBoundary();
+  updateControls();
+});
 guideNextButton.addEventListener("click", runGuideNextStep);
 quickStartPrimary?.addEventListener("click", runQuickStartPrimary);
 quickStartSecondary?.addEventListener("click", () => {
@@ -1217,6 +1313,11 @@ function renderPreflightReport(report) {
       <strong>${escapeHtml(status)}</strong>
       <span>${escapeHtml(report.nextGate?.note || "")}</span>
     </div>
+    ${currentTask?.plan && currentTask?.contextFiles?.length ? `
+      <div class="preflight-auto-progress">
+        <strong>${escapeHtml(t("preflight.autoProgress.title"))}</strong>
+        <span>${escapeHtml(t("preflight.autoProgress.body", { count: currentTask.contextFiles.length }))}</span>
+      </div>` : ""}
     <div class="preflight-next"><strong>${escapeHtml(t("preflight.next"))}</strong><span>${escapeHtml(preflightNextAction(report))}</span></div>
     ${blockers.length ? `<div class="preflight-list"><strong>${escapeHtml(t("preflight.blockers"))}</strong>${blockers.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
     ${warnings.length ? `<div class="preflight-list"><strong>${escapeHtml(t("preflight.warnings"))}</strong>${warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
@@ -1252,6 +1353,7 @@ function renderVerifyCommands(commands) {
   if (!commands.length) {
     verifyState.textContent = t("verify.state.noCommand");
     verifyOutput.textContent = t("verify.output.noCommand");
+    renderVerifyBoundary();
     return;
   }
 
@@ -1263,6 +1365,23 @@ function renderVerifyCommands(commands) {
   }
   verifyState.textContent = t("verify.state.ready");
   verifyOutput.textContent = t("verify.output.ready");
+  renderVerifyBoundary();
+}
+
+function renderVerifyBoundary() {
+  if (!verifyBoundary) return;
+  const command = selectedVerifyCommand();
+  if (!command) {
+    verifyBoundary.className = "boundary-note command-boundary empty";
+    verifyBoundary.innerHTML = `<strong>${escapeHtml(t("verifyBoundary.title"))}</strong><span>${escapeHtml(t("verifyBoundary.empty"))}</span>`;
+    return;
+  }
+  const name = command.name || t("verifyBoundary.detectedCommand");
+  verifyBoundary.className = "boundary-note command-boundary ready";
+  verifyBoundary.innerHTML = `
+    <strong>${escapeHtml(t("verifyBoundary.command", { command: command.command }))}</strong>
+    <span>${escapeHtml(t("verifyBoundary.reason", { name }))}</span>
+  `;
 }
 
 function renderPlan(plan) {
@@ -1469,11 +1588,11 @@ function renderContextCandidates(files) {
 function renderPatchProposal(proposal) {
   const files = patchProposalFiles(proposal);
   if (!files.length) {
-    patchState.textContent = proposal?.reason || t("patch.state.none");
-    patchOutput.textContent = [
-      proposal?.summary || t("patch.output.noApplicableDraft"),
-      proposal?.note ? `\n${proposal.note}` : ""
-    ].join("");
+    const reasonKey = patchFailureReasonKey(proposal?.reason);
+    patchState.textContent = reasonKey ? t(`${reasonKey}.state`) : proposal?.reason || t("patch.state.none");
+    patchOutput.textContent = reasonKey
+      ? t(`${reasonKey}.body`)
+      : [proposal?.summary || t("patch.output.noApplicableDraft"), proposal?.note ? `\n${proposal.note}` : ""].join("");
     return;
   }
   patchState.textContent = patchTargetLabel(proposal);
@@ -1491,17 +1610,18 @@ function renderPatchProposal(proposal) {
   `;
 }
 
+function patchFailureReasonKey(reason) {
+  return {
+    unsupported_goal: "patch.failure.unsupportedGoal",
+    missing_test_context: "patch.failure.missingTestContext",
+    missing_context_content: "patch.failure.missingContextContent"
+  }[reason] || "";
+}
+
 function selectedContextFiles() {
   return [...contextCandidates.querySelectorAll("input[data-context-index]:checked")]
     .map((input) => suggestedContextFiles[Number.parseInt(input.dataset.contextIndex, 10)])
     .filter(Boolean);
-}
-
-async function refreshTask() {
-  const query = repoProfile ? `?rootPath=${encodeURIComponent(repoProfile.rootPath)}` : "";
-  const payload = await request(`/api/tasks/latest${query}`);
-  currentTask = payload.task || currentTask;
-  renderTask(currentTask);
 }
 
 async function refreshMemory() {

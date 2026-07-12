@@ -355,30 +355,36 @@ function clipText(value, maxLength) {
 }
 
 function mockPatchProposal(provider, { goal, task }) {
-  const normalizedGoal = String(goal || task?.goal || "").toLowerCase();
-  const contextFiles = task?.contextFiles || [];
-  const testFile = contextFiles.find((file) => /calculator\.test\.js$/.test(file.path)) || contextFiles.find((file) => /test|spec/.test(file.path));
-  if (!testFile || !/divide|zero|test/.test(normalizedGoal)) {
-    return {
+  const normalizedGoal = normalizeMockGoal(goal || task?.goal);
+  if (!isDivideByZeroTestGoal(normalizedGoal)) {
+    return invalidPatchProposal({
       provider: provider.name,
       model: provider.model,
-      path: null,
-      content: "",
-      diff: "",
-      summary: "Mock provider needs a relevant test context file before it can propose a patch.",
-      createdAt: new Date().toISOString()
-    };
+      reason: "unsupported_goal",
+      summary: "Mock provider only supports the divide-by-zero test demo goal.",
+      note: "Use an equivalent divide-by-zero test goal in English, Simplified Chinese, or Russian."
+    });
   }
-  if (!testFile.content) {
-    return {
+
+  const contextFiles = task?.contextFiles || [];
+  const testFile = findDivideByZeroTestContext(contextFiles);
+  if (!testFile) {
+    return invalidPatchProposal({
       provider: provider.name,
       model: provider.model,
-      path: null,
-      content: "",
-      diff: "",
-      summary: "Mock provider needs full file content from read_file before it can propose a safe patch.",
-      createdAt: new Date().toISOString()
-    };
+      reason: "missing_test_context",
+      summary: "Mock provider needs a relevant divide-by-zero test context file before it can propose this patch.",
+      note: "Read a calculator test/spec file containing divide behavior into the current task first."
+    });
+  }
+  if (typeof testFile.content !== "string" || !testFile.content.length) {
+    return invalidPatchProposal({
+      provider: provider.name,
+      model: provider.model,
+      reason: "missing_context_content",
+      summary: "Mock provider found a relevant test context file, but its full content has not been read.",
+      note: `Read the full content of ${testFile.path} before generating a patch.`
+    });
   }
 
   const before = normalizeTrailingNewline(testFile.content);
@@ -397,9 +403,46 @@ function mockPatchProposal(provider, { goal, task }) {
     content,
     diff: createSimpleDiff(testFile.path, before, content),
     files: [{ path: testFile.path, content, summary: `Add a divide-by-zero assertion to ${testFile.path}.`, diff: createSimpleDiff(testFile.path, before, content) }],
+    applicable: true,
     summary: `Add a divide-by-zero assertion to ${testFile.path}.`,
     createdAt: new Date().toISOString()
   };
+}
+
+function normalizeMockGoal(goal) {
+  return String(goal || "").normalize("NFKC").toLocaleLowerCase();
+}
+
+function isDivideByZeroTestGoal(goal) {
+  const hasDivide = /\b(?:divide|division|dividing)\b/.test(goal)
+    || /(?:除以|除法|除数|被除数|除零)/.test(goal)
+    || /(?:делен|делит|раздел)[\p{L}]*/u.test(goal);
+  const hasZero = /\b(?:zero|0)\b/.test(goal)
+    || /零/.test(goal)
+    || /(?:нол|нул)[\p{L}]*/u.test(goal);
+  const hasTest = /\b(?:test|tests|testing|assert|assertion|verify|verification)\b/.test(goal)
+    || /(?:测试|验证|断言|用例)/.test(goal)
+    || /(?:тест|провер)[\p{L}]*/u.test(goal);
+  return hasDivide && hasZero && hasTest;
+}
+
+function findDivideByZeroTestContext(contextFiles) {
+  const testFiles = contextFiles.filter((file) => isTestContextPath(file?.path));
+  return testFiles.find((file) => /calculator/i.test(String(file.path || "")))
+    || testFiles.find((file) => hasDivideContextEvidence(file));
+}
+
+function isTestContextPath(filePath) {
+  const normalizedPath = String(filePath || "").replace(/\\/g, "/").toLowerCase();
+  return /(?:^|\/)(?:test|tests|spec|specs|__tests__)(?:\/|$)/.test(normalizedPath)
+    || /\.(?:test|spec)\.[^/]+$/.test(normalizedPath);
+}
+
+function hasDivideContextEvidence(file) {
+  const evidence = [file?.path, file?.summary, file?.content].filter(Boolean).join("\n").toLocaleLowerCase();
+  return /\b(?:divide|division)\b/.test(evidence)
+    || /(?:除以|除法)/.test(evidence)
+    || /(?:делен|делит|раздел)[\p{L}]*/u.test(evidence);
 }
 
 function extractJsonObject(content) {

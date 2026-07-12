@@ -15,12 +15,14 @@ const nextTester = sanitizeTesterId(args.nextTester || nextTesterId(testerId));
 const runStamp = dateStamp();
 const packetPath = path.resolve(rootPath, args.out || path.join("dist", "trial-after-live", `${testerId}-${runStamp}`));
 const archivePath = path.resolve(rootPath, args.archiveOut || path.join("dist", "trial-archives", `${testerId}-after-live-${runStamp}`));
+const archiveReportPath = path.join(reportsPath, "TRIAL_ARCHIVE_REPORT.json");
 const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_AFTER_LIVE_REPORT.json"));
 const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_AFTER_LIVE_REPORT.md"));
 
 await assertSafeOutputPath(packetPath);
 
 const steps = [];
+const preRunArchiveSnapshot = await readJsonSnapshot(archiveReportPath);
 let report;
 
 try {
@@ -75,7 +77,7 @@ try {
       "--reports", relative(reportsPath),
       "--tester", testerId,
       "--out", relative(archivePath),
-      "--json", relative(path.join(reportsPath, "TRIAL_ARCHIVE_REPORT.json")),
+      "--json", relative(archiveReportPath),
       "--markdown", relative(path.join(reportsPath, "TRIAL_ARCHIVE_REPORT.md")),
       "--force"
     ],
@@ -105,7 +107,7 @@ await fs.mkdir(path.dirname(markdownPath), { recursive: true });
 await fs.writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 await fs.writeFile(markdownPath, renderMarkdown(report), "utf8");
 
-if (report.ok) {
+if (report.ok && report.archiveStep?.succeeded) {
   const packet = await createEvidencePacket(report);
   report = { ...report, evidencePacket: packet };
   await fs.writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -197,14 +199,22 @@ async function assertReviewReady() {
 }
 
 async function assertArchiveReady() {
-  const archive = await readJson(path.join(reportsPath, "TRIAL_ARCHIVE_REPORT.json"));
+  const snapshot = await readJsonSnapshot(archiveReportPath);
+  const archive = snapshot.data;
   if (!archive) throw new Error("Archive report is missing after trial:archive-session.");
+  if (preRunArchiveSnapshot.exists && snapshot.content === preRunArchiveSnapshot.content) {
+    throw new Error("Archive report was not refreshed by this after-live run; the existing report is stale.");
+  }
+  if (!archiveReportMatchesCurrentRun(archive)) {
+    throw new Error("Archive report does not match this after-live tester, session, and archive output.");
+  }
   if (archive.ok === false || archive.decision === "ARCHIVE_HOLD") {
     throw new Error(`Archive decision is ${archive.decision || "UNKNOWN"}; keep records local and fix archive blockers.`);
   }
 }
 
 async function buildReport({ error }) {
+  const observedArchive = await readReport("TRIAL_ARCHIVE_REPORT.json");
   const reports = {
     completion: await readReport("TRIAL_SESSION_COMPLETION_REPORT.json"),
     privacy: await readReport("TRIAL_PRIVACY_REPORT.json"),
@@ -212,7 +222,7 @@ async function buildReport({ error }) {
     backlog: await readReport("TRIAL_FIX_BACKLOG.json"),
     postSession: await readReport("TRIAL_POST_SESSION_REPORT.json"),
     review: await readReport("TRIAL_REVIEW_REPORT.json"),
-    archive: await readReport("TRIAL_ARCHIVE_REPORT.json"),
+    archive: archiveReportForCurrentRun(observedArchive),
     status: await readReport("TRIAL_STATUS_REPORT.json"),
     liveCapture: await readReport("TRIAL_LIVE_CAPTURE_REPORT.json")
   };
@@ -234,6 +244,7 @@ async function buildReport({ error }) {
     packetRelativePath: relative(packetPath),
     archivePath,
     archiveRelativePath: relative(archivePath),
+    archiveStep: reports.archive.currentRun,
     reports: publicReports(reports),
     steps: steps.map(publicStep),
     blockers,
@@ -281,17 +292,21 @@ function collectBlockers(reports, error) {
   if (["REVIEW_BLOCKED", "REVIEW_FIX_NOW", "REVIEW_WAITING_FOR_REPORTS"].includes(reports.review.decision)) {
     blockers.push(`Session review is ${reports.review.decision}.`);
   }
-  if (reports.archive.decision === "ARCHIVE_HOLD") blockers.push("Archive is on hold.");
+  if (!reports.archive.currentRun.succeeded) {
+    blockers.push(`Archive did not complete in this after-live run (${reports.archive.currentRun.status}).`);
+  }
+  if (reports.archive.currentRun.succeeded && reports.archive.decision === "ARCHIVE_HOLD") blockers.push("Archive is on hold.");
   return unique(blockers);
 }
 
 function collectWarnings(reports) {
   const warnings = [];
-  for (const report of Object.values(reports)) {
+  for (const [key, report] of Object.entries(reports)) {
+    if (key === "archive" && !report.currentRun.succeeded) continue;
     for (const item of report.warnings) warnings.push(`${report.key}: ${item}`);
   }
   if (reports.review.decision === "REVIEW_WATCH_NEXT_TESTER") warnings.push("Review has watch items; host acceptance is required before the next tester.");
-  if (reports.archive.decision === "ARCHIVE_READY_LOCAL_REVIEW") warnings.push("Archive has privacy warnings; keep the packet local until reviewed.");
+  if (reports.archive.currentRun.succeeded && reports.archive.decision === "ARCHIVE_READY_LOCAL_REVIEW") warnings.push("Archive has privacy warnings; keep the packet local until reviewed.");
   if (!reports.liveCapture.exists) warnings.push("Live-capture report is missing; confirm the session was hosted with the capture checklist.");
   const statusStep = steps.find((step) => step.name === "status:update");
   if (statusStep && statusStep.exitCode !== 0) warnings.push("trial:status exited non-zero after after-live; review TRIAL_STATUS_REPORT.md manually.");
@@ -306,6 +321,9 @@ function decideAfterLive(blockers, warnings, reports) {
 }
 
 async function createEvidencePacket(report) {
+  if (!report.archiveStep?.succeeded) {
+    throw new Error("Evidence packet requires a successful archive step from this after-live run.");
+  }
   if (await exists(packetPath)) {
     if (!args.force) throw new Error(`Evidence packet already exists: ${relative(packetPath)}. Use --force to replace it.`);
     await fs.rm(packetPath, { recursive: true, force: true });
@@ -409,6 +427,15 @@ function renderMarkdown(report) {
     "",
     ...Object.entries(report.reports).map(([key, item]) => `- ${key}: ${item.exists ? item.decision : "missing"}`),
     "",
+    "## Archive Step",
+    "",
+    `- Current run status: ${report.archiveStep.status}`,
+    `- Current run succeeded: ${report.archiveStep.succeeded ? "Yes" : "No"}`,
+    `- Step exit code: ${report.archiveStep.stepExitCode ?? "not run"}`,
+    `- Stale pre-existing report: ${report.archiveStep.stalePreExisting ? "Yes" : "No"}`,
+    `- Observed report decision: ${report.archiveStep.observedDecision}`,
+    `- Report refreshed in this run: ${report.archiveStep.reportRefreshed ? "Yes" : "No"}`,
+    "",
     "## Blockers",
     "",
     ...(report.blockers.length ? report.blockers.map((item) => `- ${item}`) : ["- None"]),
@@ -509,8 +536,62 @@ function publicReports(reports) {
       blockers: report.blockers.length,
       warnings: report.warnings.length
     };
+    if (report.currentRun) {
+      output[key].currentRunStatus = report.currentRun.status;
+      output[key].currentRunSucceeded = report.currentRun.succeeded;
+      output[key].stalePreExisting = report.currentRun.stalePreExisting;
+      output[key].observedDecision = report.currentRun.observedDecision;
+      output[key].observedOk = report.currentRun.observedOk;
+      output[key].reportRefreshed = report.currentRun.reportRefreshed;
+    }
   }
   return output;
+}
+
+function archiveReportForCurrentRun(observed) {
+  const step = steps.find((item) => item.name === "archive:session");
+  const unchanged = observed.exists
+    && preRunArchiveSnapshot.exists
+    && JSON.stringify(observed.data) === JSON.stringify(preRunArchiveSnapshot.data);
+  const reportRefreshed = observed.exists && (!preRunArchiveSnapshot.exists || !unchanged);
+  const matchesCurrentRun = observed.exists && archiveReportMatchesCurrentRun(observed.data);
+  const ready = observed.ok === true && ["ARCHIVE_READY_LOCAL", "ARCHIVE_READY_LOCAL_REVIEW"].includes(observed.decision);
+
+  let status = "NOT_RUN";
+  if (step && step.exitCode !== 0) status = "FAILED";
+  if (step && step.exitCode === 0) status = reportRefreshed && matchesCurrentRun && ready ? "SUCCEEDED" : "INVALID";
+
+  const succeeded = status === "SUCCEEDED";
+  return {
+    ...observed,
+    ok: succeeded ? observed.ok : null,
+    decision: succeeded ? observed.decision : archiveDecisionForStatus(status),
+    blockers: succeeded ? observed.blockers : [],
+    warnings: succeeded ? observed.warnings : [],
+    currentRun: {
+      status,
+      succeeded,
+      stepExitCode: step?.exitCode ?? null,
+      stalePreExisting: observed.exists && preRunArchiveSnapshot.exists && unchanged,
+      observedReportExists: observed.exists,
+      observedDecision: observed.decision,
+      observedOk: observed.ok,
+      reportRefreshed,
+      matchesCurrentRun
+    }
+  };
+}
+
+function archiveDecisionForStatus(status) {
+  if (status === "NOT_RUN") return "ARCHIVE_NOT_RUN";
+  if (status === "FAILED") return "ARCHIVE_STEP_FAILED";
+  return "ARCHIVE_REPORT_INVALID";
+}
+
+function archiveReportMatchesCurrentRun(archive) {
+  return archive?.testerId === testerId
+    && archive?.sessionRelativePath === relative(sessionPath)
+    && archive?.archiveRelativePath === relative(archivePath);
 }
 
 function publicStep(step) {
@@ -682,6 +763,15 @@ async function readJson(filePath) {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
   } catch {
     return null;
+  }
+}
+
+async function readJsonSnapshot(filePath) {
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    return { exists: true, content, data: JSON.parse(content) };
+  } catch {
+    return { exists: false, content: "", data: null };
   }
 }
 

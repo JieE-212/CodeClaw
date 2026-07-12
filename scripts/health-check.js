@@ -45,6 +45,9 @@ try {
     realProjectPathInput: html.includes("real-project-path-helper") && html.includes("examplePathButton") && styles.includes(".path-helper") && appJs.includes("PATH_IS_FILE"),
     patchGate: html.includes("patchGate") && appJs.includes("preflightPatchGateStatus"),
     applyReview: html.includes("dry-run-apply-review") && appJs.includes("function renderApplyReview") && i18nJs.includes("applyReview.writeWarning.title") && styles.includes(".apply-review"),
+    sessionRecovery: html.includes("sessionRecovery") && appJs.includes("function hydrateRestoredSession") && appJs.includes("function startFreshClientWorkflow"),
+    modulePurpose: html.includes("purpose.preflight") && html.includes("purpose.patch") && i18nJs.includes("purpose.verify"),
+    explicitBoundaries: html.includes("applyBoundary.title") && html.includes("verifyBoundary") && appJs.includes("function renderVerifyBoundary"),
     friendlyErrors: appJs.includes("function friendlyErrorMessage")
   };
   for (const [name, ok] of Object.entries(markers)) assert(ok, `Missing UI marker: ${name}`);
@@ -81,6 +84,21 @@ try {
   assert(session.session?.restored, "Last session was not restorable after preflight.");
   assert(session.session?.needsPreflight, "Restored session should require rerunning preflight.");
 
+  const demoGoal = "添加除以零测试，并验证项目";
+  const demoPreflight = await request("/api/preflight/run", {
+    path: system.demoPath,
+    goal: demoGoal
+  });
+  assert(demoPreflight.report?.writeAttempted === false, "Chinese Demo preflight attempted a write.");
+  const demoPatch = await request("/api/model/patch-proposal", {
+    goal: demoGoal,
+    repoProfile: demoPreflight.profile,
+    rootPath: demoPreflight.profile?.rootPath,
+    taskId: demoPreflight.task?.id
+  });
+  assert(demoPatch.proposal?.applicable === true, `Chinese Demo patch was not applicable: ${demoPatch.proposal?.reason || "unknown"}`);
+  assert(demoPatch.proposal?.files?.length > 0, "Chinese Demo patch contained no files.");
+
   console.log(JSON.stringify({
     ok: true,
     mode: "local-health-check",
@@ -95,7 +113,11 @@ try {
       writeAttempted: preflight.report.writeAttempted,
       tools: [...tools]
     },
-    sessionRestored: Boolean(session.session?.restored)
+    sessionRestored: Boolean(session.session?.restored),
+    chineseDemoPatch: {
+      applicable: demoPatch.proposal.applicable,
+      files: demoPatch.proposal.files.length
+    }
   }, null, 2));
 } finally {
   server.kill();

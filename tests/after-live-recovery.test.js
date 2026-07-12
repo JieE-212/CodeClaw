@@ -39,6 +39,53 @@ test("after-live stops before privacy-sensitive incomplete sessions are packaged
   assert.equal(await exists(path.join(fixture.packetPath, "EVIDENCE_PACKET_MANIFEST.json")), false);
 });
 
+test("after-live does not treat a stale archive as success when the current review blocks", async () => {
+  const fixture = await makeFixture("tester-after-live-stale-archive");
+  const staleArchivePath = path.join(fixture.reportsPath, "TRIAL_ARCHIVE_REPORT.json");
+  await writeJson(staleArchivePath, {
+    ok: true,
+    mode: "trial-archive-session",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    decision: "ARCHIVE_READY_LOCAL",
+    testerId: "tester-from-an-earlier-run",
+    sessionRelativePath: "dist/trial-session-packs/tester-from-an-earlier-run",
+    archiveRelativePath: "dist/trial-archives/tester-from-an-earlier-run",
+    blockers: [],
+    warnings: []
+  });
+
+  const resultRecordPath = path.join(fixture.sessionPath, "TRIAL_RESULT_RECORD.md");
+  const resultRecord = await fs.readFile(resultRecordPath, "utf8");
+  assert.match(resultRecord, /- Decision after trial: Continue/);
+  await fs.writeFile(
+    resultRecordPath,
+    resultRecord.replace("- Decision after trial: Continue", "- Decision after trial: Fix first"),
+    "utf8"
+  );
+
+  const result = await runAfterLive(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+  const markdown = await fs.readFile(fixture.markdownPath, "utf8");
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.ok, false);
+  assert.equal(report.decision, "AFTER_LIVE_BLOCKED");
+  assert.equal(report.reports.review.decision, "REVIEW_BLOCKED");
+  assert.equal(report.steps.some((step) => step.name === "archive:session"), false);
+  assert.equal(report.archiveStep.status, "NOT_RUN");
+  assert.equal(report.archiveStep.succeeded, false);
+  assert.equal(report.archiveStep.stalePreExisting, true);
+  assert.equal(report.archiveStep.observedDecision, "ARCHIVE_READY_LOCAL");
+  assert.equal(report.reports.archive.decision, "ARCHIVE_NOT_RUN");
+  assert.equal(report.reports.archive.currentRunSucceeded, false);
+  assert.equal(report.reports.archive.stalePreExisting, true);
+  assert.equal(report.reports.archive.observedDecision, "ARCHIVE_READY_LOCAL");
+  assert.match(markdown, /Current run status: NOT_RUN/);
+  assert.match(markdown, /Stale pre-existing report: Yes/);
+  assert.equal(report.evidencePacket, null);
+  assert.equal(await exists(path.join(fixture.packetPath, "EVIDENCE_PACKET_MANIFEST.json")), false);
+});
+
 async function makeFixture(testerId) {
   const runRoot = path.join(rootPath, "dist", `after-live-test-${process.pid}-${Date.now()}-${testerId}`);
   const sessionPath = path.join(runRoot, "session");
@@ -71,9 +118,11 @@ async function makeFixture(testerId) {
   });
   return {
     sessionPath,
+    reportsPath,
     packetPath,
     archivePath,
     jsonPath,
+    markdownPath,
     args: [
       "--session", path.relative(rootPath, sessionPath),
       "--tester", testerId,

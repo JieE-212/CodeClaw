@@ -279,7 +279,9 @@ dist/TRIAL_COHORT_SUMMARY.md
 dist/TRIAL_COHORT_SUMMARY.json
 ```
 
-After privacy, post-session, and review reports are ready, `trial:after-live` creates a local-only evidence packet. If you need to repair or recreate only the archive, run:
+After privacy, post-session, and review reports are ready, `trial:after-live` creates a local-only evidence packet. If the current after-live run stops before `archive:session`, its report marks the archive step as `NOT_RUN` and does not create an evidence packet. A `TRIAL_ARCHIVE_REPORT.json` left by an earlier run is reported separately as stale observed evidence; it is never counted as the current run's archive success.
+
+If you need to repair or recreate only the archive, run:
 
 ```bash
 npm.cmd run trial:archive-session -- --session dist/trial-session-packs/tester-1 --tester tester-1

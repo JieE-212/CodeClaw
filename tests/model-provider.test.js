@@ -84,22 +84,29 @@ test("ModelProvider mock suggests context files", async () => {
   assert.equal(suggestion.files[0].path, "test/calculator.test.js");
 });
 
-test("ModelProvider mock proposes a divide by zero test patch", async () => {
-  const provider = new ModelProvider({ type: "mock" });
-  const proposal = await provider.proposePatch({
-    goal: "add divide by zero test",
-    task: {
-      goal: "add divide by zero test",
-      contextFiles: [{
-        path: "test/calculator.test.js",
-        content: "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { add, divide } from \"../src/calculator.js\";\n"
-      }]
-    }
+for (const [language, goal] of [
+  ["English", "Add a divide-by-zero test and verify the project"],
+  ["Simplified Chinese", "添加除以零测试，并验证项目"],
+  ["Russian", "Добавить тест деления на ноль и проверить проект"]
+]) {
+  test(`ModelProvider mock proposes the divide-by-zero patch for the ${language} Demo goal`, async () => {
+    const provider = new ModelProvider({ type: "mock" });
+    const proposal = await provider.proposePatch({
+      goal,
+      task: {
+        goal,
+        contextFiles: [{
+          path: "test/calculator.test.js",
+          content: "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { add, divide } from \"../src/calculator.js\";\n"
+        }]
+      }
+    });
+    assert.equal(proposal.path, "test/calculator.test.js");
+    assert.equal(proposal.applicable, true);
+    assert.match(proposal.content, /divide throws on zero denominator/);
+    assert.match(proposal.diff, /\+test\("divide throws on zero denominator"/);
   });
-  assert.equal(proposal.path, "test/calculator.test.js");
-  assert.match(proposal.content, /divide throws on zero denominator/);
-  assert.match(proposal.diff, /\+test\("divide throws on zero denominator"/);
-});
+}
 
 test("ModelProvider mock suggests a failure fix", async () => {
   const provider = new ModelProvider({ type: "mock" });
@@ -154,7 +161,36 @@ test("ModelProvider mock refuses summary-only patch content", async () => {
     }
   });
   assert.equal(proposal.path, null);
-  assert.match(proposal.summary, /full file content/);
+  assert.equal(proposal.applicable, false);
+  assert.equal(proposal.reason, "missing_context_content");
+  assert.match(proposal.summary, /full content has not been read/);
+});
+
+test("ModelProvider mock distinguishes missing test context from an unsupported goal", async () => {
+  const provider = new ModelProvider({ type: "mock" });
+  const missingContext = await provider.proposePatch({
+    goal: "添加除以零测试，并验证项目",
+    task: {
+      goal: "添加除以零测试，并验证项目",
+      contextFiles: [{ path: "src/calculator.js", content: "export function divide(a, b) { return a / b; }\n" }]
+    }
+  });
+  const unsupportedGoal = await provider.proposePatch({
+    goal: "rename the calculator function",
+    task: {
+      goal: "rename the calculator function",
+      contextFiles: [{ path: "test/calculator.test.js", content: "import { divide } from \"../src/calculator.js\";\n" }]
+    }
+  });
+
+  assert.equal(missingContext.path, null);
+  assert.equal(missingContext.applicable, false);
+  assert.equal(missingContext.reason, "missing_test_context");
+  assert.match(missingContext.summary, /relevant divide-by-zero test context/);
+  assert.equal(unsupportedGoal.path, null);
+  assert.equal(unsupportedGoal.applicable, false);
+  assert.equal(unsupportedGoal.reason, "unsupported_goal");
+  assert.match(unsupportedGoal.summary, /only supports the divide-by-zero test demo goal/);
 });
 
 test("parsePatchProposal parses plain and fenced JSON patches", () => {
