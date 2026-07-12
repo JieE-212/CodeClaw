@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  inspectSourceVersion,
+  sourceVersionBindingIssues,
+  sourceVersionIssueMessage
+} from "./source-version.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
@@ -12,7 +17,8 @@ const markdownPath = path.join(distPath, "TRIAL_FREEZE_REPORT.md");
 
 const readiness = await readJson(readinessPath);
 const simulated = await readJson(simulatedPath);
-const blockers = freezeBlockers(readiness, simulated);
+const currentSourceVersion = await inspectSourceVersion(rootPath);
+const blockers = freezeBlockers(readiness, simulated, currentSourceVersion);
 const warnings = freezeWarnings(readiness, simulated);
 const decision = blockers.length ? "NO_GO" : "GO_HOSTED_TRIAL";
 
@@ -22,6 +28,7 @@ const report = {
   decision,
   createdAt: new Date().toISOString(),
   sourceRoot: rootPath,
+  sourceVersion: currentSourceVersion,
   packagePath: readiness.packagePath || "",
   inputs: {
     readinessPath,
@@ -33,6 +40,12 @@ const report = {
   },
   summary: {
     readinessOk: Boolean(readiness.ok),
+    currentSourceCommit: currentSourceVersion.commit || "",
+    currentSourceDirty: currentSourceVersion.dirty ?? null,
+    sourceCommit: readiness.sourceVersion?.commit || "",
+    sourceDirty: readiness.sourceVersion?.dirty ?? null,
+    simulationCommit: simulated.sourceVersion?.commit || "",
+    simulationDirty: simulated.sourceVersion?.dirty ?? null,
     simulatedOk: Boolean(simulated.ok),
     missingRequired: readiness.hygiene?.missingRequired?.length ?? null,
     disallowed: readiness.hygiene?.disallowed?.length ?? null,
@@ -63,6 +76,8 @@ const report = {
     "docs/TRIAL_PRE_LIVE.md",
     "docs/TRIAL_LIVE_CAPTURE.md",
     "docs/TRIAL_AFTER_LIVE.md",
+    "docs/TRIAL_REMEDIATION.md",
+    "docs/NEXT_PHASE_PLAN.md",
     "docs/TRIAL_HOST_BRIEF.md",
     "docs/TRIAL_GO_NO_GO.md"
   ],
@@ -103,9 +118,17 @@ async function readJson(filePath) {
   }
 }
 
-function freezeBlockers(readiness, simulated) {
+function freezeBlockers(readiness, simulated, currentSourceVersion) {
   const blockers = [];
   if (!readiness.ok) blockers.push("trial:ready did not pass.");
+  const sourceIssues = sourceVersionBindingIssues(currentSourceVersion, {
+    "Readiness report": readiness.sourceVersion,
+    "Simulation report": simulated.sourceVersion
+  });
+  blockers.push(...sourceIssues.map(sourceVersionIssueMessage));
+  if (readiness.sourceVersion?.commit && simulated.sourceVersion?.commit && readiness.sourceVersion.commit !== simulated.sourceVersion.commit) {
+    blockers.push("Readiness and simulation were generated from different source commits.");
+  }
   if (!simulated.ok) blockers.push("trial:simulate did not pass.");
   if (!readiness.packagePath) blockers.push("No package path was produced.");
   if ((readiness.hygiene?.missingRequired || []).length) blockers.push("Trial package is missing required files.");
@@ -158,6 +181,12 @@ function renderMarkdown(report) {
     "## Summary",
     "",
     `- Readiness ok: ${yes(report.summary.readinessOk)}`,
+    `- Current source commit: ${report.summary.currentSourceCommit || "Unavailable"}`,
+    `- Current source worktree dirty: ${report.summary.currentSourceDirty === null ? "Unknown" : yes(report.summary.currentSourceDirty)}`,
+    `- Source commit: ${report.summary.sourceCommit || "Unavailable"}`,
+    `- Source worktree dirty: ${report.summary.sourceDirty === null ? "Unknown" : yes(report.summary.sourceDirty)}`,
+    `- Simulation commit: ${report.summary.simulationCommit || "Unavailable"}`,
+    `- Simulation worktree dirty: ${report.summary.simulationDirty === null ? "Unknown" : yes(report.summary.simulationDirty)}`,
     `- Simulated first trial ok: ${yes(report.summary.simulatedOk)}`,
     `- Missing required package entries: ${report.summary.missingRequired}`,
     `- Disallowed package entries: ${report.summary.disallowed}`,

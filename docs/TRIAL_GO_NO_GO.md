@@ -74,8 +74,10 @@ Proceed to the next tester only if:
 - Completed session records pass `npm.cmd run trial:privacy-check -- <session-folder>`.
 - Real external testers have a local `trial:intake` report with `READY_FOR_SESSION` or `READY_FOR_SESSION_WITH_REVIEW`.
 - After a completed session, `npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id> --force` says `AFTER_LIVE_READY` or an explicitly accepted `AFTER_LIVE_READY_WITH_REVIEW` before inviting another tester.
+- If the preserved result is instead `AFTER_LIVE_BLOCKED` with Fix first, an independent `trial:remediation` must reach `REMEDIATION_READY_FOR_RETEST` or accepted `REMEDIATION_READY_WITH_REVIEW`; never change or rerun the original answers to satisfy this gate.
 - After post-session, `npm.cmd run trial:review-session` says `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`.
 - After at least two completed sessions, `npm.cmd run trial:cohort-summary -- <completed-trials-folder>` says `READY_TO_EXPAND_3_5` or `EXPAND_WITH_WATCH` before expanding to 3-5 testers.
+- At least two post-fix sessions—not a remediated historical No-Go—have clean after-live evidence before cohort expansion.
 - `npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>` creates a local-only archive without raw tester records.
 - `npm.cmd run trial:status` has no blockers and shows a next command the host accepts.
 - The next product fix is clear and not a safety blocker.

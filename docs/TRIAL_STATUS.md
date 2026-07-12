@@ -194,7 +194,15 @@ npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
 
 This runs completion, privacy, post-session, review, archive, status, and local evidence packaging in order.
 
-If the decision is `NEEDS_AFTER_LIVE` or `AFTER_LIVE_BLOCKED`, rerun `trial:after-live` after fixing the listed blocker.
+If the decision is `NEEDS_AFTER_LIVE`, run the real session's guarded after-live once its records are confirmed. If a truthful real result is `AFTER_LIVE_BLOCKED` because the host chose Fix first, do not edit the answers or rerun it to make it green.
+
+If the decision is `NEEDS_REMEDIATION` or `REMEDIATION_BLOCKED`, run:
+
+```bash
+npm.cmd run trial:remediation -- --tester <previous-tester-id>
+```
+
+The independent remediation gate preserves the original blocked decision and requires mapped fixes, a clean current readiness commit, and manual host checks before status can return to next-tester intake.
 
 If the decision is `NEEDS_NEXT_LIVE`, run:
 

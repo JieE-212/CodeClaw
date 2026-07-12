@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectSourceVersion } from "./source-version.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
@@ -47,7 +48,9 @@ const requiredPackageEntries = [
   "docs/TRIAL_PRE_LIVE.md",
   "docs/TRIAL_LIVE_CAPTURE.md",
   "docs/TRIAL_AFTER_LIVE.md",
+  "docs/TRIAL_REMEDIATION.md",
   "docs/TRIAL_NEXT_LIVE.md",
+  "docs/NEXT_PHASE_PLAN.md",
   "docs/TRIAL_HOST_BRIEF.md",
   "docs/TRIAL_GO_NO_GO.md",
   "docs/TRIAL_5_MIN_PRECHECK.md",
@@ -67,6 +70,7 @@ const requiredPackageEntries = [
 ];
 
 try {
+  const sourceVersion = await inspectSourceVersion(rootPath);
   const sourceResults = [];
   for (const check of sourceChecks) {
     sourceResults.push(await runStep(check));
@@ -97,6 +101,7 @@ try {
     mode: "trial-readiness",
     createdAt: new Date().toISOString(),
     sourceRoot: rootPath,
+    sourceVersion,
     packagePath,
     checks: [...sourceResults, packageResult, ...packageResults].map(publicStepResult),
     hygiene,

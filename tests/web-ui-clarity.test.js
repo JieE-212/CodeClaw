@@ -11,11 +11,14 @@ const [html, app, styles] = await Promise.all([
   fs.readFile(path.join(root, "apps/web/public/styles.css"), "utf8")
 ]);
 
-test("desktop navigation stays visible and narrow navigation returns to document flow", () => {
+test("navigation stays visible on desktop and becomes a compact sticky bar on narrow screens", () => {
   assert.match(styles, /\.sidebar \{ position:sticky; top:0;[^}]*height:100vh;[^}]*overflow-y:auto;/);
-  assert.match(styles, /@media \(max-width:900px\)[^{]*\{[^}]*\.app-shell \{ display:block;[^}]*\} \.sidebar \{ position:relative;[^}]*height:auto;[^}]*overflow:visible;/);
+  assert.match(styles, /@media \(max-width:900px\)[^{]*\{[^}]*\.app-shell \{ display:block;[^}]*\} \.sidebar \{ position:sticky; top:0;[^}]*z-index:30;[^}]*height:auto;[^}]*overflow:visible;/);
+  const narrow = styles.slice(styles.indexOf("@media (max-width:900px)"));
+  assert.match(narrow, /\.nav-list \{ display:flex;[^}]*overflow-x:auto;/);
+  assert.match(narrow, /\.nav-item \{ flex:0 0 auto;[^}]*white-space:nowrap;/);
   const compact = styles.slice(styles.indexOf("@media (max-width:620px)"));
-  assert.match(compact, /\.nav-list \{ grid-template-columns:repeat\(2,minmax\(0,1fr\)\);/);
+  assert.match(compact, /\.sidebar \{ gap:8px; padding:8px 10px;/);
 });
 
 test("saved sessions require an explicit restore decision and Demo starts clean", () => {
@@ -53,5 +56,28 @@ test("structured patch failure reasons have localized actionable messages", () =
       "patch.failure.missingTestContext.body",
       "patch.failure.missingContextContent.body"
     ]) assert.ok(DICTIONARIES[language][key]?.length > 30, `${language}.${key} should be actionable`);
+  }
+});
+
+test("write-safety conflicts use localized guidance without exposing raw file content", () => {
+  for (const code of [
+    "PATCH_BASELINE_CONFLICT",
+    "PATCH_APPLY_ROLLBACK_INCOMPLETE",
+    "PATCH_REVERT_CONFLICT",
+    "PATH_SYMLINK_REFUSED",
+    "PATH_HARDLINK_REFUSED"
+  ]) assert.match(app, new RegExp(`/${code}/`));
+
+  for (const language of SUPPORTED_LANGUAGES) {
+    for (const key of [
+      "error.pathSymlink",
+      "error.pathHardlink",
+      "error.patchBaselineConflict",
+      "error.patchBaselineMissing",
+      "error.patchApplyFailed",
+      "error.patchRollbackIncomplete",
+      "error.patchRevertConflict",
+      "error.patchRevertState"
+    ]) assert.ok(DICTIONARIES[language][key]?.length > 20, `${language}.${key} should be actionable`);
   }
 });

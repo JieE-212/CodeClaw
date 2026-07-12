@@ -9,13 +9,17 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "archive-session.js");
 
-test("archive-session creates a local evidence package after privacy passes", async () => {
+test("archive-session creates a local evidence package after privacy passes", async (t) => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-archive-ok-"));
   const sessionPath = path.join(tempRoot, "tester-1");
   const reportsPath = path.join(tempRoot, "reports");
   const archivePath = path.join(rootPath, "dist", "test-archives", `archive-ok-${Date.now()}`);
   const jsonPath = path.join(tempRoot, "archive-report.json");
   const markdownPath = path.join(tempRoot, "archive-report.md");
+  t.after(() => Promise.all([
+    fs.rm(tempRoot, { recursive: true, force: true }),
+    fs.rm(archivePath, { recursive: true, force: true })
+  ]));
 
   await fs.mkdir(sessionPath, { recursive: true });
   await fs.mkdir(reportsPath, { recursive: true });
@@ -56,13 +60,17 @@ test("archive-session creates a local evidence package after privacy passes", as
   assert.equal(report.sharing.publicShareAllowed, false);
 });
 
-test("archive-session blocks privacy-hold records", async () => {
+test("archive-session blocks privacy-hold records", async (t) => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-archive-hold-"));
   const sessionPath = path.join(tempRoot, "tester-1");
   const reportsPath = path.join(tempRoot, "reports");
   const archivePath = path.join(rootPath, "dist", "test-archives", `archive-hold-${Date.now()}`);
   const jsonPath = path.join(tempRoot, "archive-report.json");
   const markdownPath = path.join(tempRoot, "archive-report.md");
+  t.after(() => Promise.all([
+    fs.rm(tempRoot, { recursive: true, force: true }),
+    fs.rm(archivePath, { recursive: true, force: true })
+  ]));
 
   await fs.mkdir(sessionPath, { recursive: true });
   await fs.mkdir(reportsPath, { recursive: true });

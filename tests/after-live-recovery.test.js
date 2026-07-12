@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "after-live-recovery.js");
 
-test("after-live creates a local evidence packet without raw tester records", async () => {
+test("after-live creates a local evidence packet without raw tester records", async (t) => {
   const fixture = await makeFixture("tester-after-live-1");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const result = await runAfterLive(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -25,8 +26,9 @@ test("after-live creates a local evidence packet without raw tester records", as
   assert.equal(await exists(path.join(fixture.packetPath, "session-context", "TRIAL_RESULT_RECORD.md")), false);
 });
 
-test("after-live stops before privacy-sensitive incomplete sessions are packaged", async () => {
+test("after-live stops before privacy-sensitive incomplete sessions are packaged", async (t) => {
   const fixture = await makeFixture("tester-after-live-hold");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   await fs.writeFile(path.join(fixture.sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), "# Empty\n", "utf8");
 
   const result = await runAfterLive(fixture.args);
@@ -39,8 +41,9 @@ test("after-live stops before privacy-sensitive incomplete sessions are packaged
   assert.equal(await exists(path.join(fixture.packetPath, "EVIDENCE_PACKET_MANIFEST.json")), false);
 });
 
-test("after-live does not treat a stale archive as success when the current review blocks", async () => {
+test("after-live does not treat a stale archive as success when the current review blocks", async (t) => {
   const fixture = await makeFixture("tester-after-live-stale-archive");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const staleArchivePath = path.join(fixture.reportsPath, "TRIAL_ARCHIVE_REPORT.json");
   await writeJson(staleArchivePath, {
     ok: true,
@@ -82,6 +85,9 @@ test("after-live does not treat a stale archive as success when the current revi
   assert.equal(report.reports.archive.observedDecision, "ARCHIVE_READY_LOCAL");
   assert.match(markdown, /Current run status: NOT_RUN/);
   assert.match(markdown, /Stale pre-existing report: Yes/);
+  assert.ok(report.nextCommands.some((item) => item.includes("trial:remediation")));
+  assert.ok(report.nextCommands.every((item) => !item.includes("trial:after-live")));
+  assert.ok(report.nextSteps.some((item) => /do not rerun after-live/i.test(item)));
   assert.equal(report.evidencePacket, null);
   assert.equal(await exists(path.join(fixture.packetPath, "EVIDENCE_PACKET_MANIFEST.json")), false);
 });
@@ -117,6 +123,7 @@ async function makeFixture(testerId) {
     warnings: []
   });
   return {
+    runRoot,
     sessionPath,
     reportsPath,
     packetPath,

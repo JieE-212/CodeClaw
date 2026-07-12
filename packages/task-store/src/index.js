@@ -91,10 +91,19 @@ export class TaskStore {
   }
 
   async recordAppliedPatch(id, patch) {
+    return this.recordAppliedPatches(id, [patch]);
+  }
+
+  async recordAppliedPatches(id, patches) {
     const task = await this.get(id);
+    if (!Array.isArray(patches) || !patches.length) throw new Error("No applied patches to record.");
+    const now = new Date().toISOString();
     return this.update(id, {
       status: "patched",
-      appliedPatches: [...(task.appliedPatches || []), { ...patch, time: patch.time || new Date().toISOString(), revertedAt: null }]
+      appliedPatches: [
+        ...(task.appliedPatches || []),
+        ...patches.map((patch) => ({ ...patch, time: patch.time || now, revertedAt: null }))
+      ]
     });
   }
 

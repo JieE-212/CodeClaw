@@ -608,8 +608,8 @@ function publicStep(step) {
 function nextCommands(decision) {
   if (decision === "AFTER_LIVE_BLOCKED") {
     return [
-      `npm.cmd run trial:after-live -- --session ${relative(sessionPath)} --tester ${testerId} --next-tester ${nextTester} --force`,
-      "npm.cmd run trial:status"
+      "npm.cmd run trial:status",
+      `npm.cmd run trial:remediation -- --tester ${testerId}`
     ];
   }
   return [
@@ -622,9 +622,10 @@ function nextCommands(decision) {
 function nextSteps(decision) {
   if (decision === "AFTER_LIVE_BLOCKED") {
     return [
-      "Fix the first failed after-live step before inviting another tester.",
+      "Stop before inviting another tester and preserve this after-live result as history.",
+      "Fix the first failed product or safety step without changing confirmed human answers.",
       "Keep raw tester records local.",
-      "Rerun trial:after-live with the same session folder after redaction or fixes."
+      "Use the independent remediation gate after fixes; do not rerun after-live to turn a truthful blocked result green."
     ];
   }
   if (decision === "AFTER_LIVE_READY_WITH_REVIEW") {

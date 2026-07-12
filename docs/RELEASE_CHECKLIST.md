@@ -45,6 +45,8 @@ node --check scripts/run-intake-review-dry-run.js
 node --check scripts/pre-live-gate.js
 node --check scripts/live-session-capture.js
 node --check scripts/after-live-recovery.js
+node --check scripts/trial-remediation-gate.js
+node --test tests/trial-remediation-gate.test.js
 node --check scripts/next-live-gate.js
 node --test tests/next-live-gate.test.js
 node --check scripts/tester-launch-plan.js
@@ -74,13 +76,14 @@ Expected result:
 - `trial:privacy-check` passes on safe sample feedback and blocks unsafe session records.
 - `trial:post-session` writes a post-session decision report and next tester pack.
 - `trial:review-session` writes a host decision brief with owner, action, and verification command for P0/P1 items.
-- `trial:after-live` writes an after-live report and local-only evidence packet while excluding raw tester records.
+- `trial:after-live` always writes the truthful after-live report; only a ready run creates a local-only evidence packet, and raw tester records stay excluded.
+- `trial:remediation` preserves a blocked historical result, rejects stale/unmapped/unaccepted fixes, and emits only privacy-safe closure evidence.
 - `trial:next-live` blocks stale tester ids, missing after-live, missing host acceptance, and stale watch items before the next live launch.
 - `trial:intake-review-dry-run` writes `DRY_RUN_READY_FOR_REAL_INTAKE` before a real tester roster is filled.
 - `trial:pre-live` is syntax-checked and covered by automated tests; run it live only after real intake-session, host-ready, and host-run are aligned.
 - `trial:live-capture` is syntax-checked and covered by automated tests; run it live after pre-live and before the call.
 - `trial:cohort-summary` writes a multi-tester expansion matrix and flags repeated friction.
-- `trial:cohort-handoff` verifies two-tester after-live evidence and turns watch, safety, and privacy signals into an expansion handoff.
+- `trial:cohort-handoff` requires two clean post-fix after-live results; remediated historical No-Go evidence remains visible but does not count as a clean retest.
 - `trial:archive-session` writes a local-only evidence archive and blocks privacy-hold sessions.
 - `trial:status` writes a current operator dashboard with the next recommended command.
 - `trial:intake -- --init` writes a local-only tester roster template and report.

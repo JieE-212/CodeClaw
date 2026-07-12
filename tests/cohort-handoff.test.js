@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { REQUIRED_REMEDIATION_HOST_CHECKS } from "../scripts/trial-remediation-contract.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "cohort-handoff.js");
@@ -55,10 +56,41 @@ test("cohort-handoff marks repeated safety as review required", async () => {
   assert.ok(await exists(fixture.handoffPath));
 });
 
+test("cohort-handoff preserves remediation history but requires two clean post-fix after-live results", async () => {
+  const fixture = await makeFixture({ decision: "READY_TO_EXPAND_3_5", includeAfterLive: true });
+  await fs.rm(path.join(fixture.afterLiveDir, "tester-1-20260709"), { recursive: true, force: true });
+  await writeRemediation(fixture.remediationDir, "tester-1");
+
+  const result = await runHandoff(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "COHORT_HANDOFF_HOLD");
+  assert.equal(report.counts.afterLiveReady, 1);
+  assert.equal(report.counts.remediatedHistorical, 1);
+  assert.ok(report.warnings.some((item) => item.includes("does not count as clean after-live evidence")));
+  assert.ok(report.blockers.some((item) => item.includes("two completed post-fix testers")));
+  assert.ok(!report.blockers.some((item) => item.includes("tester-1: after-live evidence is missing")));
+});
+
+test("cohort-handoff does not trust remediation without all manual host checks", async () => {
+  const fixture = await makeFixture({ decision: "READY_TO_EXPAND_3_5", includeAfterLive: true });
+  await fs.rm(path.join(fixture.afterLiveDir, "tester-1-20260709"), { recursive: true, force: true });
+  await writeRemediation(fixture.remediationDir, "tester-1", { includeHostChecks: false });
+
+  const result = await runHandoff(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.counts.remediatedHistorical, 0);
+  assert.ok(report.blockers.some((item) => item.includes("tester-1: after-live evidence is missing")));
+});
+
 async function makeFixture({ decision, includeAfterLive, safety = false }) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-cohort-handoff-"));
   const cohortPath = path.join(tempRoot, "TRIAL_COHORT_SUMMARY.json");
   const afterLiveDir = path.join(tempRoot, "trial-after-live");
+  const remediationDir = path.join(tempRoot, "trial-remediation");
   const jsonPath = path.join(tempRoot, "TRIAL_COHORT_HANDOFF.json");
   const markdownPath = path.join(tempRoot, "TRIAL_COHORT_HANDOFF.md");
   const handoffPath = path.join(tempRoot, "COHORT_EXPANSION_HANDOFF.md");
@@ -108,14 +140,45 @@ async function makeFixture({ decision, includeAfterLive, safety = false }) {
   return {
     jsonPath,
     handoffPath,
+    afterLiveDir,
+    remediationDir,
     args: [
       "--cohort", path.relative(rootPath, cohortPath),
       "--after-live-dir", path.relative(rootPath, afterLiveDir),
+      "--remediation-dir", path.relative(rootPath, remediationDir),
       "--json", path.relative(rootPath, jsonPath),
       "--markdown", path.relative(rootPath, markdownPath),
       "--out", path.relative(rootPath, handoffPath)
     ]
   };
+}
+
+async function writeRemediation(remediationDir, testerId, { includeHostChecks = true } = {}) {
+  const folder = path.join(remediationDir, `${testerId}-20260712`, "reports");
+  const commit = "e".repeat(40);
+  await writeJson(path.join(folder, "TRIAL_REMEDIATION_REPORT.json"), {
+    ok: true,
+    mode: "trial-remediation-gate",
+    decision: "REMEDIATION_READY_FOR_RETEST",
+    testerId,
+    originalAfterLiveDecision: "AFTER_LIVE_BLOCKED",
+    currentCommit: commit,
+    worktreeClean: true,
+    readinessSourceVersion: { available: true, commit, dirty: false },
+    observedReports: { afterLive: { sha256: "f".repeat(64) } },
+    unresolvedItems: [],
+    hostAcceptance: {
+      accepted: true,
+      acceptedBy: "host-test",
+      acceptedCommit: commit,
+      originalRecordsUnchanged: true,
+      hostChecks: includeHostChecks
+        ? REQUIRED_REMEDIATION_HOST_CHECKS.map((id) => ({ id, status: "passed", method: "manual" }))
+        : []
+    },
+    blockers: [],
+    warnings: []
+  });
 }
 
 function tester(testerId) {

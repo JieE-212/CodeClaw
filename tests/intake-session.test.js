@@ -9,12 +9,16 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "generate-intake-session.js");
 
-test("intake-session generates a tester session pack from ready intake", async () => {
+test("intake-session generates a tester session pack from ready intake", async (t) => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-session-ok-"));
   const intakePath = path.join(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json");
   const outputPath = path.join(rootPath, "dist", "test-intake-session", `tester-ok-${Date.now()}`);
   const jsonPath = path.join(tempRoot, "intake-session-report.json");
   const markdownPath = path.join(tempRoot, "intake-session-report.md");
+  t.after(() => Promise.all([
+    fs.rm(tempRoot, { recursive: true, force: true }),
+    fs.rm(outputPath, { recursive: true, force: true })
+  ]));
 
   await writeJson(intakePath, readyIntakeReport());
 
@@ -47,12 +51,16 @@ test("intake-session generates a tester session pack from ready intake", async (
   assert.doesNotMatch(beginnerGuide, /\{\{TESTER_ID\}\}/);
 });
 
-test("intake-session blocks when intake is not ready", async () => {
+test("intake-session blocks when intake is not ready", async (t) => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-session-hold-"));
   const intakePath = path.join(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json");
   const outputPath = path.join(rootPath, "dist", "test-intake-session", `tester-hold-${Date.now()}`);
   const jsonPath = path.join(tempRoot, "intake-session-report.json");
   const markdownPath = path.join(tempRoot, "intake-session-report.md");
+  t.after(() => Promise.all([
+    fs.rm(tempRoot, { recursive: true, force: true }),
+    fs.rm(outputPath, { recursive: true, force: true })
+  ]));
 
   await writeJson(intakePath, {
     ok: true,

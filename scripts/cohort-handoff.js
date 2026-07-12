@@ -1,12 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { hasAllRequiredRemediationHostChecks } from "./trial-remediation-contract.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
 const args = parseArgs(process.argv.slice(2));
 const cohortPath = path.resolve(rootPath, args.cohort || path.join("dist", "TRIAL_COHORT_SUMMARY.json"));
 const afterLiveDir = path.resolve(rootPath, args.afterLiveDir || path.join("dist", "trial-after-live"));
+const remediationDir = path.resolve(rootPath, args.remediationDir || path.join("dist", "trial-remediation"));
 const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_COHORT_HANDOFF.json"));
 const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_COHORT_HANDOFF.md"));
 const handoffPath = path.resolve(rootPath, args.out || path.join("dist", "COHORT_EXPANSION_HANDOFF.md"));
@@ -52,9 +55,13 @@ async function buildReport() {
   if (testers.length < 2) blockers.push("At least two completed tester summaries are required before cohort handoff.");
 
   const afterLiveEvidence = await collectAfterLiveEvidence(afterLiveDir);
-  const evidenceIssues = inspectAfterLiveEvidence(testers, afterLiveEvidence);
+  const remediationEvidence = await collectRemediationEvidence(remediationDir);
+  const evidenceIssues = inspectAfterLiveEvidence(testers, afterLiveEvidence, remediationEvidence);
   blockers.push(...evidenceIssues.blockers);
   warnings.push(...evidenceIssues.warnings);
+  const completedTesterIds = new Set(testers.filter((tester) => tester.completed).map((tester) => tester.testerId));
+  const cleanAfterLiveReady = afterLiveEvidence.filter((item) => item.ok && completedTesterIds.has(item.testerId)).length;
+  if (cleanAfterLiveReady < 2) blockers.push("At least two completed post-fix testers need clean after-live evidence before cohort expansion; remediation history does not count as a clean retest.");
 
   const decision = decide({ cohort, blockers, warnings });
   const expansion = expansionFor(decision, cohort, blockers);
@@ -82,6 +89,8 @@ async function buildReport() {
     cohortRelativePath: relative(cohortPath),
     afterLiveDir,
     afterLiveRelativeDir: relative(afterLiveDir),
+    remediationDir,
+    remediationRelativeDir: relative(remediationDir),
     handoffPath,
     handoffRelativePath: handoffCreated ? relative(handoffPath) : "",
     handoffCreated,
@@ -89,6 +98,7 @@ async function buildReport() {
       testers: testers.length,
       completed: testers.filter((tester) => tester.completed).length,
       afterLiveReady: afterLiveEvidence.filter((item) => item.ok).length,
+      remediatedHistorical: remediationEvidence.filter((item) => item.ok).length,
       watchItems: watchItems.length,
       safetyReviews: safetyReviews.length,
       privacyWarnings: privacyWarnings.length
@@ -103,6 +113,7 @@ async function buildReport() {
     },
     testers,
     afterLiveEvidence,
+    remediationEvidence,
     watchItems,
     safetyReviews,
     privacyWarnings,
@@ -167,7 +178,8 @@ async function collectAfterLiveEvidence(folder) {
   });
   const evidence = [];
   for (const filePath of files.sort((a, b) => a.localeCompare(b))) {
-    const data = await readJson(filePath);
+    const observed = await readJsonWithHash(filePath);
+    const data = observed.data;
     if (!data) continue;
     evidence.push({
       testerId: sanitizeTesterId(data.testerId),
@@ -175,6 +187,7 @@ async function collectAfterLiveEvidence(folder) {
       decision: data.decision || "MISSING",
       relativePath: relative(filePath),
       packetRelativePath: data.evidencePacket?.packetRelativePath || data.packetRelativePath || "",
+      sha256: observed.sha256,
       blockers: normalizeList(data.blockers),
       warnings: normalizeList(data.warnings)
     });
@@ -182,21 +195,88 @@ async function collectAfterLiveEvidence(folder) {
   return evidence;
 }
 
-function inspectAfterLiveEvidence(testers, evidence) {
+async function collectRemediationEvidence(folder) {
+  if (!(await exists(folder))) return [];
+  const files = [];
+  await walk(folder, async (entryPath, dirent) => {
+    if (dirent.isFile() && dirent.name === "TRIAL_REMEDIATION_REPORT.json") files.push(entryPath);
+  });
+  const evidence = [];
+  for (const filePath of files.sort((a, b) => a.localeCompare(b))) {
+    const data = await readJson(filePath);
+    if (!data) continue;
+    const currentCommit = String(data.currentCommit || "");
+    const sourceAligned = /^[0-9a-f]{40}$/i.test(currentCommit)
+      && data.worktreeClean === true
+      && data.readinessSourceVersion?.available === true
+      && data.readinessSourceVersion?.dirty === false
+      && data.readinessSourceVersion?.commit === currentCommit
+      && data.hostAcceptance?.acceptedCommit === currentCommit;
+    evidence.push({
+      testerId: sanitizeTesterId(data.testerId),
+      ok: data.mode === "trial-remediation-gate"
+        && data.ok === true
+        && ["REMEDIATION_READY_FOR_RETEST", "REMEDIATION_READY_WITH_REVIEW"].includes(data.decision)
+        && data.originalAfterLiveDecision === "AFTER_LIVE_BLOCKED"
+        && (data.unresolvedItems || []).length === 0
+        && data.hostAcceptance?.accepted === true
+        && /^host-[a-z0-9-]+$/i.test(data.hostAcceptance?.acceptedBy || "")
+        && data.hostAcceptance?.originalRecordsUnchanged === true
+        && (data.decision !== "REMEDIATION_READY_WITH_REVIEW" || data.hostAcceptance?.acceptedWarnings === true)
+        && hasAllRequiredRemediationHostChecks(data.hostAcceptance?.hostChecks)
+        && sourceAligned
+        && /^[0-9a-f]{64}$/i.test(data.observedReports?.afterLive?.sha256 || "")
+        && (data.blockers || []).length === 0,
+      decision: data.decision || "MISSING",
+      originalAfterLiveDecision: data.originalAfterLiveDecision || "MISSING",
+      observedAfterLiveSha256: data.observedReports?.afterLive?.sha256 || "",
+      relativePath: relative(filePath),
+      blockers: normalizeList(data.blockers),
+      warnings: normalizeList(data.warnings)
+    });
+  }
+  return evidence;
+}
+
+function inspectAfterLiveEvidence(testers, evidence, remediationEvidence = []) {
   const blockers = [];
   const warnings = [];
   const byTester = new Map(evidence.map((item) => [item.testerId, item]));
+  const remediationByTester = new Map(remediationEvidence.map((item) => [item.testerId, item]));
+  const closedByRemediation = new Set();
   for (const tester of testers.filter((item) => item.completed)) {
     const item = byTester.get(tester.testerId);
+    const remediation = remediationByTester.get(tester.testerId);
+    const remediationMatchesHistorical = remediation?.ok
+      && (!item || remediation.observedAfterLiveSha256 === item.sha256);
     if (!item) {
-      blockers.push(`${tester.testerId}: after-live evidence is missing from ${relative(afterLiveDir)}.`);
+      if (remediationMatchesHistorical) {
+        closedByRemediation.add(tester.testerId);
+        warnings.push(`${tester.testerId}: historical AFTER_LIVE_BLOCKED is closed by remediation for retest admission, but it does not count as clean after-live evidence.`);
+      } else {
+        blockers.push(`${tester.testerId}: after-live evidence is missing from ${relative(afterLiveDir)}.`);
+      }
       continue;
     }
-    if (!item.ok) blockers.push(`${tester.testerId}: after-live decision is ${item.decision}.`);
+    if (!item.ok) {
+      if (remediationMatchesHistorical) {
+        closedByRemediation.add(tester.testerId);
+        warnings.push(`${tester.testerId}: ${item.decision} remains historical and is paired with ${remediation.decision}; it does not count as a clean retest.`);
+      } else {
+        blockers.push(`${tester.testerId}: after-live decision is ${item.decision}.`);
+        if (remediation?.ok && remediation.observedAfterLiveSha256 !== item.sha256) {
+          blockers.push(`${tester.testerId}: remediation does not match the preserved after-live report hash.`);
+        }
+      }
+    }
     for (const warning of item.warnings) warnings.push(`${tester.testerId} after-live: ${warning}`);
   }
   for (const item of evidence) {
+    if (closedByRemediation.has(item.testerId)) continue;
     for (const blocker of item.blockers) blockers.push(`${item.testerId} after-live: ${blocker}`);
+  }
+  for (const item of remediationEvidence.filter((entry) => !entry.ok)) {
+    for (const blocker of item.blockers) blockers.push(`${item.testerId} remediation: ${blocker}`);
   }
   return { blockers, warnings };
 }
@@ -262,7 +342,8 @@ function normalizeThemes(themes) {
 function nextCommands(decision) {
   if (decision === "COHORT_HANDOFF_HOLD") {
     return [
-      "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>",
+      "For each newly completed post-fix tester only: npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>",
+      "For a preserved AFTER_LIVE_BLOCKED session: npm.cmd run trial:remediation -- --tester <tester-id>",
       "npm.cmd run trial:cohort-summary -- <completed-trials-folder>",
       "npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>"
     ];
@@ -284,7 +365,8 @@ function nextSteps(decision) {
   if (decision === "COHORT_HANDOFF_HOLD") {
     return [
       "Do not expand the tester cohort yet.",
-      "Close missing after-live evidence or fix cohort blockers.",
+      "Run after-live once for each newly completed post-fix tester; never rerun a preserved blocked result to make it green.",
+      "Use remediation for historical blocked sessions and fix all remaining cohort blockers.",
       "Rerun cohort summary and handoff."
     ];
   }
@@ -318,6 +400,7 @@ function renderMarkdown(report) {
     `Cohort decision: ${report.cohortDecision}`,
     `Cohort summary: ${report.cohortRelativePath}`,
     `After-live evidence: ${report.afterLiveRelativeDir}`,
+    `Remediation evidence: ${report.remediationRelativeDir}`,
     `Expansion handoff: ${report.handoffRelativePath || "Not created"}`,
     "",
     "## Expansion",
@@ -401,6 +484,7 @@ function renderHandoff(report) {
     "",
     `- Cohort summary: ${report.cohortRelativePath}`,
     `- After-live evidence folder: ${report.afterLiveRelativeDir}`,
+    `- Remediation evidence folder: ${report.remediationRelativeDir}`,
     "",
     "## After Each New Tester",
     "",
@@ -431,6 +515,7 @@ function parseArgs(rawArgs) {
   const parsed = {
     cohort: "",
     afterLiveDir: "",
+    remediationDir: "",
     json: "",
     markdown: "",
     out: "",
@@ -449,7 +534,7 @@ function parseArgs(rawArgs) {
       continue;
     }
     let handled = false;
-    for (const key of ["cohort", "afterLiveDir", "json", "markdown", "out", "acceptedBy"]) {
+    for (const key of ["cohort", "afterLiveDir", "remediationDir", "json", "markdown", "out", "acceptedBy"]) {
       const dashed = key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
       if (arg === `--${dashed}`) {
         parsed[key] = rawArgs[index + 1] || "";
@@ -519,6 +604,18 @@ async function readJson(filePath) {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
   } catch {
     return null;
+  }
+}
+
+async function readJsonWithHash(filePath) {
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    return {
+      data: JSON.parse(content),
+      sha256: crypto.createHash("sha256").update(content).digest("hex")
+    };
+  } catch {
+    return { data: null, sha256: "" };
   }
 }
 

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { classifyToolCall } from "../../permission-engine/src/index.js";
@@ -52,7 +53,7 @@ export class ToolRegistry {
     this.register("search_code", async ({ query }) => searchCode(this.rootPath, query));
     this.register("git_status", async () => runGit(this.rootPath, ["status", "--short"]));
     this.register("git_diff", async () => runGit(this.rootPath, ["diff", "--"]));
-    this.register("write_patch", async ({ path: filePath, content }) => writePatch(this.rootPath, filePath, content));
+    this.register("write_patch", async ({ path: filePath, content, expectedBaseline, remove = false }) => writePatch(this.rootPath, filePath, content, { expectedBaseline, remove }));
     this.register("run_command", async (args) => runCommand(this.rootPath, args, this.allowedCommands));
   }
 }
@@ -83,6 +84,7 @@ async function walk(rootPath, currentPath, output, isIgnored) {
 async function readFileSafe(rootPath, filePath) {
   const absolutePath = resolveInside(rootPath, filePath);
   if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to read sensitive file.");
+  await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
   return fs.readFile(absolutePath, "utf8");
 }
 
@@ -122,24 +124,32 @@ function findLineMatches(content, normalizedQuery) {
   return matches;
 }
 
-async function writePatch(rootPath, filePath, content) {
+async function writePatch(rootPath, filePath, content, { expectedBaseline = null, remove = false } = {}) {
   if (!filePath) throw new Error("Missing path.");
-  if (typeof content !== "string") throw new Error("Missing content.");
+  if (!remove && typeof content !== "string") throw new Error("Missing content.");
 
   const absolutePath = resolveInside(rootPath, filePath);
   const rel = relativePath(rootPath, absolutePath);
   if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to write sensitive file.");
+  await assertNoLinkedPathSegments(rootPath, absolutePath, "write");
 
   const isIgnored = await loadGitignoreMatcher(rootPath);
   if (isIgnored(rel, false)) throw new Error("Refusing to write ignored file.");
 
-  let previous = "";
-  let created = false;
-  try {
-    previous = await fs.readFile(absolutePath, "utf8");
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    created = true;
+  const current = await readFileState(absolutePath);
+  assertExpectedBaseline(expectedBaseline, current, rel);
+  const previous = current.content;
+  const created = !current.exists;
+
+  if (remove) {
+    if (current.exists) await fs.unlink(absolutePath);
+    return {
+      path: rel,
+      created: false,
+      removed: current.exists,
+      bytes: 0,
+      diff: createSimpleDiff(rel, previous, "")
+    };
   }
 
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -150,6 +160,58 @@ async function writePatch(rootPath, filePath, content) {
     bytes: Buffer.byteLength(content, "utf8"),
     diff: createSimpleDiff(rel, previous, content)
   };
+}
+
+async function assertNoLinkedPathSegments(rootPath, absolutePath, action) {
+  const rel = path.relative(rootPath, absolutePath);
+  let current = rootPath;
+  for (const segment of rel.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        const error = new Error(`Refusing to ${action} through a symbolic link inside the project: ${relativePath(rootPath, current)}.`);
+        error.code = "PATH_SYMLINK_REFUSED";
+        error.status = 409;
+        throw error;
+      }
+      if (current === absolutePath && stat.isFile() && stat.nlink > 1) {
+        const error = new Error(`Refusing to ${action} a hard-linked file inside the project: ${relativePath(rootPath, current)}.`);
+        error.code = "PATH_HARDLINK_REFUSED";
+        error.status = 409;
+        throw error;
+      }
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
+async function readFileState(absolutePath) {
+  try {
+    return { exists: true, content: await fs.readFile(absolutePath, "utf8") };
+  } catch (error) {
+    if (error.code === "ENOENT") return { exists: false, content: "" };
+    throw error;
+  }
+}
+
+function assertExpectedBaseline(expectedBaseline, current, rel) {
+  if (!expectedBaseline) return;
+  const validHash = typeof expectedBaseline.sha256 === "string" && /^[a-f0-9]{64}$/i.test(expectedBaseline.sha256);
+  const matchesExistence = Boolean(expectedBaseline.exists) === current.exists;
+  const matchesContent = !current.exists || (validHash && hashContent(current.content) === expectedBaseline.sha256.toLowerCase());
+  if (matchesExistence && matchesContent) return;
+
+  const error = new Error(`Workspace file changed before the write: ${rel}. Reread it and regenerate the patch before retrying.`);
+  error.code = "PATCH_BASELINE_CONFLICT";
+  error.status = 409;
+  throw error;
+}
+
+export function hashContent(content) {
+  return createHash("sha256").update(String(content), "utf8").digest("hex");
 }
 
 function createSimpleDiff(filePath, before, after) {

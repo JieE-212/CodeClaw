@@ -64,6 +64,68 @@ test("ToolRegistry write_patch refuses ignored and escaping paths", async () => 
   );
 });
 
+test("ToolRegistry refuses reads and writes through a linked directory", async (t) => {
+  const root = await makeFixture();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-tools-outside-"));
+  t.after(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  });
+  await fs.writeFile(path.join(outside, "outside.txt"), "outside-original\n", "utf8");
+  try {
+    await fs.symlink(outside, path.join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    if (["EPERM", "EACCES", "ENOSYS"].includes(error.code)) {
+      t.skip(`This environment cannot create a test link (${error.code}).`);
+      return;
+    }
+    throw error;
+  }
+
+  const registry = new ToolRegistry({ rootPath: root });
+  await assert.rejects(
+    () => registry.call("read_file", { path: "linked/outside.txt" }),
+    (error) => error.code === "PATH_SYMLINK_REFUSED"
+  );
+  await assert.rejects(
+    () => registry.call("write_patch", { path: "linked/outside.txt", content: "should-not-write\n" }, { approved: true }),
+    (error) => error.code === "PATH_SYMLINK_REFUSED"
+  );
+  assert.equal(await fs.readFile(path.join(outside, "outside.txt"), "utf8"), "outside-original\n");
+});
+
+test("ToolRegistry refuses reads and writes through a hard-linked file", async (t) => {
+  const root = await makeFixture();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-tools-hardlink-outside-"));
+  t.after(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  });
+  const outsidePath = path.join(outside, "outside.txt");
+  const linkedPath = path.join(root, "hardlinked.txt");
+  await fs.writeFile(outsidePath, "outside-original\n", "utf8");
+  try {
+    await fs.link(outsidePath, linkedPath);
+  } catch (error) {
+    if (["EPERM", "EACCES", "ENOSYS", "EXDEV"].includes(error.code)) {
+      t.skip(`This environment cannot create a test hard link (${error.code}).`);
+      return;
+    }
+    throw error;
+  }
+
+  const registry = new ToolRegistry({ rootPath: root });
+  await assert.rejects(
+    () => registry.call("read_file", { path: "hardlinked.txt" }),
+    (error) => error.code === "PATH_HARDLINK_REFUSED"
+  );
+  await assert.rejects(
+    () => registry.call("write_patch", { path: "hardlinked.txt", content: "should-not-write\n" }, { approved: true }),
+    (error) => error.code === "PATH_HARDLINK_REFUSED"
+  );
+  assert.equal(await fs.readFile(outsidePath, "utf8"), "outside-original\n");
+});
+
 test("ToolRegistry run_command only runs allowlisted commands", async () => {
   const root = await makeFixture();
   const registry = new ToolRegistry({

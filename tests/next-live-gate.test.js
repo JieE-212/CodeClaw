@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,8 +9,9 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "next-live-gate.js");
 
-test("next-live passes when after-live and next tester launch reports are aligned", async () => {
+test("next-live passes when after-live and next tester launch reports are aligned", async (t) => {
   const fixture = await makeFixture({ testerId: "tester-2", previousTester: "tester-1", watchId: "WATCH-1" });
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const result = await runNextLive(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -22,8 +24,9 @@ test("next-live passes when after-live and next tester launch reports are aligne
   assert.ok(await exists(path.join(fixture.sessionPath, "NEXT_LIVE_HOST_HANDOFF.md")));
 });
 
-test("next-live blocks when the next launch still points to the previous tester", async () => {
+test("next-live blocks when the next launch still points to the previous tester", async (t) => {
   const fixture = await makeFixture({ testerId: "tester-1", previousTester: "tester-1", watchId: "" });
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const result = await runNextLive(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -32,8 +35,9 @@ test("next-live blocks when the next launch still points to the previous tester"
   assert.ok(report.blockers.some((item) => item.includes("matches the previous tester")));
 });
 
-test("next-live blocks when after-live is missing", async () => {
+test("next-live blocks when after-live is missing", async (t) => {
   const fixture = await makeFixture({ testerId: "tester-2", previousTester: "tester-1", watchId: "" });
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   await fs.rm(path.join(fixture.runRoot, "TRIAL_AFTER_LIVE_REPORT.json"), { force: true });
 
   const result = await runNextLive(fixture.args);
@@ -44,8 +48,9 @@ test("next-live blocks when after-live is missing", async () => {
   assert.ok(report.blockers.some((item) => item.includes("After-live report is missing")));
 });
 
-test("next-live blocks stale watch items that are not copied into the next host files", async () => {
+test("next-live blocks stale watch items that are not copied into the next host files", async (t) => {
   const fixture = await makeFixture({ testerId: "tester-2", previousTester: "tester-1", watchId: "WATCH-MISSING" });
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   await fs.writeFile(path.join(fixture.sessionPath, "HOST_RUNBOOK.md"), "# Host Runbook\n\nNo watch marker here.\n", "utf8");
 
   const result = await runNextLive(fixture.args);
@@ -56,7 +61,22 @@ test("next-live blocks stale watch items that are not copied into the next host 
   assert.ok(report.blockers.some((item) => item.includes("HOST_RUNBOOK.md is missing accepted watch item WATCH-MISSING")));
 });
 
-async function makeFixture({ testerId, previousTester, watchId }) {
+test("next-live accepts a current remediation without rewriting a blocked after-live", async (t) => {
+  const fixture = await makeFixture({ testerId: "tester-3", previousTester: "tester-2", watchId: "", remediated: true });
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
+  const result = await runNextLive(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.equal(result.code, 0, result.stderr || result.stdout);
+  assert.equal(report.decision, "NEXT_LIVE_READY");
+  assert.equal(report.previousClosure.kind, "remediation");
+  assert.equal(report.previousClosure.historicalDecision, "AFTER_LIVE_BLOCKED");
+  assert.equal(report.previousClosure.remediationDecision, "REMEDIATION_READY_FOR_RETEST");
+  const preserved = JSON.parse(await fs.readFile(path.join(fixture.runRoot, "TRIAL_AFTER_LIVE_REPORT.json"), "utf8"));
+  assert.equal(preserved.decision, "AFTER_LIVE_BLOCKED");
+});
+
+async function makeFixture({ testerId, previousTester, watchId, remediated = false }) {
   const safeId = testerId.replace(/[^a-z0-9._-]/gi, "-").toLowerCase();
   const runRoot = path.join(rootPath, "dist", `next-live-test-${process.pid}-${Date.now()}-${safeId}`);
   const sessionPath = path.join(runRoot, "trial-session-packs", testerId);
@@ -65,15 +85,49 @@ async function makeFixture({ testerId, previousTester, watchId }) {
   await fs.mkdir(sessionPath, { recursive: true });
 
   const watchItems = watchId ? [watchItem(watchId)] : [];
-  await writeJson(path.join(runRoot, "TRIAL_AFTER_LIVE_REPORT.json"), {
-    ok: true,
+  const afterLivePath = path.join(runRoot, "TRIAL_AFTER_LIVE_REPORT.json");
+  await writeJson(afterLivePath, {
+    ok: !remediated,
     mode: "trial-after-live",
-    decision: watchId ? "AFTER_LIVE_READY_WITH_REVIEW" : "AFTER_LIVE_READY",
+    decision: remediated ? "AFTER_LIVE_BLOCKED" : watchId ? "AFTER_LIVE_READY_WITH_REVIEW" : "AFTER_LIVE_READY",
     testerId: previousTester,
     nextTester: testerId,
     blockers: [],
     warnings: []
   });
+  const sourceRoot = path.join(runRoot, "source-root");
+  if (remediated) {
+    await fs.mkdir(sourceRoot, { recursive: true });
+    await fs.writeFile(path.join(sourceRoot, "seed.txt"), "synthetic source\n", "utf8");
+    await runGit(sourceRoot, ["init", "--quiet"]);
+    await runGit(sourceRoot, ["config", "user.email", "fixture@example.invalid"]);
+    await runGit(sourceRoot, ["config", "user.name", "CodeClaw Fixture"]);
+    await runGit(sourceRoot, ["add", "seed.txt"]);
+    await runGit(sourceRoot, ["commit", "--quiet", "-m", "fixture"]);
+    const currentCommit = (await runGit(sourceRoot, ["rev-parse", "HEAD"])).trim();
+    const afterLiveContent = await fs.readFile(afterLivePath, "utf8");
+    await writeJson(path.join(runRoot, "TRIAL_REMEDIATION_REPORT.json"), {
+      ok: true,
+      mode: "trial-remediation-gate",
+      decision: "REMEDIATION_READY_FOR_RETEST",
+      testerId: previousTester,
+      originalAfterLiveDecision: "AFTER_LIVE_BLOCKED",
+      currentCommit,
+      worktreeClean: true,
+      unresolvedItems: [],
+      readinessSourceVersion: { available: true, commit: currentCommit, dirty: false },
+      hostAcceptance: {
+        accepted: true,
+        acceptedBy: "host-fixture",
+        originalRecordsUnchanged: true,
+        acceptedCommit: currentCommit,
+        hostChecks: remediationHostChecks()
+      },
+      observedReports: { afterLive: { sha256: createHash(afterLiveContent) } },
+      blockers: [],
+      warnings: []
+    });
+  }
   await writeJson(path.join(runRoot, "TRIAL_TESTER_INTAKE_REPORT.json"), {
     ok: true,
     mode: "trial-tester-intake",
@@ -124,9 +178,38 @@ async function makeFixture({ testerId, previousTester, watchId }) {
       "--json", path.relative(rootPath, jsonPath),
       "--markdown", path.relative(rootPath, markdownPath),
       "--accept-review",
-      "--accepted-by", "host-test"
+      "--accepted-by", "host-test",
+      ...(remediated ? ["--source-root", sourceRoot] : [])
     ]
   };
+}
+
+function createHash(content) {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+function remediationHostChecks() {
+  return [
+    "desktop-sticky-navigation",
+    "narrow-layout",
+    "saved-session-choice",
+    "chinese-demo-patch",
+    "preflight-read-only-explanation",
+    "apply-verify-boundaries",
+    "demo-apply-verify-revert"
+  ].map((id) => ({ id, status: "passed", method: "manual" }));
+}
+
+async function runGit(cwd, args) {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(String(stdout || ""));
+    });
+  });
 }
 
 function readyReport(mode, decision, testerId, sessionPath) {

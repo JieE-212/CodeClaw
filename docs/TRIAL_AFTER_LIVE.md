@@ -72,6 +72,8 @@ AFTER_LIVE_READY
 
 Proceed only when the decision is `AFTER_LIVE_READY`, or when it is `AFTER_LIVE_READY_WITH_REVIEW` and the host accepts the watch items or privacy/archive warnings.
 
+If a completed real session truthfully ends in `AFTER_LIVE_BLOCKED` with a Fix-first decision, preserve that report and the confirmed human answers. Fix the product, run fresh readiness on the final commit, and use `trial:remediation`; do not rerun after-live to turn the historical result green. A blocked run does not create an evidence packet.
+
 ## After It Passes
 
 Run:

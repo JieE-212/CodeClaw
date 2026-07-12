@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  REQUIRED_REMEDIATION_HOST_CHECKS,
+  passedRemediationHostCheckIds
+} from "./trial-remediation-contract.js";
 
+const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
 const distPath = path.join(rootPath, "dist");
@@ -16,6 +24,8 @@ const preLivePath = path.resolve(rootPath, args.preLive || path.join(reportsPath
 const liveCapturePath = path.resolve(rootPath, args.liveCapture || path.join(reportsPath, "TRIAL_LIVE_CAPTURE_REPORT.json"));
 const reviewPath = path.resolve(rootPath, args.review || path.join(reportsPath, "TRIAL_REVIEW_REPORT.json"));
 const backlogPath = path.resolve(rootPath, args.backlog || path.join(reportsPath, "TRIAL_FIX_BACKLOG.json"));
+const remediationPath = path.resolve(rootPath, args.remediation || path.join(reportsPath, "TRIAL_REMEDIATION_REPORT.json"));
+const sourceRoot = path.resolve(rootPath, args.sourceRoot || ".");
 const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_NEXT_LIVE_REPORT.json"));
 const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_NEXT_LIVE_REPORT.md"));
 
@@ -47,8 +57,9 @@ console.log(JSON.stringify({
 if (!report.ok) process.exitCode = 1;
 
 async function buildReport() {
+  const afterLiveObserved = await readJsonWithHash(afterLivePath);
   const reports = {
-    afterLive: await readJson(afterLivePath),
+    afterLive: afterLiveObserved.data,
     intake: await readJson(intakePath),
     intakeSession: await readJson(intakeSessionPath),
     hostReady: await readJson(hostReadyPath),
@@ -56,7 +67,8 @@ async function buildReport() {
     preLive: await readJson(preLivePath),
     liveCapture: await readJson(liveCapturePath),
     review: await readJson(reviewPath),
-    backlog: await readJson(backlogPath)
+    backlog: await readJson(backlogPath),
+    remediation: await readJson(remediationPath)
   };
   const blockers = [];
   const warnings = [];
@@ -65,7 +77,14 @@ async function buildReport() {
   const selectedTester = selectTester(reports, previousTester);
   const testerId = selectedTester.id;
 
-  inspectAfterLive(reports.afterLive, blockers, warnings);
+  const previousClosure = await inspectPreviousClosure({
+    afterLive: reports.afterLive,
+    afterLiveSha256: afterLiveObserved.sha256,
+    remediation: reports.remediation,
+    previousTester,
+    blockers,
+    warnings
+  });
   if (!previousTester) blockers.push("Previous tester could not be inferred from TRIAL_AFTER_LIVE_REPORT.json.");
   if (!testerId) blockers.push("Next tester could not be inferred. Pass --tester <tester-id> or run intake/live gates for the next tester.");
   if (previousTester && testerId && testerId === previousTester) {
@@ -135,8 +154,10 @@ async function buildReport() {
       preLive: [preLivePath, reports.preLive],
       liveCapture: [liveCapturePath, reports.liveCapture],
       review: [reviewPath, reports.review],
-      backlog: [backlogPath, reports.backlog]
+      backlog: [backlogPath, reports.backlog],
+      remediation: [remediationPath, reports.remediation]
     }),
+    previousClosure,
     acceptance: {
       required: needsHostAcceptance,
       accepted: Boolean(args.acceptReview),
@@ -147,23 +168,75 @@ async function buildReport() {
     stopConditions: stopConditions(testerId),
     blockers: unique(blockers),
     warnings: unique(warnings),
-    nextCommands: nextCommands(decision, testerId),
+    nextCommands: nextCommands(decision, testerId, previousClosure),
     nextSteps: nextSteps(decision)
   };
 }
 
-function inspectAfterLive(afterLive, blockers, warnings) {
+async function inspectPreviousClosure({ afterLive, afterLiveSha256, remediation, previousTester, blockers, warnings }) {
   if (!afterLive) {
     blockers.push("After-live report is missing. Run npm.cmd run trial:after-live for the previous tester first.");
-    return;
+    return { kind: "missing", ready: false, historicalDecision: "MISSING", remediationDecision: "MISSING" };
   }
-  if (afterLive.ok === false) blockers.push("After-live report is not ok.");
-  if (!["AFTER_LIVE_READY", "AFTER_LIVE_READY_WITH_REVIEW"].includes(afterLive.decision)) {
+  if (["AFTER_LIVE_READY", "AFTER_LIVE_READY_WITH_REVIEW"].includes(afterLive.decision)) {
+    if (afterLive.ok === false) blockers.push("After-live report is not ok.");
+    if (afterLive.decision === "AFTER_LIVE_READY_WITH_REVIEW") {
+      warnings.push("Previous after-live passed with review; host must accept watch items before next live launch.");
+    }
+    return { kind: "after-live", ready: afterLive.ok !== false, historicalDecision: afterLive.decision, remediationDecision: "MISSING" };
+  }
+
+  if (afterLive.decision !== "AFTER_LIVE_BLOCKED") {
     blockers.push(`After-live decision is ${afterLive.decision || "UNKNOWN"}.`);
+    return { kind: "unsupported", ready: false, historicalDecision: afterLive.decision || "UNKNOWN", remediationDecision: remediation?.decision || "MISSING" };
   }
-  if (afterLive.decision === "AFTER_LIVE_READY_WITH_REVIEW") {
-    warnings.push("Previous after-live passed with review; host must accept watch items before next live launch.");
+
+  if (!remediation) {
+    blockers.push("Previous after-live remains blocked and no remediation report exists. Run trial:remediation after verified product fixes; do not rewrite the original tester result.");
+    return { kind: "remediation", ready: false, historicalDecision: afterLive.decision, remediationDecision: "MISSING" };
   }
+
+  const before = blockers.length;
+  if (remediation.mode !== "trial-remediation-gate") blockers.push("Remediation report has an unexpected mode.");
+  if (remediation.originalAfterLiveDecision !== "AFTER_LIVE_BLOCKED") blockers.push("Remediation does not preserve the original AFTER_LIVE_BLOCKED decision.");
+  if (sanitizeTesterId(remediation.testerId) !== previousTester) blockers.push("Remediation tester does not match the previous tester.");
+  if (remediation.observedReports?.afterLive?.sha256 !== afterLiveSha256) blockers.push("The preserved after-live report changed after remediation was reviewed.");
+  if (remediation.ok !== true || !["REMEDIATION_READY_FOR_RETEST", "REMEDIATION_READY_WITH_REVIEW"].includes(remediation.decision)) {
+    blockers.push(`Remediation decision is ${remediation.decision || "MISSING"}.`);
+  }
+  if ((remediation.blockers || []).length) blockers.push("Remediation still contains gate blockers.");
+  if (remediation.worktreeClean !== true) blockers.push("Remediation did not record a clean source worktree.");
+  if ((remediation.unresolvedItems || []).length) blockers.push("Remediation still contains unresolved source items.");
+  if (remediation.hostAcceptance?.accepted !== true || remediation.hostAcceptance?.originalRecordsUnchanged !== true) {
+    blockers.push("Remediation does not contain current host acceptance with unchanged original records.");
+  }
+  if (!/^host-[a-z0-9-]+$/i.test(remediation.hostAcceptance?.acceptedBy || "")) {
+    blockers.push("Remediation host acceptance does not identify an anonymous host id.");
+  }
+  if (remediation.decision === "REMEDIATION_READY_WITH_REVIEW" && remediation.hostAcceptance?.acceptedWarnings !== true) {
+    blockers.push("Remediation review warnings were not explicitly accepted.");
+  }
+  if (remediation.hostAcceptance?.acceptedCommit !== remediation.currentCommit || remediation.readinessSourceVersion?.commit !== remediation.currentCommit) {
+    blockers.push("Remediation acceptance, readiness, and current commit are not aligned.");
+  }
+  const passedHostChecks = passedRemediationHostCheckIds(remediation.hostAcceptance?.hostChecks);
+  if (REQUIRED_REMEDIATION_HOST_CHECKS.some((id) => !passedHostChecks.has(id))) {
+    blockers.push("Remediation is missing one or more required manual host checks.");
+  }
+
+  const gitState = await readGitState(sourceRoot);
+  if (!gitState.commit || remediation.currentCommit !== gitState.commit) blockers.push("Remediation is not bound to the current source commit.");
+  if (!gitState.clean) blockers.push("The source worktree changed after remediation; commit and regenerate readiness/remediation before next-live.");
+  if (remediation.decision === "REMEDIATION_READY_WITH_REVIEW") {
+    warnings.push("Previous tester remains a historical No-Go with accepted remediation watch items; keep them visible during the controlled retest.");
+  }
+  return {
+    kind: "remediation",
+    ready: blockers.length === before,
+    historicalDecision: afterLive.decision,
+    remediationDecision: remediation.decision || "MISSING",
+    currentCommit: remediation.currentCommit || ""
+  };
 }
 
 function inspectIntake(intake, testerId, blockers, warnings) {
@@ -319,6 +392,7 @@ function needsAcceptance(reports, watchItems) {
   if (watchItems.length > 0) return true;
   return [
     reports.afterLive?.decision,
+    reports.remediation?.decision,
     reports.intake?.decision,
     reports.intakeSession?.decision,
     reports.hostRun?.decision,
@@ -351,10 +425,12 @@ function stopConditions(testerId) {
   ];
 }
 
-function nextCommands(decision, testerId) {
+function nextCommands(decision, testerId, previousClosure) {
   if (decision === "NEXT_LIVE_HOLD") {
     return [
-      "npm.cmd run trial:after-live -- --session <previous-session-folder> --tester <previous-tester-id>",
+      previousClosure?.historicalDecision === "AFTER_LIVE_BLOCKED"
+        ? "npm.cmd run trial:remediation -- --tester <previous-tester-id>"
+        : "npm.cmd run trial:after-live -- --session <previous-session-folder> --tester <previous-tester-id>",
       `npm.cmd run trial:intake-session -- --tester ${testerId || "<tester-id>"} --force`,
       `npm.cmd run trial:host-ready -- --tester ${testerId || "<tester-id>"}`,
       `npm.cmd run trial:host-run -- --tester ${testerId || "<tester-id>"}`,
@@ -402,6 +478,7 @@ function renderMarkdown(report) {
     `Next tester: ${report.testerId || "Unknown"}`,
     `Session folder: ${report.sessionRelativePath || "None"}`,
     `Host handoff: ${report.handoffRelativePath || "Not created"}`,
+    `Previous closure: ${report.previousClosure.kind} (${report.previousClosure.remediationDecision || report.previousClosure.historicalDecision})`,
     "",
     "## Acceptance",
     "",
@@ -451,6 +528,7 @@ function renderHandoff(report) {
     `Next tester: ${report.testerId || "Unknown"}`,
     `Session folder: ${report.sessionRelativePath || "None"}`,
     `Gate decision: ${report.decision}`,
+    `Previous closure: ${report.previousClosure.kind} (${report.previousClosure.remediationDecision || report.previousClosure.historicalDecision})`,
     "",
     "## Accepted Watch Items",
     "",
@@ -499,6 +577,8 @@ function parseArgs(rawArgs) {
     liveCapture: "",
     review: "",
     backlog: "",
+    remediation: "",
+    sourceRoot: "",
     session: "",
     json: "",
     markdown: "",
@@ -512,7 +592,7 @@ function parseArgs(rawArgs) {
       continue;
     }
     let handled = false;
-    for (const key of ["tester", "previousTester", "reports", "afterLive", "intake", "intakeSession", "hostReady", "hostRun", "preLive", "liveCapture", "review", "backlog", "session", "json", "markdown", "acceptedBy"]) {
+    for (const key of ["tester", "previousTester", "reports", "afterLive", "intake", "intakeSession", "hostReady", "hostRun", "preLive", "liveCapture", "review", "backlog", "remediation", "sourceRoot", "session", "json", "markdown", "acceptedBy"]) {
       const dashed = key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
       if (arg === `--${dashed}`) {
         parsed[key] = rawArgs[index + 1] || "";
@@ -584,6 +664,27 @@ async function readJson(filePath) {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
   } catch {
     return null;
+  }
+}
+
+async function readJsonWithHash(filePath) {
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    return { data: JSON.parse(content), sha256: crypto.createHash("sha256").update(content).digest("hex") };
+  } catch {
+    return { data: null, sha256: "" };
+  }
+}
+
+async function readGitState(cwd) {
+  try {
+    const [{ stdout: commit }, { stdout: status }] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "HEAD"], { cwd, windowsHide: true }),
+      execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd, windowsHide: true })
+    ]);
+    return { commit: commit.trim().toLowerCase(), clean: status.trim() === "" };
+  } catch {
+    return { commit: "", clean: false };
   }
 }
 

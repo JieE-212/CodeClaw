@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "pre-live-gate.js");
 
-test("pre-live gate passes when real tester reports are aligned", async () => {
+test("pre-live gate passes when real tester reports are aligned", async (t) => {
   const fixture = await makeFixture("tester-1");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const result = await runPreLive(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -21,8 +22,9 @@ test("pre-live gate passes when real tester reports are aligned", async () => {
   assert.ok(report.launchCommands.some((item) => item.includes("trial:pre-live")));
 });
 
-test("pre-live gate blocks dry-run tester ids", async () => {
+test("pre-live gate blocks dry-run tester ids", async (t) => {
   const fixture = await makeFixture("tester-dry-run-1");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const result = await runPreLive(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -116,6 +118,7 @@ async function makeFixture(testerId) {
   await writeSessionFiles(sessionPath, testerId);
 
   return {
+    runRoot,
     jsonPath,
     args: [
       "--allow-custom-roster",

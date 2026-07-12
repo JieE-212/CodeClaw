@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "post-call-rehearsal.js");
 
-test("post-call rehearsal runs record-draft into after-live without real tester data", async () => {
+test("post-call rehearsal runs record-draft into after-live without real tester data", async (t) => {
   const fixture = await makeFixture("ready");
+  t.after(() => fs.rm(fixture.tempRoot, { recursive: true, force: true }));
   const result = await runRehearsal(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
   const recordDraft = JSON.parse(await fs.readFile(path.join(fixture.runRoot, "reports", "TRIAL_RECORD_DRAFT.json"), "utf8"));
@@ -27,8 +28,9 @@ test("post-call rehearsal runs record-draft into after-live without real tester 
   assert.ok(await exists(path.join(fixture.runRoot, "after-live-packet", "EVIDENCE_PACKET_MANIFEST.json")));
 });
 
-test("post-call rehearsal refuses real-looking tester ids", async () => {
+test("post-call rehearsal refuses real-looking tester ids", async (t) => {
   const fixture = await makeFixture("unsafe-id");
+  t.after(() => fs.rm(fixture.tempRoot, { recursive: true, force: true }));
   const result = await runRehearsal(fixture, ["--tester", "tester-2"]);
 
   assert.notEqual(result.code, 0);

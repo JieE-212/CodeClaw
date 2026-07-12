@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { REQUIRED_REMEDIATION_HOST_CHECKS } from "../scripts/trial-remediation-contract.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "trial-status.js");
@@ -176,7 +178,7 @@ test("trial-status asks for after-live after post-session", async () => {
   assert.match(report.nextCommand, /trial:after-live/);
 });
 
-test("trial-status blocks when after-live blocks", async () => {
+test("trial-status requests remediation when a preserved after-live blocks", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-after-live-"));
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
@@ -190,9 +192,32 @@ test("trial-status blocks when after-live blocks", async () => {
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
 
   assert.notEqual(result.code, 0);
-  assert.equal(report.decision, "AFTER_LIVE_BLOCKED");
-  assert.equal(report.currentStage, "after-live");
+  assert.equal(report.decision, "NEEDS_REMEDIATION");
+  assert.equal(report.currentStage, "remediation");
   assert.ok(report.blockers.some((item) => item.includes("review failed")));
+  assert.match(report.nextCommand, /trial:remediation/);
+});
+
+test("trial-status moves to new intake after a current remediation closes historical blockers", async () => {
+  const fixture = await writeRemediatedStatusFixture();
+  const result = await runStatus(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.equal(result.code, 0, result.stderr || result.stdout);
+  assert.equal(report.decision, "NEEDS_TESTER_INTAKE");
+  assert.equal(report.currentStage, "intake");
+  assert.equal(report.reports.afterLive.decision, "AFTER_LIVE_BLOCKED");
+  assert.equal(report.reports.remediation.decision, "REMEDIATION_READY_FOR_RETEST");
+});
+
+test("trial-status rejects remediation when the preserved after-live report changes", async () => {
+  const fixture = await writeRemediatedStatusFixture({ tamperAfterLive: true });
+  const result = await runStatus(fixture.args);
+  const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
+
+  assert.notEqual(result.code, 0);
+  assert.equal(report.decision, "REMEDIATION_BLOCKED");
+  assert.equal(report.reports.afterLive.decision, "AFTER_LIVE_BLOCKED");
 });
 
 test("trial-status asks for archive after after-live passes and archive is missing", async () => {
@@ -371,6 +396,63 @@ async function writeArchivedExpansionReports(folder) {
   await writeJson(folder, "TRIAL_NEXT_LIVE_REPORT.json", { ok: true, mode: "trial-next-live", decision: "NEXT_LIVE_READY", testerId: "tester-2", blockers: [] });
 }
 
+async function writeRemediatedStatusFixture({ tamperAfterLive = false } = {}) {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-remediated-"));
+  const sourceRoot = path.join(tempRoot, "source");
+  const jsonPath = path.join(tempRoot, "status.json");
+  const markdownPath = path.join(tempRoot, "status.md");
+  const commit = await initGitRepo(sourceRoot);
+
+  await writeReadyHostReports(tempRoot);
+  await writeJson(tempRoot, "TRIAL_READINESS_REPORT.json", { ok: true, mode: "trial-readiness", sourceVersion: { available: true, commit, dirty: false }, blockers: [] });
+  await writeJson(tempRoot, "TRIAL_PRIVACY_REPORT.json", { ok: true, mode: "trial-privacy-check", decision: "PRIVACY_OK", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_FEEDBACK_SUMMARY.json", { ok: true, mode: "trial-feedback-ingest", decision: "NO_GO_FIX_FIRST", blockers: ["historical product blocker"] });
+  await writeJson(tempRoot, "TRIAL_POST_SESSION_REPORT.json", { ok: true, mode: "trial-post-session", decision: "FIX_BEFORE_NEXT_TESTER", blockers: [] });
+  await writeJson(tempRoot, "TRIAL_REVIEW_REPORT.json", { ok: false, mode: "trial-review-session", decision: "REVIEW_BLOCKED", testerId: "tester-2", blockers: ["historical review blocker"] });
+  await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: false, mode: "trial-after-live", decision: "AFTER_LIVE_BLOCKED", testerId: "tester-2", blockers: ["historical review blocker"] });
+  const afterLivePath = path.join(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json");
+  const afterLiveHash = createHash("sha256").update(await fs.readFile(afterLivePath, "utf8")).digest("hex");
+  await writeJson(tempRoot, "TRIAL_REMEDIATION_REPORT.json", {
+    ok: true,
+    mode: "trial-remediation-gate",
+    decision: "REMEDIATION_READY_FOR_RETEST",
+    testerId: "tester-2",
+    originalAfterLiveDecision: "AFTER_LIVE_BLOCKED",
+    currentCommit: commit,
+    worktreeClean: true,
+    readinessSourceVersion: { available: true, commit, dirty: false },
+    observedReports: { afterLive: { sha256: afterLiveHash } },
+    unresolvedItems: [],
+    hostAcceptance: {
+      accepted: true,
+      acceptedBy: "host-test",
+      acceptedCommit: commit,
+      originalRecordsUnchanged: true,
+      hostChecks: REQUIRED_REMEDIATION_HOST_CHECKS.map((id) => ({ id, status: "passed", method: "manual" }))
+    },
+    blockers: []
+  });
+  if (tamperAfterLive) {
+    await writeJson(tempRoot, "TRIAL_AFTER_LIVE_REPORT.json", { ok: false, mode: "trial-after-live", decision: "AFTER_LIVE_BLOCKED", testerId: "tester-2", blockers: ["changed historical blocker"] });
+  }
+
+  return {
+    jsonPath,
+    args: ["--dist", tempRoot, "--source-root", sourceRoot, "--json", jsonPath, "--markdown", markdownPath]
+  };
+}
+
+async function initGitRepo(folder) {
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(path.join(folder, "candidate.txt"), "candidate\n", "utf8");
+  await runCommand("git", ["init"], { cwd: folder });
+  await runCommand("git", ["config", "user.email", "codeclaw-test@example.invalid"], { cwd: folder });
+  await runCommand("git", ["config", "user.name", "CodeClaw Test"], { cwd: folder });
+  await runCommand("git", ["add", "candidate.txt"], { cwd: folder });
+  await runCommand("git", ["commit", "-m", "test candidate"], { cwd: folder });
+  return (await runCommand("git", ["rev-parse", "HEAD"], { cwd: folder })).stdout.trim();
+}
+
 async function writeJson(folder, name, value) {
   await fs.mkdir(folder, { recursive: true });
   await fs.writeFile(path.join(folder, name), `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -388,6 +470,18 @@ function runStatus(args) {
         stdout,
         stderr
       });
+    });
+  });
+}
+
+function runCommand(file, args, options) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
     });
   });
 }

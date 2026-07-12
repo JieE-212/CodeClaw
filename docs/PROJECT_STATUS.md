@@ -1,6 +1,6 @@
 # CodeClaw Project Status
 
-Updated: 2026-07-10
+Updated: 2026-07-12
 
 ## Completed Phase
 
@@ -577,15 +577,73 @@ Latest verification:
 - `trial:tester-launch-plan -- --tester tester-2 --first-live`: `TESTER_LAUNCH_READY_TO_HOST`, 0 blockers.
 - `trial:first-live-standby -- --tester tester-2`: `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`, 0 blockers and 5 warnings.
 
+Stage 3.0.8b is complete: first real tester-2 session and truthful after-live stop.
+
+Confirmed session facts:
+
+- The session was hosted on 2026-07-12 by `host-1` with anonymous `tester-2` in `zh-CN` and lasted about 120 minutes.
+- Live consent was explicitly confirmed. The tester used Demo only; real-project read-only preflight was `N/A` because no safe copy was available.
+- Apply was never clicked. No project file was written, no project command was confirmed, and no temporary project or test code was created.
+- The three final records were explicitly confirmed by host-1. They remain local under the ignored tester-2 session folder and must never be committed.
+- The final host decision was `Fix first`; proceeding to another tester was `No`.
+- `trial:after-live` was run exactly once after confirmation and truthfully returned:
+
+```text
+SESSION_COMPLETION_READY
+PRIVACY_OK
+NO_GO_FIX_FIRST          11 blockers, 10 warnings
+REVIEW_BLOCKED            3 blockers,  4 warnings
+AFTER_LIVE_BLOCKED       10 blockers, 27 warnings
+```
+
+- Archive did not run and no evidence packet was produced. The report surfaced a stale 2026-07-09 archive result; that display/freshness defect was fixed later, but the tester-2 run must not be described as archived.
+- Do not rerun tester-2 after-live or edit the human answers to obtain a green result. `AFTER_LIVE_BLOCKED` is the immutable historical outcome.
+
+Main confirmed findings:
+
+- A Chinese Demo goal could not produce a Mock patch, and the failure message was misleading English copy.
+- Clicking Demo moved directly into automatic plan/context preparation without explaining that read-only transition.
+- Existing sessions could be restored without an explicit continue/fresh-start decision.
+- The tester requested a sticky desktop navigation area, clearer information hierarchy, and beginner explanations for each module.
+- Plan created the most trust; patch was the most valuable expected capability.
+- The initial leakage concern became `No` after local/read-only behavior was explained. The tester would try a disposable patch and would consider a real project in a future safe session.
+
+Stage 3.0.8c is complete: first-live feedback implementation and regression verification.
+
+Commit `61f3786 Fix first-live feedback issues` implemented:
+
+- Chinese/English/Russian divide-by-zero Demo patch support and structured localized failure reasons.
+- Explicit saved-session `Continue` / `Start fresh` choice, with clean Demo client state and stale-response protection.
+- An explanation that preflight automatically prepares a plan and reads selected context without writes or commands.
+- Sticky desktop navigation, responsive layout, reduced host-only clutter, and beginner module-purpose descriptions.
+- Explicit Apply write wording and full Verify command, purpose, and risk disclosure before confirmation.
+- Accurate online-model privacy copy covering goals, metadata, paths, and selected context.
+- Current-run archive freshness enforcement in after-live and a prohibition on evidence packets without a successful current archive.
+
+Latest verification for that commit:
+
+- Focused tests: 28/28.
+- Source test suite: 132/132.
+- Packaged test suite: 132/132.
+- `npm.cmd run check`: passed.
+- i18n: 544 keys per language, 0 warnings/failures.
+- `npm.cmd run health`: passed, including a Chinese Demo patch with 1 applicable file.
+- `npm.cmd run smoke`: Apply, Verify, and Revert passed; the Demo was restored.
+- `npm.cmd run trial:ready`: source/package checks, health, and tests passed; package hygiene reported 0 missing, 0 disallowed, and 169 files.
+- The ignored candidate package is `dist/CodeClaw-local-trial-20260712`.
+- Automated visual QA was not available because the in-app browser had no connected instance. Pixel-level visual verification remains an explicit host acceptance item; it has not been claimed as passed.
+
 ## Next Planned Phase
 
-Stage 3.0.8: first real tester-2 session and after-live evidence, waiting on a real human tester.
+Stage 3.0.9 is in progress: remediation closure and controlled retest admission.
 
-Do not start this phase until a real person is available. Planned order:
+The next real tester is intentionally postponed. Do not create or host tester-3 merely because product fixes exist. Follow [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md) in this order:
 
-1. Run a real-browser visual pass of the operator panel in English, zh-CN, and Russian at desktop and narrow widths, including one copy action.
-2. Run `trial:first-live-standby -- --tester tester-2` immediately before the call and read all warnings.
-3. Host only on `FIRST_LIVE_STANDBY_READY` or accepted `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`.
-4. Keep the session limited to Demo plus real-project read-only preflight and stop before Apply on every real project.
-5. Fill only confirmed, privacy-safe tester records after the call.
-6. Run `trial:record-draft`, then `trial:after-live`, and preserve only local privacy-safe evidence.
+1. Preserve tester-2's blocked result and add a separate remediation report/gate that maps every must-fix item to a change, automated check, and host acceptance item.
+2. Teach status/next-live/cohort gates to accept a completed remediation as permission for a future retest without rewriting the previous after-live result.
+3. Harden Apply/Revert with baseline hashes, conflict refusal, partial-failure rollback, safe Revert conflict handling, and path-boundary tests before allowing any real-project write.
+4. Have host-1 perform the desktop/narrow visual and interaction acceptance matrix on the exact candidate commit. This is internal acceptance, not another human trial.
+5. Re-run candidate simulation/readiness/freeze/dispatch only after remediation and safety work is complete, and require all outputs to identify the same commit/package.
+6. Advance to tester-3 only on an explicit `REMEDIATION_READY_FOR_RETEST` plus a later host-1 scheduling decision.
+
+Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code must be removed after verification; do not retain tombstone code.

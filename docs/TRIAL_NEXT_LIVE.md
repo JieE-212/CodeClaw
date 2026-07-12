@@ -1,6 +1,6 @@
 # CodeClaw Trial Next-Live Gate
 
-Use this after the previous tester has passed `trial:after-live` and the next tester has already passed intake, host-ready, host-run, pre-live, and live-capture.
+Use this after the previous tester has either passed `trial:after-live`, or has a preserved `AFTER_LIVE_BLOCKED` result paired with a current `REMEDIATION_READY_FOR_RETEST` / accepted `REMEDIATION_READY_WITH_REVIEW` report. The next tester must already have passed intake, host-ready, host-run, pre-live, and live-capture.
 
 ## Command
 
@@ -15,12 +15,15 @@ Use `--accept-review` only after the host has reviewed and accepted watch items 
 The gate blocks when:
 
 - the previous tester has not passed `trial:after-live`
+- a blocked historical after-live has no current remediation report, its original report hash changed, required host checks are missing, or remediation no longer matches the clean current commit
 - the next tester id matches the previous tester id
 - a dry-run tester id is selected
 - intake, session pack, host-ready, host-run, pre-live, and live-capture point to different tester ids
 - the session folder or manifest still points to the previous tester
 - accepted watch items are missing from the session manifest, host-ready report, host-run report, session brief, host runbook, or observation checklist
 - host acceptance is required but `--accept-review` was not provided
+
+Remediation never changes the original after-live decision. A ready remediation permits a future controlled retest; it does not count as a successful human session.
 
 ## Outputs
 

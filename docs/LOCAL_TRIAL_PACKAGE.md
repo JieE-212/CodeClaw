@@ -270,6 +270,7 @@ npm.cmd run trial:pre-live
 npm.cmd run trial:live-capture
 npm.cmd run trial:record-draft -- --session <session-folder>
 npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
+npm.cmd run trial:remediation -- --tester <previous-tester-id>
 npm.cmd run trial:next-live -- --tester <tester-id> --accept-review --accepted-by <host-id>
 npm.cmd run trial:cohort-summary -- <completed-trials-folder>
 npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>
@@ -336,9 +337,9 @@ dist/TRIAL_POST_CALL_REHEARSAL_REPORT.json
 dist/trial-post-call-rehearsals/<run-id>/
 ```
 
-Proceed to the next tester only when completion check is not `SESSION_COMPLETION_HOLD`, privacy check is not `PRIVACY_HOLD`, the summary is not `NO_GO_FIX_FIRST`, the fix backlog has no `P0` items, `trial:host-ready` says `READY_TO_HOST`, `trial:host-run` writes `HOST_RUNBOOK.md`, `trial:post-session` says `READY_FOR_NEXT_TESTER`, `trial:review-session` says `REVIEW_WATCH_NEXT_TESTER` with host acceptance or `REVIEW_PROCEED`, `trial:after-live` says `AFTER_LIVE_READY` or `AFTER_LIVE_READY_WITH_REVIEW` with host acceptance, `trial:next-live` says `NEXT_LIVE_READY` or `NEXT_LIVE_READY_WITH_REVIEW`, and the host accepts any watch items. Expand to 3-5 testers only when `trial:cohort-summary` allows expansion and `trial:cohort-handoff` says `COHORT_HANDOFF_READY_TO_EXPAND` or `COHORT_HANDOFF_EXPAND_WITH_WATCH`. Generate a fresh `trial:session-pack` for every hosted tester.
+Proceed to the next tester only when completion and privacy pass and either after-live is ready, or a preserved Fix-first `AFTER_LIVE_BLOCKED` has a current independent remediation ready result. Remediation must not rewrite the original report. `trial:next-live` must say `NEXT_LIVE_READY` or accepted `NEXT_LIVE_READY_WITH_REVIEW`. Expand to 3-5 testers only after two clean post-fix after-live results and when cohort summary/handoff allow expansion. Generate a fresh `trial:session-pack` for every hosted tester.
 
-Use `trial:first-live-standby` while waiting for the first real human tester. It checks that tester-2 intake, host gates, live capture, launch plan, and session files are still aligned. Use `trial:post-call-rehearsal` to rehearse the post-call pipeline with clearly synthetic anonymous data; never count rehearsal output as real tester feedback. Use `trial:record-draft` after the real call if the host has local notes and wants help mapping explicit notes into the three final record files. It never invents missing feedback. Use `trial:after-live` after the call when the session records are filled. It runs completion, privacy, post-session, review, archive, status, and creates a local-only evidence packet. Use `trial:archive-session` separately only when you need to repair or recreate the archive. Archives and after-live packets are local-only by default and do not copy raw tester records.
+Use `trial:first-live-standby` while waiting for the first real human tester. It checks that tester-2 intake, host gates, live capture, launch plan, and session files are still aligned. Use `trial:post-call-rehearsal` to rehearse the post-call pipeline with clearly synthetic anonymous data; never count rehearsal output as real tester feedback. Use `trial:record-draft` after the real call if the host has local notes and wants help mapping explicit notes into the three final record files. It never invents missing feedback. Use `trial:after-live` once after the call when the session records are filled. It runs completion, privacy, post-session, review, archive, and status in order; a ready run creates a local-only evidence packet, while a blocked run preserves its report without a packet. Use `trial:archive-session` separately only when you need to repair or recreate an eligible archive. Archives and after-live packets are local-only by default and do not copy raw tester records.
 
 ## Simulated First Trial
 

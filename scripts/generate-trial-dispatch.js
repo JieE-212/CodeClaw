@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  inspectSourceVersion,
+  sourceVersionBindingIssues,
+  sourceVersionIssueMessage
+} from "./source-version.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
@@ -10,6 +15,7 @@ const jsonPath = path.join(distPath, "TRIAL_DISPATCH_NOTE.json");
 const markdownPath = path.join(distPath, "TRIAL_DISPATCH_NOTE.md");
 
 const freeze = await readJson(freezePath);
+const currentSourceVersion = await inspectSourceVersion(rootPath);
 const packagePath = freeze.packagePath || "";
 const requiredDocs = [
   "docs/START_GUIDE.md",
@@ -37,6 +43,8 @@ const requiredDocs = [
   "docs/TRIAL_PRE_LIVE.md",
   "docs/TRIAL_LIVE_CAPTURE.md",
   "docs/TRIAL_AFTER_LIVE.md",
+  "docs/TRIAL_REMEDIATION.md",
+  "docs/NEXT_PHASE_PLAN.md",
   "docs/TRIAL_RESULT_RECORD.md"
 ];
 
@@ -49,6 +57,9 @@ if (packagePath) {
 
 const blockers = [];
 if (!freeze.ok || freeze.decision !== "GO_HOSTED_TRIAL") blockers.push("Freeze report is not GO_HOSTED_TRIAL.");
+blockers.push(...sourceVersionBindingIssues(currentSourceVersion, {
+  "Freeze report": freeze.sourceVersion
+}).map(sourceVersionIssueMessage));
 if (!packagePath) blockers.push("Freeze report does not include a package path.");
 if (packagePath && !(await exists(packagePath))) blockers.push("Package path does not exist.");
 if (missingPackageDocs.length) blockers.push(`Package is missing dispatch docs: ${missingPackageDocs.join(", ")}`);
@@ -58,6 +69,8 @@ const report = {
   mode: "trial-dispatch",
   createdAt: new Date().toISOString(),
   decision: blockers.length ? "HOLD" : "READY_TO_SEND",
+  sourceVersion: currentSourceVersion,
+  frozenSourceVersion: freeze.sourceVersion || { available: false, commit: "", dirty: null },
   packagePath,
   freezeReport: freezePath,
   blockers,
@@ -85,6 +98,7 @@ const report = {
     "Run npm.cmd run trial:pre-live before scheduling or starting the first real tester session.",
     "Run npm.cmd run trial:live-capture before the live call and use the generated capture files.",
     "Run npm.cmd run trial:after-live after the call to complete recovery, review, archive, and evidence packaging.",
+    "If after-live truthfully blocks on Fix first, preserve it and use trial:remediation only after fixes, current readiness, and host acceptance.",
     "Run npm.cmd run trial:cohort-summary after at least two completed tester folders exist.",
     "Run npm.cmd run trial:archive-session after privacy and post-session reports are ready.",
     "Run npm.cmd run trial:intake before generating a real tester session pack.",
@@ -138,6 +152,7 @@ function renderMarkdown(report) {
     "",
     `Created at: ${report.createdAt}`,
     `Decision: ${report.decision}`,
+    `Source commit: ${report.sourceVersion?.commit || "Unavailable"}`,
     `Package: ${report.packagePath || "None"}`,
     "",
     "## Blockers",

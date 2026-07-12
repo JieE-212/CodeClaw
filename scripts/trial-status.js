@@ -1,11 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { inspectSourceVersion, sourceVersionBindingIssues } from "./source-version.js";
+import { hasAllRequiredRemediationHostChecks } from "./trial-remediation-contract.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootPath = path.resolve(path.dirname(scriptPath), "..");
 const args = parseArgs(process.argv.slice(2));
 const distPath = path.resolve(rootPath, args.dist || "dist");
+const sourceRoot = path.resolve(rootPath, args.sourceRoot || ".");
 const jsonPath = path.resolve(rootPath, args.json || path.join("dist", "TRIAL_STATUS_REPORT.json"));
 const markdownPath = path.resolve(rootPath, args.markdown || path.join("dist", "TRIAL_STATUS_REPORT.md"));
 
@@ -46,6 +50,7 @@ async function buildReport() {
     preLive: await readReport("TRIAL_PRE_LIVE_REPORT.json"),
     liveCapture: await readReport("TRIAL_LIVE_CAPTURE_REPORT.json"),
     afterLive: await readReport("TRIAL_AFTER_LIVE_REPORT.json"),
+    remediation: await readReport("TRIAL_REMEDIATION_REPORT.json"),
     nextLive: await readReport("TRIAL_NEXT_LIVE_REPORT.json"),
     cohort: await readReport("TRIAL_COHORT_SUMMARY.json"),
     cohortHandoff: await readReport("TRIAL_COHORT_HANDOFF.json"),
@@ -54,9 +59,11 @@ async function buildReport() {
     testerLaunchPlan: await readReport("TRIAL_TESTER_LAUNCH_PLAN.json")
   };
   const artifacts = await collectArtifacts();
-  const blockers = collectBlockers(reports);
-  const warnings = collectWarnings(reports, artifacts);
-  const state = decideState(reports, blockers);
+  const sourceVersion = await inspectSourceVersion(sourceRoot);
+  const remediationReady = remediationClosesAfterLive(reports, sourceVersion);
+  const blockers = collectBlockers(reports, { remediationReady });
+  const warnings = collectWarnings(reports, artifacts, { remediationReady });
+  const state = decideState(reports, blockers, { remediationReady });
 
   return {
     ok: blockers.length === 0,
@@ -64,6 +71,7 @@ async function buildReport() {
     createdAt: new Date().toISOString(),
     distPath,
     distRelativePath: relative(distPath),
+    sourceVersion,
     decision: state.decision,
     currentStage: state.currentStage,
     nextCommand: state.nextCommand,
@@ -80,7 +88,8 @@ async function buildReport() {
 
 async function readReport(fileName) {
   const filePath = path.join(distPath, fileName);
-  const data = await readJson(filePath);
+  const observed = await readJsonWithHash(filePath);
+  const data = observed.data;
   return {
     key: fileName.replace(/\.json$/i, ""),
     fileName,
@@ -93,6 +102,7 @@ async function readReport(fileName) {
     createdAt: data?.createdAt || "",
     blockers: normalizeList(data?.blockers),
     warnings: normalizeList(data?.warnings),
+    sha256: observed.sha256,
     data
   };
 }
@@ -106,7 +116,7 @@ async function collectArtifacts() {
   };
 }
 
-function decideState(reports, blockers) {
+function decideState(reports, blockers, { remediationReady = false } = {}) {
   if (!reports.readiness.exists) {
     return state("NEEDS_READINESS", "preflight", "npm.cmd run trial:ready", "Run source and package readiness checks.");
   }
@@ -162,24 +172,28 @@ function decideState(reports, blockers) {
     return state("READY_TO_HOST", "hosting", "npm.cmd run trial:complete-session -- --session <session-folder>", "Host the session, fill records, then run completion check.");
   }
   if (reports.afterLive.exists && reports.afterLive.decision === "AFTER_LIVE_BLOCKED") {
-    return state("AFTER_LIVE_BLOCKED", "after-live", "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id> --force", "Fix the after-live blocker before inviting another tester.");
+    if (!remediationReady) {
+      return reports.remediation.exists
+        ? state("REMEDIATION_BLOCKED", "remediation", "npm.cmd run trial:remediation -- --tester <previous-tester-id>", "Complete the independent remediation gate without changing the original tester result.")
+        : state("NEEDS_REMEDIATION", "remediation", "npm.cmd run trial:remediation -- --tester <previous-tester-id>", "Create a fix-closure report for the preserved AFTER_LIVE_BLOCKED result.");
+    }
   }
   if (reports.postSession.decision === "READY_FOR_NEXT_TESTER" && !reports.afterLive.exists && (!reports.review.exists || !reports.archive.exists)) {
     return state("NEEDS_AFTER_LIVE", "after-live", "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", "Run after-live to complete review, archive, status, and local evidence packaging.");
   }
-  if (reports.postSession.decision !== "READY_FOR_NEXT_TESTER") {
+  if (!remediationReady && reports.postSession.decision !== "READY_FOR_NEXT_TESTER") {
     return state("POST_SESSION_REVIEW", "post-session", "npm.cmd run trial:post-session -- --session <session-folder> --next-tester <tester-id>", "Resolve post-session blockers or review items.");
   }
-  if (!reports.review.exists) {
+  if (!remediationReady && !reports.review.exists) {
     return state("NEEDS_SESSION_REVIEW", "review", "npm.cmd run trial:review-session", "Review completed tester evidence before archiving or inviting another tester.");
   }
-  if (reports.review.decision === "REVIEW_BLOCKED" || reports.review.decision === "REVIEW_FIX_NOW" || reports.review.decision === "REVIEW_WAITING_FOR_REPORTS") {
+  if (!remediationReady && (reports.review.decision === "REVIEW_BLOCKED" || reports.review.decision === "REVIEW_FIX_NOW" || reports.review.decision === "REVIEW_WAITING_FOR_REPORTS")) {
     return state("SESSION_REVIEW_BLOCKED", "review", "npm.cmd run trial:review-session", "Resolve review blockers or fix-now items before proceeding.");
   }
-  if (!reports.archive.exists) {
+  if (!remediationReady && !reports.archive.exists) {
     return state("NEEDS_ARCHIVE", "archive", "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", "Archive the privacy-passed session evidence locally.");
   }
-  if (reports.archive.decision === "ARCHIVE_HOLD") {
+  if (!remediationReady && reports.archive.decision === "ARCHIVE_HOLD") {
     return state("ARCHIVE_BLOCKED", "archive", "npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>", "Fix archive blockers before closing the session.");
   }
   if (reports.nextLive.exists && reports.nextLive.decision === "NEXT_LIVE_HOLD") {
@@ -228,8 +242,9 @@ function decideState(reports, blockers) {
   return state("READY_TO_EXPAND", "cohort", "npm.cmd run trial:intake-session -- --force", "Proceed with the next hosted tester batch from intake under watch items.");
 }
 
-function collectBlockers(reports) {
+function collectBlockers(reports, { remediationReady = false } = {}) {
   const blockers = [];
+  const remediatedHistoricalKeys = new Set(["afterLive", "feedback", "backlog", "postSession", "review", "archive"]);
   for (const [key, report] of Object.entries(reports)) {
     if (key === "intakeReviewDryRun") continue;
     if (key === "hostRun" && reports.postSession.exists) continue;
@@ -239,6 +254,8 @@ function collectBlockers(reports) {
     if (key === "afterLive" && !report.exists) continue;
     if (key === "nextLive" && !report.exists) continue;
     if (key === "cohortHandoff" && !report.exists) continue;
+    if (key === "remediation" && !report.exists) continue;
+    if (remediationReady && remediatedHistoricalKeys.has(key)) continue;
     if (!report.exists) continue;
     if (report.ok === false) blockers.push(`${report.key}: report is not ok.`);
     for (const item of report.blockers) blockers.push(`${report.key}: ${item}`);
@@ -247,7 +264,7 @@ function collectBlockers(reports) {
   return unique(blockers);
 }
 
-function collectWarnings(reports, artifacts) {
+function collectWarnings(reports, artifacts, { remediationReady = false } = {}) {
   const warnings = [];
   for (const report of Object.values(reports)) {
     if (!report.exists) warnings.push(`${report.fileName} has not been generated yet.`);
@@ -256,7 +273,37 @@ function collectWarnings(reports, artifacts) {
   if (!artifacts.latestPackage) warnings.push("No local trial package folder was found.");
   if (!artifacts.latestSessionPack) warnings.push("No trial session pack folder was found.");
   if (!artifacts.latestArchive) warnings.push("No trial archive folder was found.");
+  if (remediationReady) warnings.push("The previous AFTER_LIVE_BLOCKED result remains historical; current progress comes from an independent remediation closure.");
   return unique(warnings);
+}
+
+function remediationClosesAfterLive(reports, currentSourceVersion) {
+  const afterLive = reports.afterLive.data || {};
+  const remediation = reports.remediation.data || {};
+  if (afterLive.decision !== "AFTER_LIVE_BLOCKED") return false;
+  if (remediation.mode !== "trial-remediation-gate") return false;
+  if (remediation.ok !== true || !["REMEDIATION_READY_FOR_RETEST", "REMEDIATION_READY_WITH_REVIEW"].includes(remediation.decision)) return false;
+  if ((remediation.blockers || []).length > 0) return false;
+  if (remediation.originalAfterLiveDecision !== "AFTER_LIVE_BLOCKED") return false;
+  if (sanitizeTesterId(remediation.testerId) !== sanitizeTesterId(afterLive.testerId)) return false;
+  if ((remediation.unresolvedItems || []).length > 0) return false;
+  if (remediation.hostAcceptance?.accepted !== true || remediation.hostAcceptance?.originalRecordsUnchanged !== true) return false;
+  if (!/^host-[a-z0-9-]+$/i.test(remediation.hostAcceptance?.acceptedBy || "")) return false;
+  if (remediation.decision === "REMEDIATION_READY_WITH_REVIEW" && remediation.hostAcceptance?.acceptedWarnings !== true) return false;
+  if (!hasAllRequiredRemediationHostChecks(remediation.hostAcceptance?.hostChecks)) return false;
+  if (remediation.hostAcceptance?.acceptedCommit !== remediation.currentCommit) return false;
+  if (remediation.observedReports?.afterLive?.sha256 !== reports.afterLive.sha256) return false;
+
+  const remediationVersion = {
+    available: Boolean(remediation.currentCommit),
+    commit: remediation.currentCommit || "",
+    dirty: remediation.worktreeClean === true ? false : true
+  };
+  return sourceVersionBindingIssues(currentSourceVersion, {
+    "Current readiness report": reports.readiness.data?.sourceVersion,
+    "Remediation readiness": remediation.readinessSourceVersion,
+    "Remediation report": remediationVersion
+  }).length === 0;
 }
 
 function publicReports(reports) {
@@ -288,6 +335,7 @@ function quickLinks(reports, artifacts) {
     preLiveReport: reports.preLive.exists ? reports.preLive.relativePath : "",
     liveCaptureReport: reports.liveCapture.exists ? reports.liveCapture.relativePath : "",
     afterLiveReport: reports.afterLive.exists ? reports.afterLive.relativePath : "",
+    remediationReport: reports.remediation.exists ? reports.remediation.relativePath : "",
     nextLiveReport: reports.nextLive.exists ? reports.nextLive.relativePath : "",
     cohortSummary: reports.cohort.exists ? reports.cohort.relativePath : "",
     cohortHandoff: reports.cohortHandoff.exists ? reports.cohortHandoff.relativePath : "",
@@ -315,6 +363,7 @@ function commandGuide(current, reports) {
     { step: "Pre-live gate", command: "npm.cmd run trial:pre-live", status: reports.preLive.exists ? reports.preLive.decision : "missing" },
     { step: "Live capture", command: "npm.cmd run trial:live-capture", status: reports.liveCapture.exists ? reports.liveCapture.decision : "missing" },
     { step: "After-live", command: "npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>", status: reports.afterLive.exists ? reports.afterLive.decision : "missing" },
+    { step: "Remediation", command: "npm.cmd run trial:remediation -- --tester <previous-tester-id>", status: reports.remediation.exists ? reports.remediation.decision : "missing" },
     { step: "Next live gate", command: "npm.cmd run trial:next-live -- --tester <tester-id> --accept-review", status: reports.nextLive.exists ? reports.nextLive.decision : "missing" },
     { step: "Cohort", command: "npm.cmd run trial:cohort-summary -- <completed-trials-folder>", status: reports.cohort.exists ? reports.cohort.decision : "missing" },
     { step: "Cohort handoff", command: "npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>", status: reports.cohortHandoff.exists ? reports.cohortHandoff.decision : "missing" },
@@ -429,19 +478,20 @@ function renderMarkdown(report) {
 }
 
 function parseArgs(rawArgs) {
-  const parsed = { dist: "", json: "", markdown: "" };
+  const parsed = { dist: "", sourceRoot: "", json: "", markdown: "" };
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
     let handled = false;
-    for (const key of ["dist", "json", "markdown"]) {
-      if (arg === `--${key}`) {
+    for (const key of ["dist", "sourceRoot", "json", "markdown"]) {
+      const dashed = key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      if (arg === `--${dashed}`) {
         parsed[key] = rawArgs[index + 1] || "";
         index += 1;
         handled = true;
         break;
       }
-      if (arg.startsWith(`--${key}=`)) {
-        parsed[key] = arg.slice(key.length + 3);
+      if (arg.startsWith(`--${dashed}=`)) {
+        parsed[key] = arg.slice(dashed.length + 3);
         handled = true;
         break;
       }
@@ -476,11 +526,15 @@ function sanitizeTesterId(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-async function readJson(filePath) {
+async function readJsonWithHash(filePath) {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
+    const content = await fs.readFile(filePath, "utf8");
+    return {
+      data: JSON.parse(content),
+      sha256: crypto.createHash("sha256").update(content).digest("hex")
+    };
   } catch {
-    return null;
+    return { data: null, sha256: "" };
   }
 }
 

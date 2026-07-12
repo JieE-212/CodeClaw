@@ -1787,7 +1787,10 @@ function patchTargetLabel(proposal) {
 }
 
 function renderRevertPatchOptions(task) {
-  const active = (task?.appliedPatches || []).map((patch, index) => ({ ...patch, index })).filter((patch) => !patch.revertedAt);
+  const active = (task?.appliedPatches || [])
+    .map((patch, index) => ({ ...patch, index }))
+    .filter((patch) => !patch.revertedAt)
+    .reverse();
   revertPatchSelect.innerHTML = active.length
     ? active.map((patch) => `<option value="${patch.index}">${escapeHtml(patch.path)}</option>`).join("")
     : `<option value="">${escapeHtml(t("patch.revert.none"))}</option>`;
@@ -1927,6 +1930,19 @@ async function request(url, body) {
 function friendlyErrorMessage(error) {
   const message = String(error?.message || error || "未知错误");
   const codeMessage = `${error?.code || ""} ${message}`;
+  const structuredRules = [
+    [/PATCH_BASELINE_CONFLICT/, t("error.patchBaselineConflict")],
+    [/PATCH_BASELINE_MISSING/, t("error.patchBaselineMissing")],
+    [/PATCH_DUPLICATE_PATH/, t("error.patchDuplicatePath")],
+    [/PATCH_APPLY_ROLLBACK_INCOMPLETE/, t("error.patchRollbackIncomplete")],
+    [/PATCH_APPLY_FAILED/, t("error.patchApplyFailed")],
+    [/PATCH_REVERT_CONFLICT/, t("error.patchRevertConflict")],
+    [/PATCH_REVERT_BASELINE_MISSING|PATCH_REVERT_STATE_ERROR/, t("error.patchRevertState")],
+    [/PATH_SYMLINK_REFUSED/, t("error.pathSymlink")],
+    [/PATH_HARDLINK_REFUSED/, t("error.pathHardlink")]
+  ];
+  const structured = structuredRules.find(([pattern]) => pattern.test(codeMessage));
+  if (structured) return structured[1];
   const rules = [
     [/PATH_EMPTY|Missing repository path|Enter a path|repository path/i, t("error.path.empty")],
     [/PATH_NOT_FOUND|ENOENT|no such file|cannot find|找不到/i, t("error.path.notFound")],

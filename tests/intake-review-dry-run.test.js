@@ -8,11 +8,12 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "run-intake-review-dry-run.js");
 
-test("intake-review dry run rehearses an anonymous tester without packaged local roster", async () => {
+test("intake-review dry run rehearses an anonymous tester without packaged local roster", async (t) => {
   const runId = `test-intake-review-${process.pid}-${Date.now()}`;
   const runPath = path.join(rootPath, "dist", "trial-dry-runs", runId);
   const jsonPath = path.join(runPath, "DRY_RUN_REPORT.json");
   const markdownPath = path.join(runPath, "DRY_RUN_REPORT.md");
+  t.after(() => fs.rm(runPath, { recursive: true, force: true }));
 
   const result = await runDryRun([
     "--force",

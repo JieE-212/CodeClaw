@@ -1,6 +1,6 @@
 # CodeClaw Trial Cohort Handoff
 
-Use this after at least two tester sessions have completed, after each tester has passed `trial:after-live`, and after `trial:cohort-summary` has been generated.
+Use this after at least two post-fix tester sessions have completed with clean `trial:after-live` evidence and after `trial:cohort-summary` has been generated. A historical blocked session may carry a privacy-safe remediation report, but remediation does not count as a clean retest or one of the two clean expansion results.
 
 ## Command
 
@@ -18,8 +18,11 @@ The handoff blocks when:
 - fewer than two completed tester summaries exist
 - a completed tester is missing after-live evidence
 - after-live is blocked for any completed tester
+- fewer than two completed post-fix testers have clean after-live evidence, even if an older blocked session has valid remediation history
 - repeated watch items require host acceptance but `--accept-review` was not provided
 - privacy warnings require host acceptance but `--accept-privacy` was not provided
+
+The report reads local-only remediation evidence from `dist/trial-remediation` to distinguish an honestly closed historical No-Go from missing evidence. It never turns that history into `AFTER_LIVE_READY`.
 
 ## Outputs
 

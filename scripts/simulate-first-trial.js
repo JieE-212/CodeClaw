@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectSourceVersion } from "./source-version.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -49,12 +50,14 @@ try {
   const failurePaths = await runFailurePathTrial(demo);
   const session = await request("/api/session/last");
   const audit = await request(`/api/audit/events?rootPath=${encodeURIComponent(real.rootPath)}`);
+  const sourceVersion = await inspectSourceVersion(appRoot);
 
   const report = {
     ok: true,
     mode: "simulated-first-trial",
     createdAt: new Date().toISOString(),
     appRoot,
+    sourceVersion,
     realRepo,
     port,
     ui,

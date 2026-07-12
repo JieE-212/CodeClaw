@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "live-session-capture.js");
 
-test("live-capture writes host capture files for a clean session folder", async () => {
+test("live-capture writes host capture files for a clean session folder", async (t) => {
   const fixture = await makeFixture("tester-1");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   const result = await runLiveCapture(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -24,8 +25,9 @@ test("live-capture writes host capture files for a clean session folder", async 
   assert.ok(report.hygiene.scannedFiles.some((item) => item.endsWith("BEGINNER_FIRST_LIVE_GUIDE.md")));
 });
 
-test("live-capture blocks screenshots and personal contact data", async () => {
+test("live-capture blocks screenshots and personal contact data", async (t) => {
   const fixture = await makeFixture("tester-1");
+  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
   await fs.writeFile(path.join(fixture.sessionPath, "screenshot.png"), "not a real image", "utf8");
   await fs.appendFile(path.join(fixture.sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), "\n- Name: Real Person\n- Contact: person@example.com\n", "utf8");
 
@@ -58,6 +60,7 @@ async function makeFixture(testerId) {
     warnings: []
   });
   return {
+    runRoot,
     sessionPath,
     jsonPath,
     args: [
