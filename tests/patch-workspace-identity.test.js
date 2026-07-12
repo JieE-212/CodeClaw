@@ -7,11 +7,29 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { TaskStore } from "../packages/task-store/src/index.js";
 import { hashContent } from "../packages/tool-registry/src/index.js";
+import { CrossProcessLockManager, canonicalPathLockKey } from "../packages/shared/src/cross-process-lock.js";
+import { activateRegisteredWorkspace, createActivatedWorkspace } from "./helpers/activated-workspace.js";
 
 test("patch APIs bind Apply and Revert to the reviewed workspace directories", async () => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-workspace-identity-"));
   const stateDir = path.join(base, "state");
   const coordinationDir = path.join(base, "coordination");
+  const copyRoot = path.join(base, "copies");
+  const rootSource = path.join(base, "root-source");
+  const parentSource = path.join(base, "parent-source");
+  const revertSource = path.join(base, "revert-source");
+  await fs.mkdir(rootSource);
+  await fs.mkdir(path.join(parentSource, "sub"), { recursive: true });
+  await fs.writeFile(path.join(parentSource, "sub", "file.txt"), "before\n", "utf8");
+  await fs.mkdir(path.join(revertSource, "sub"), { recursive: true });
+  await fs.writeFile(path.join(revertSource, "sub", "file.txt"), "revert-before\n", "utf8");
+
+  const rootCopy = await createActivatedWorkspace({ sourcePath: rootSource, stateDir, copyRoot });
+  const capabilityStore = rootCopy.store;
+  const parentCopy = await createActivatedWorkspace({ sourcePath: parentSource, store: capabilityStore });
+  const revertCopy = await createActivatedWorkspace({ sourcePath: revertSource, store: capabilityStore });
+  await activateRegisteredWorkspace(capabilityStore, rootCopy.workspace.id);
+
   const port = await findFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const store = new TaskStore({ storagePath: path.join(stateDir, "tasks.json") });
@@ -21,7 +39,8 @@ test("patch APIs bind Apply and Revert to the reviewed workspace directories", a
       ...process.env,
       CODECLAW_PORT: String(port),
       CODECLAW_STATE_DIR: stateDir,
-      CODECLAW_PROJECT_LOCK_DIR: coordinationDir
+      CODECLAW_PROJECT_LOCK_DIR: coordinationDir,
+      CODECLAW_DISPOSABLE_ROOT: copyRoot
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -33,10 +52,9 @@ test("patch APIs bind Apply and Revert to the reviewed workspace directories", a
   try {
     await waitForHealth({ baseUrl, server, serverOutput: () => serverOutput });
 
-    const reviewedRoot = path.join(base, "root-reviewed");
-    const movedReviewedRoot = path.join(base, "root-reviewed-original");
-    await fs.mkdir(reviewedRoot);
-    const rootTask = await store.create({ goal: "create a reviewed root-level file", rootPath: reviewedRoot });
+    const reviewedRoot = rootCopy.rootPath;
+    const movedReviewedRoot = `${reviewedRoot}-original`;
+    const rootTask = await store.create({ goal: "create a reviewed root-level file", rootPath: reviewedRoot, workspaceId: rootCopy.workspace.id });
     const rootProposal = await store.setPatchProposal(rootTask.id, {
       applicable: true,
       path: "new.txt",
@@ -44,21 +62,32 @@ test("patch APIs bind Apply and Revert to the reviewed workspace directories", a
       expectedBaseline: { exists: false, sha256: null },
       summary: "Create new.txt."
     });
-
-    await fs.rename(reviewedRoot, movedReviewedRoot);
-    await fs.mkdir(reviewedRoot);
-    const replacedRootApply = await applyProposal(baseUrl, rootTask.id, rootProposal.patchProposal);
+    const lockManager = new CrossProcessLockManager({
+      storagePath: coordinationDir,
+      namespace: "project-write",
+      lockedCode: "PROJECT_WRITE_LOCKED"
+    });
+    const heldRootLock = await lockManager.acquire(await canonicalPathLockKey(reviewedRoot));
+    let replacedRootApplyPromise;
+    try {
+      replacedRootApplyPromise = applyProposal(baseUrl, rootTask.id, rootProposal.patchProposal);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await fs.rename(reviewedRoot, movedReviewedRoot);
+      await fs.mkdir(reviewedRoot);
+    } finally {
+      await lockManager.release(heldRootLock);
+    }
+    const replacedRootApply = await replacedRootApplyPromise;
     assert.equal(replacedRootApply.response.status, 409);
     assert.equal(replacedRootApply.payload.code, "PATCH_WORKSPACE_CHANGED");
     await assertMissing(path.join(movedReviewedRoot, "new.txt"));
     await assertMissing(path.join(reviewedRoot, "new.txt"));
 
-    const parentRoot = path.join(base, "parent-reviewed");
+    await activateRegisteredWorkspace(capabilityStore, parentCopy.workspace.id);
+    const parentRoot = parentCopy.rootPath;
     const reviewedParent = path.join(parentRoot, "sub");
     const movedReviewedParent = path.join(parentRoot, "sub-original");
-    await fs.mkdir(reviewedParent, { recursive: true });
-    await fs.writeFile(path.join(reviewedParent, "file.txt"), "before\n", "utf8");
-    const parentTask = await store.create({ goal: "update a file under a reviewed parent", rootPath: parentRoot });
+    const parentTask = await store.create({ goal: "update a file under a reviewed parent", rootPath: parentRoot, workspaceId: parentCopy.workspace.id });
     const parentProposal = await store.setPatchProposal(parentTask.id, {
       applicable: true,
       path: "sub/file.txt",
@@ -76,12 +105,11 @@ test("patch APIs bind Apply and Revert to the reviewed workspace directories", a
     assert.equal(await fs.readFile(path.join(movedReviewedParent, "file.txt"), "utf8"), "before\n");
     assert.equal(await fs.readFile(path.join(reviewedParent, "file.txt"), "utf8"), "before\n");
 
-    const revertRoot = path.join(base, "revert-reviewed");
+    await activateRegisteredWorkspace(capabilityStore, revertCopy.workspace.id);
+    const revertRoot = revertCopy.rootPath;
     const revertParent = path.join(revertRoot, "sub");
     const movedRevertParent = path.join(revertRoot, "sub-applied-original");
-    await fs.mkdir(revertParent, { recursive: true });
-    await fs.writeFile(path.join(revertParent, "file.txt"), "revert-before\n", "utf8");
-    const revertTask = await store.create({ goal: "apply then protect a parent-bound revert", rootPath: revertRoot });
+    const revertTask = await store.create({ goal: "apply then protect a parent-bound revert", rootPath: revertRoot, workspaceId: revertCopy.workspace.id });
     const revertProposal = await store.setPatchProposal(revertTask.id, {
       applicable: true,
       path: "sub/file.txt",

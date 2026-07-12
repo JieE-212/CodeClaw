@@ -14,20 +14,25 @@ import {
 } from "../packages/shared/src/workspace-identity.js";
 import { TaskStore } from "../packages/task-store/src/index.js";
 import { ToolRegistry, hashContent } from "../packages/tool-registry/src/index.js";
+import { createActivatedWorkspace, registerReadonlyWorkspace } from "./helpers/activated-workspace.js";
 
-test("a foreign state cannot take over a journaled patch and the owning state recovers it", async () => {
+test("a foreign capability state cannot take over a journaled patch and the owning state recovers it", async () => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-claim-integration-"));
-  const rootPath = path.join(base, "project");
+  const sourcePath = path.join(base, "source");
   const stateA = path.join(base, "state-a");
   const stateB = path.join(base, "state-b");
+  const copyRootA = path.join(base, "copies-a");
+  const copyRootB = path.join(base, "copies-b");
   const lockDir = path.join(base, "project-locks");
-  const filePath = path.join(rootPath, "file.txt");
   let serverA = null;
   let serverB = null;
 
   try {
-    await fs.mkdir(rootPath, { recursive: true });
-    await fs.writeFile(filePath, "before\n", "utf8");
+    await fs.mkdir(sourcePath, { recursive: true });
+    await fs.writeFile(path.join(sourcePath, "file.txt"), "before\n", "utf8");
+    const owned = await createActivatedWorkspace({ sourcePath, stateDir: stateA, copyRoot: copyRootA });
+    const rootPath = owned.rootPath;
+    const filePath = path.join(rootPath, "file.txt");
 
     const taskStoreA = new TaskStore({ storagePath: path.join(stateA, "tasks.json") });
     const transactionStoreA = new PatchTransactionStore({ storagePath: path.join(stateA, "patch-transactions") });
@@ -36,7 +41,7 @@ test("a foreign state cannot take over a journaled patch and the owning state re
       storagePath: path.join(lockDir, "claims"),
       ownerId: ownerA
     });
-    const taskA = await taskStoreA.create({ goal: "simulate a crashed apply", rootPath });
+    const taskA = await taskStoreA.create({ goal: "simulate a crashed apply", rootPath, workspaceId: owned.workspace.id });
     const rootIdentity = (await captureWorkspaceIdentity(rootPath)).digest;
     const parentIdentity = (await captureWorkspaceParentIdentity(rootPath, "file.txt")).digest;
     const transactionId = `apply-${randomUUID()}`;
@@ -80,15 +85,19 @@ test("a foreign state cannot take over a journaled patch and the owning state re
     assert.equal(await fs.readFile(filePath, "utf8"), "after-from-a\n");
     assert.equal((await taskStoreA.get(taskA.id)).appliedPatches.length, 0);
 
+    // A second state cannot legitimately claim state A's managed copy. Registering the
+    // path through its own real capability store therefore produces original-readonly.
+    // That stronger gate stops the foreign Apply before the older claim layer is reached.
+    const foreign = await registerReadonlyWorkspace({ rootPath, stateDir: stateB, copyRoot: copyRootB });
     const portB = await findFreePort();
-    serverB = startServer({ port: portB, stateDir: stateB, lockDir });
+    serverB = startServer({ port: portB, stateDir: stateB, lockDir, copyRoot: copyRootB });
     const baseUrlB = `http://127.0.0.1:${portB}`;
     await waitForHealth(baseUrlB, serverB);
 
     const ownerB = await loadPatchStateOwnerId(stateB);
     assert.notEqual(ownerB, ownerA);
     const taskStoreB = new TaskStore({ storagePath: path.join(stateB, "tasks.json") });
-    const taskB = await taskStoreB.create({ goal: "attempt an apply from another state", rootPath });
+    const taskB = await taskStoreB.create({ goal: "attempt an apply from another state", rootPath, workspaceId: foreign.workspace.id });
     await taskStoreB.appendContextFile(taskB.id, {
       path: "file.txt",
       content: "after-from-a\n",
@@ -107,7 +116,7 @@ test("a foreign state cannot take over a journaled patch and the owning state re
       approved: true
     });
     assert.equal(blockedApply.response.status, 409);
-    assert.equal(blockedApply.payload.code, "PATCH_RECOVERY_OWNED_ELSEWHERE");
+    assert.equal(blockedApply.payload.code, "WORKSPACE_ORIGINAL_READ_ONLY");
     assert.equal(await fs.readFile(filePath, "utf8"), "after-from-a\n");
     assert.equal((await taskStoreB.get(taskB.id)).appliedPatches.length, 0);
     assert.equal((await transactionStoreA.listPending()).length, 1);
@@ -118,7 +127,7 @@ test("a foreign state cannot take over a journaled patch and the owning state re
 
     let portA = await findFreePort();
     while (portA === portB) portA = await findFreePort();
-    serverA = startServer({ port: portA, stateDir: stateA, lockDir });
+    serverA = startServer({ port: portA, stateDir: stateA, lockDir, copyRoot: copyRootA });
     const baseUrlA = `http://127.0.0.1:${portA}`;
     await waitForHealth(baseUrlA, serverA);
 
@@ -136,14 +145,15 @@ test("a foreign state cannot take over a journaled patch and the owning state re
   }
 });
 
-function startServer({ port, stateDir, lockDir }) {
+function startServer({ port, stateDir, lockDir, copyRoot }) {
   const child = spawn(process.execPath, ["apps/web/server.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       CODECLAW_PORT: String(port),
       CODECLAW_STATE_DIR: stateDir,
-      CODECLAW_PROJECT_LOCK_DIR: lockDir
+      CODECLAW_PROJECT_LOCK_DIR: lockDir,
+      CODECLAW_DISPOSABLE_ROOT: copyRoot
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true

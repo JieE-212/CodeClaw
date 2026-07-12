@@ -13,19 +13,24 @@ import {
 } from "../packages/shared/src/workspace-identity.js";
 import { TaskStore } from "../packages/task-store/src/index.js";
 import { ToolRegistry, hashContent } from "../packages/tool-registry/src/index.js";
+import { activateRegisteredWorkspace, createActivatedWorkspace } from "./helpers/activated-workspace.js";
 
 test("server startup recovers journals, preserves committed work, and fail-closes conflicts", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-startup-recovery-"));
   const stateDir = path.join(base, "state");
   const coordinationDir = path.join(base, "coordination");
-  const rollbackRoot = path.join(base, "rollback-project");
-  const committedRoot = path.join(base, "committed-project");
-  const conflictRoot = path.join(base, "conflict-project");
-  for (const root of [rollbackRoot, committedRoot, conflictRoot]) {
+  const copyRoot = path.join(base, "copies");
+  const rollbackSource = path.join(base, "rollback-source");
+  const committedSource = path.join(base, "committed-source");
+  const conflictSource = path.join(base, "conflict-source");
+  for (const root of [rollbackSource, committedSource, conflictSource]) {
     await fs.mkdir(root, { recursive: true });
     await fs.writeFile(path.join(root, "file.txt"), "before\n", "utf8");
   }
 
+  const rollbackCopy = await createActivatedWorkspace({ sourcePath: rollbackSource, stateDir, copyRoot });
+  const capabilityStore = rollbackCopy.store;
+  const rollbackRoot = rollbackCopy.rootPath;
   const taskStore = new TaskStore({ storagePath: path.join(stateDir, "tasks.json") });
   const transactionStore = new PatchTransactionStore({ storagePath: path.join(stateDir, "patch-transactions") });
   const claimStore = new PatchTransactionClaimStore({
@@ -33,11 +38,13 @@ test("server startup recovers journals, preserves committed work, and fail-close
     ownerId: await loadPatchStateOwnerId(stateDir)
   });
 
-  const rollbackTask = await taskStore.create({ goal: "rollback after crash", rootPath: rollbackRoot });
+  const rollbackTask = await taskStore.create({ goal: "rollback after crash", rootPath: rollbackRoot, workspaceId: rollbackCopy.workspace.id });
   const rollbackTransaction = await beginApply(transactionStore, claimStore, rollbackTask.id, rollbackRoot);
   await applyAfter(rollbackRoot, rollbackTransaction, transactionStore);
 
-  const committedTask = await taskStore.create({ goal: "keep committed apply", rootPath: committedRoot });
+  const committedCopy = await createActivatedWorkspace({ sourcePath: committedSource, store: capabilityStore });
+  const committedRoot = committedCopy.rootPath;
+  const committedTask = await taskStore.create({ goal: "keep committed apply", rootPath: committedRoot, workspaceId: committedCopy.workspace.id });
   const committedTransaction = await beginApply(transactionStore, claimStore, committedTask.id, committedRoot);
   await applyAfter(committedRoot, committedTransaction, transactionStore);
   await taskStore.recordAppliedPatch(committedTask.id, {
@@ -49,7 +56,9 @@ test("server startup recovers journals, preserves committed work, and fail-close
     nextContent: "after\n"
   });
 
-  const conflictTask = await taskStore.create({ goal: "hold human edit", rootPath: conflictRoot });
+  const conflictCopy = await createActivatedWorkspace({ sourcePath: conflictSource, store: capabilityStore });
+  const conflictRoot = conflictCopy.rootPath;
+  const conflictTask = await taskStore.create({ goal: "hold human edit", rootPath: conflictRoot, workspaceId: conflictCopy.workspace.id });
   await taskStore.appendContextFile(conflictTask.id, { path: "file.txt", content: "before\n", contentComplete: true });
   const conflictProposal = await taskStore.setPatchProposal(conflictTask.id, { applicable: true, path: "file.txt", content: "after\n", summary: "change" });
   await beginApply(transactionStore, claimStore, conflictTask.id, conflictRoot);
@@ -63,7 +72,8 @@ test("server startup recovers journals, preserves committed work, and fail-close
       ...process.env,
       CODECLAW_PORT: String(port),
       CODECLAW_STATE_DIR: stateDir,
-      CODECLAW_PROJECT_LOCK_DIR: coordinationDir
+      CODECLAW_PROJECT_LOCK_DIR: coordinationDir,
+      CODECLAW_DISPOSABLE_ROOT: copyRoot
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -103,6 +113,7 @@ test("server startup recovers journals, preserves committed work, and fail-close
   assert.equal(directWrite.payload.code, "PATCH_TRANSACTION_REQUIRED");
   assert.equal(await fs.readFile(path.join(rollbackRoot, "file.txt"), "utf8"), "before\n");
 
+  await activateRegisteredWorkspace(capabilityStore, rollbackCopy.workspace.id);
   await taskStore.appendContextFile(rollbackTask.id, { path: "file.txt", content: "before\n", contentComplete: true });
   const healthyProposal = await taskStore.setPatchProposal(rollbackTask.id, { applicable: true, path: "file.txt", content: "healthy-after\n", summary: "healthy root" });
   const healthyApply = await request(baseUrl, "/api/tasks/apply-patch", {
@@ -116,6 +127,7 @@ test("server startup recovers journals, preserves committed work, and fail-close
   assert.equal(statusAfterHealthyRoot.payload.recovery.ok, false);
   assert.equal(statusAfterHealthyRoot.payload.recovery.pending, 1);
 
+  await activateRegisteredWorkspace(capabilityStore, conflictCopy.workspace.id);
   const blockedApply = await request(baseUrl, "/api/tasks/apply-patch", { taskId: conflictTask.id, proposalId: conflictProposal.patchProposal.proposalId, proposalDigest: conflictProposal.patchProposal.proposalDigest, approved: true });
   assert.equal(blockedApply.response.status, 409);
   assert.equal(blockedApply.payload.code, "PATCH_RECOVERY_REQUIRED");

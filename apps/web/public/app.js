@@ -16,6 +16,13 @@ const demoButton = document.querySelector("#demoButton");
 const preflightButton = document.querySelector("#preflightButton");
 const preflightState = document.querySelector("#preflightState");
 const preflightOutput = document.querySelector("#preflightOutput");
+const workspaceState = document.querySelector("#workspaceState");
+const workspaceCapability = document.querySelector("#workspaceCapability");
+const previewCopyButton = document.querySelector("#previewCopyButton");
+const createCopyButton = document.querySelector("#createCopyButton");
+const refreshWorkspacesButton = document.querySelector("#refreshWorkspacesButton");
+const copyPreviewOutput = document.querySelector("#copyPreview");
+const workspaceList = document.querySelector("#workspaceList");
 const recentRepos = document.querySelector("#recentRepos");
 const systemCheck = document.querySelector("#systemCheck");
 const planButton = document.querySelector("#planButton");
@@ -93,6 +100,10 @@ let currentAuditEvents = [];
 let currentModelStatus = null;
 let suggestedContextFiles = [];
 let systemInfo = null;
+let currentWorkspace = null;
+let disposableCopyPreview = null;
+let knownWorkspaces = [];
+let workspaceNotice = null;
 let activeView = "workspace";
 let pendingSessionPayload = null;
 let sessionRecoveryMode = "hidden";
@@ -153,11 +164,13 @@ bindNavigation();
 bindI18n();
 bindTrialCommandCopies();
 bindSessionRecovery();
+bindWorkspaceSafety();
 setActiveView(activeView);
 renderRecentRepos();
 renderPathHelperForInput(repoPath?.value || "");
 renderPathModeForInput(repoPath?.value || "");
 renderVerifyBoundary();
+renderWorkspaceSafety();
 renderGuide();
 updateControls();
 
@@ -169,6 +182,7 @@ async function boot() {
     systemInfo = await request("/api/system/check");
     renderSystemCheck(systemInfo);
     renderPathModeForInput(repoPath?.value || "");
+    await refreshWorkspaces({ adoptActive: true, silent: true });
     await refreshModelStatus();
     await restoreLastSession();
     await refreshAudit();
@@ -218,6 +232,7 @@ function bindI18n() {
     renderAudit(currentAuditEvents);
     renderSessionRecovery();
     renderVerifyBoundary();
+    renderWorkspaceSafety();
     renderGuide();
     syncToolInputs();
     updateControls();
@@ -303,6 +318,362 @@ function bindSessionRecovery() {
   startFreshButton?.addEventListener("click", () => startFreshClientWorkflow());
 }
 
+function bindWorkspaceSafety() {
+  previewCopyButton?.addEventListener("click", previewDisposableCopy);
+  createCopyButton?.addEventListener("click", createDisposableCopy);
+  refreshWorkspacesButton?.addEventListener("click", () => refreshWorkspaces({ adoptActive: true }));
+  workspaceList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-workspace-action]");
+    if (!button) return;
+    const workspace = knownWorkspaces.find((item) => workspaceIdentifier(item) === button.dataset.workspaceId);
+    if (!workspace) return;
+    if (button.dataset.workspaceAction === "activate") activateWorkspace(workspace);
+    if (button.dataset.workspaceAction === "cleanup") cleanupWorkspace(workspace);
+  });
+}
+
+async function previewDisposableCopy() {
+  if (currentWorkspace?.kind !== "original-readonly" || !currentWorkspace.rootPath) {
+    workspaceNotice = { severity: "warn", message: t("workspace.error.originalRequired") };
+    renderWorkspaceSafety();
+    return;
+  }
+
+  previewCopyButton.disabled = true;
+  disposableCopyPreview = null;
+  workspaceNotice = { severity: "pending", message: t("workspace.preview.running") };
+  renderWorkspaceSafety();
+  try {
+    const payload = await request("/api/workspaces/copy/preview", { sourcePath: currentWorkspace.rootPath });
+    disposableCopyPreview = payload.preview || null;
+    workspaceNotice = null;
+  } catch (error) {
+    workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
+  } finally {
+    renderWorkspaceSafety();
+    updateControls();
+  }
+}
+
+async function createDisposableCopy() {
+  const preview = disposableCopyPreview;
+  if (!preview?.previewId || !preview?.previewDigest) {
+    workspaceNotice = { severity: "warn", message: t("workspace.error.previewRequired") };
+    renderWorkspaceSafety();
+    return;
+  }
+  if (!preview.eligible || preview.blockers?.length) {
+    workspaceNotice = { severity: "error", message: t("workspace.error.previewBlocked") };
+    renderWorkspaceSafety();
+    return;
+  }
+
+  createCopyButton.disabled = true;
+  workspaceNotice = { severity: "pending", message: t("workspace.create.running") };
+  renderWorkspaceSafety();
+  try {
+    const payload = await request("/api/workspaces/copy/create", {
+      previewId: preview.previewId,
+      previewDigest: preview.previewDigest
+    });
+    if (payload.workspace) mergeKnownWorkspace(payload.workspace);
+    disposableCopyPreview = null;
+    workspaceNotice = { severity: "ok", message: t("workspace.notice.created") };
+    await refreshWorkspaces({ adoptActive: false, silent: true });
+  } catch (error) {
+    workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
+  } finally {
+    renderWorkspaceSafety();
+    updateControls();
+  }
+}
+
+async function refreshWorkspaces({ adoptActive = false, silent = false } = {}) {
+  if (refreshWorkspacesButton) refreshWorkspacesButton.disabled = true;
+  try {
+    const payload = await request("/api/workspaces");
+    knownWorkspaces = Array.isArray(payload.workspaces) ? payload.workspaces.filter(isServerWorkspace) : [];
+    const active = resolveActiveWorkspace(payload.active, knownWorkspaces);
+    if (adoptActive) {
+      if (active) adoptServerWorkspace(active, { syncPath: Boolean(active.rootPath) });
+      else clearWorkspaceAuthority();
+    } else if (currentWorkspace) {
+      const refreshed = knownWorkspaces.find((item) => workspaceIdentifier(item) === workspaceIdentifier(currentWorkspace));
+      if (refreshed) currentWorkspace = { ...refreshed, active: Boolean(refreshed.active || active && workspaceIdentifier(active) === workspaceIdentifier(refreshed)) };
+    }
+    renderWorkspaceSafety();
+    return payload;
+  } catch (error) {
+    if (!silent) workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
+    renderWorkspaceSafety();
+    return null;
+  } finally {
+    if (refreshWorkspacesButton) refreshWorkspacesButton.disabled = false;
+  }
+}
+
+async function activateWorkspace(workspace) {
+  const workspaceId = workspaceIdentifier(workspace);
+  if (!workspaceId || !workspace.workspaceDigest) return;
+  workspaceNotice = { severity: "pending", message: t("workspace.activate.running") };
+  renderWorkspaceSafety();
+  try {
+    const payload = await request("/api/workspaces/activate", {
+      workspaceId,
+      workspaceDigest: workspace.workspaceDigest
+    });
+    const goal = goalInput.value;
+    resetWorkspaceBoundState();
+    goalInput.value = goal;
+    adoptServerWorkspace(payload.workspace, { syncPath: true });
+    repoProfile = payload.profile || null;
+    if (repoProfile) {
+      renderRepoSummary(repoProfile);
+      renderVerifyCommands(repoProfile.commands || []);
+      rememberRepo(repoProfile);
+    }
+    disposableCopyPreview = null;
+    workspaceNotice = { severity: "ok", message: t("workspace.notice.activated") };
+    scanState.textContent = t("workspace.activation.needsPreflight");
+    renderPreflightReport(null);
+    renderWorkspaceSafety();
+    renderGuide();
+    updateControls();
+  } catch (error) {
+    workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
+    renderWorkspaceSafety();
+  }
+}
+
+async function cleanupWorkspace(workspace) {
+  const workspaceId = workspaceIdentifier(workspace);
+  if (workspace.kind !== "disposable-copy" || !workspaceId || !workspace.workspaceDigest) return;
+  if (isActiveWorkspace(workspace)) {
+    workspaceNotice = { severity: "warn", message: t("workspace.cleanup.activeBlocked") };
+    renderWorkspaceSafety();
+    return;
+  }
+  const approved = window.confirm([
+    t("workspace.cleanup.confirm.title", { name: workspace.name || t("workspace.kind.copy") }),
+    "",
+    t("workspace.cleanup.confirm.delete"),
+    t("workspace.cleanup.confirm.original"),
+    t("workspace.cleanup.confirm.ownership")
+  ].join("\n"));
+  if (!approved) return;
+
+  workspaceNotice = { severity: "pending", message: t("workspace.cleanup.running") };
+  renderWorkspaceSafety();
+  try {
+    await request("/api/workspaces/cleanup", {
+      workspaceId,
+      workspaceDigest: workspace.workspaceDigest,
+      approved: true
+    });
+    knownWorkspaces = knownWorkspaces.filter((item) => workspaceIdentifier(item) !== workspaceId);
+    workspaceNotice = { severity: "ok", message: t("workspace.notice.cleaned") };
+    await refreshWorkspaces({ adoptActive: true, silent: true });
+  } catch (error) {
+    workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
+  } finally {
+    renderWorkspaceSafety();
+    updateControls();
+  }
+}
+
+function resolveActiveWorkspace(active, workspaces) {
+  if (isServerWorkspace(active)) return active;
+  const activeId = typeof active === "string" ? active : active?.workspaceId || active?.id;
+  return workspaces.find((item) => item.active || activeId && workspaceIdentifier(item) === activeId) || null;
+}
+
+function mergeKnownWorkspace(workspace) {
+  if (!isServerWorkspace(workspace)) return;
+  const id = workspaceIdentifier(workspace);
+  knownWorkspaces = [workspace, ...knownWorkspaces.filter((item) => workspaceIdentifier(item) !== id)];
+}
+
+function adoptServerWorkspace(workspace, { syncPath = false } = {}) {
+  if (!isServerWorkspace(workspace)) {
+    clearWorkspaceAuthority();
+    return;
+  }
+  currentWorkspace = workspace;
+  mergeKnownWorkspace(workspace);
+  if (syncPath && workspace.rootPath) repoPath.value = workspace.rootPath;
+  renderPathModeForInput(repoPath.value);
+  renderWorkspaceSafety();
+}
+
+function clearWorkspaceAuthority() {
+  currentWorkspace = null;
+  disposableCopyPreview = null;
+  workspaceNotice = null;
+  renderPathModeForInput(repoPath?.value || "");
+  renderWorkspaceSafety();
+}
+
+function isServerWorkspace(workspace) {
+  return Boolean(workspace && ["built-in-demo", "original-readonly", "disposable-copy"].includes(workspace.kind) && workspaceIdentifier(workspace));
+}
+
+function workspaceIdentifier(workspace) {
+  return String(workspace?.workspaceId || workspace?.id || "");
+}
+
+function isActiveWorkspace(workspace) {
+  return Boolean(workspace?.active);
+}
+
+function workspaceCanWrite() {
+  return Boolean(currentWorkspace?.canWrite === true && ["built-in-demo", "disposable-copy"].includes(currentWorkspace.kind) && !workspaceStatusInvalid(currentWorkspace.status));
+}
+
+function workspaceCanRunCommands() {
+  return Boolean(currentWorkspace?.canRunCommands === true && ["built-in-demo", "disposable-copy"].includes(currentWorkspace.kind) && !workspaceStatusInvalid(currentWorkspace.status));
+}
+
+function workspaceStatusInvalid(status) {
+  return ["invalid", "blocked", "missing", "tampered", "unverified", "unavailable", "cleanup-pending"].includes(String(status || "").toLowerCase());
+}
+
+function renderWorkspaceSafety() {
+  renderWorkspaceCapability();
+  renderCopyPreview();
+  renderWorkspaceList();
+  if (previewCopyButton) previewCopyButton.disabled = currentWorkspace?.kind !== "original-readonly" || workspaceStatusInvalid(currentWorkspace?.status);
+  if (createCopyButton) createCopyButton.disabled = !disposableCopyPreview?.eligible || !disposableCopyPreview?.previewId || !disposableCopyPreview?.previewDigest || Boolean(disposableCopyPreview?.blockers?.length);
+}
+
+function renderWorkspaceCapability() {
+  if (!workspaceCapability || !workspaceState) return;
+  if (!currentWorkspace) {
+    workspaceState.textContent = t("workspace.state.unverified");
+    workspaceCapability.className = "workspace-capability empty";
+    workspaceCapability.innerHTML = `<strong>${escapeHtml(t("workspace.capability.empty.title"))}</strong><span>${escapeHtml(t("workspace.capability.empty.body"))}</span>`;
+    return;
+  }
+  const copy = workspaceCapabilityCopy(currentWorkspace);
+  workspaceState.textContent = copy.state;
+  workspaceCapability.className = `workspace-capability ${copy.className}`;
+  workspaceCapability.innerHTML = `
+    <div><strong>${escapeHtml(copy.title)}</strong><span>${escapeHtml(copy.body)}</span></div>
+    <dl>
+      <div><dt>${escapeHtml(t("workspace.capability.write"))}</dt><dd>${escapeHtml(currentWorkspace.canWrite ? t("workspace.allowed") : t("workspace.denied"))}</dd></div>
+      <div><dt>${escapeHtml(t("workspace.capability.command"))}</dt><dd>${escapeHtml(currentWorkspace.canRunCommands ? t("workspace.allowed") : t("workspace.denied"))}</dd></div>
+      <div><dt>${escapeHtml(t("workspace.capability.status"))}</dt><dd>${escapeHtml(workspaceStatusLabel(currentWorkspace.status))}</dd></div>
+    </dl>
+    ${currentWorkspace.rootPath ? `<code>${escapeHtml(currentWorkspace.rootPath)}</code>` : ""}
+  `;
+}
+
+function workspaceCapabilityCopy(workspace) {
+  if (workspaceStatusInvalid(workspace.status)) return {
+    className: "invalid",
+    state: t("workspace.state.invalid"),
+    title: t("workspace.capability.invalid.title"),
+    body: t("workspace.capability.invalid.body")
+  };
+  if (workspace.kind === "built-in-demo") return {
+    className: "demo",
+    state: t("workspace.state.demo"),
+    title: t("workspace.capability.demo.title"),
+    body: t("workspace.capability.demo.body")
+  };
+  if (workspace.kind === "disposable-copy") return {
+    className: "copy",
+    state: t("workspace.state.copy"),
+    title: t("workspace.capability.copy.title"),
+    body: t("workspace.capability.copy.body")
+  };
+  return {
+    className: "readonly",
+    state: t("workspace.state.original"),
+    title: t("workspace.capability.original.title"),
+    body: t("workspace.capability.original.body")
+  };
+}
+
+function workspaceStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "verified" || normalized === "ready") return t("workspace.status.verified");
+  if (normalized === "read-only") return t("workspace.status.readonly");
+  if (normalized === "active") return t("workspace.status.active");
+  if (workspaceStatusInvalid(normalized)) return t("workspace.status.invalid");
+  return status ? String(status) : t("workspace.status.unknown");
+}
+
+function renderCopyPreview() {
+  if (!copyPreviewOutput) return;
+  if (!disposableCopyPreview) {
+    copyPreviewOutput.className = `copy-preview ${workspaceNotice?.severity || "empty"}`;
+    copyPreviewOutput.innerHTML = `<strong>${escapeHtml(t("workspace.preview.title"))}</strong><span>${escapeHtml(workspaceNotice?.message || t("workspace.preview.empty"))}</span>`;
+    return;
+  }
+  const preview = disposableCopyPreview;
+  const blockers = Array.isArray(preview.blockers) ? preview.blockers : [];
+  const excluded = Array.isArray(preview.excluded) ? preview.excluded : [];
+  const ready = Boolean(preview.eligible && !blockers.length);
+  copyPreviewOutput.className = `copy-preview ${ready ? "ready" : "blocked"}`;
+  copyPreviewOutput.innerHTML = `
+    <div class="copy-preview-head"><strong>${escapeHtml(t("workspace.preview.title"))}</strong><span>${escapeHtml(t(ready ? "workspace.preview.eligible" : "workspace.preview.blocked"))}</span></div>
+    <div class="copy-preview-metrics">
+      <div><strong>${escapeHtml(String(preview.fileCount || 0))}</strong><span>${escapeHtml(t("workspace.preview.files"))}</span></div>
+      <div><strong>${escapeHtml(formatBytes(preview.totalBytes || 0))}</strong><span>${escapeHtml(t("workspace.preview.bytes"))}</span></div>
+      <div><strong>${escapeHtml(String(excluded.length))}</strong><span>${escapeHtml(t("workspace.preview.excluded"))}</span></div>
+      <div><strong>${escapeHtml(String(blockers.length))}</strong><span>${escapeHtml(t("workspace.preview.blockers"))}</span></div>
+    </div>
+    <p><strong>${escapeHtml(t("workspace.preview.source"))}</strong><span>${escapeHtml(preview.sourcePath || "-")}</span></p>
+    <p><strong>${escapeHtml(t("workspace.preview.target"))}</strong><span>${escapeHtml(preview.targetParent || "-")}</span></p>
+    ${excluded.length ? `<details><summary>${escapeHtml(t("workspace.preview.excludedDetail"))}</summary>${excluded.map((item) => `<code>${escapeHtml(formatWorkspaceIssue(item))}</code>`).join("")}</details>` : ""}
+    ${blockers.length ? `<details open><summary>${escapeHtml(t("workspace.preview.blockerDetail"))}</summary>${blockers.map((item) => `<code>${escapeHtml(formatWorkspaceIssue(item))}</code>`).join("")}</details>` : ""}
+  `;
+}
+
+function renderWorkspaceList() {
+  if (!workspaceList) return;
+  if (!knownWorkspaces.length) {
+    workspaceList.innerHTML = `<div class="workspace-list-empty">${escapeHtml(t("workspace.list.empty"))}</div>`;
+    return;
+  }
+  workspaceList.innerHTML = knownWorkspaces.map((workspace) => {
+    const id = workspaceIdentifier(workspace);
+    const active = isActiveWorkspace(workspace);
+    const canCleanup = workspace.kind === "disposable-copy" && !active;
+    return `
+      <article class="workspace-list-item ${active ? "active" : ""}">
+        <div class="workspace-list-copy">
+          <strong>${escapeHtml(workspace.name || workspaceKindLabel(workspace.kind))}</strong>
+          <span>${escapeHtml(workspaceKindLabel(workspace.kind))} · ${escapeHtml(active ? t("workspace.list.active") : workspaceStatusLabel(workspace.status))}</span>
+          ${workspace.rootPath ? `<code>${escapeHtml(workspace.rootPath)}</code>` : ""}
+        </div>
+        <div class="workspace-list-actions">
+          <button class="secondary" type="button" data-workspace-action="activate" data-workspace-id="${escapeHtml(id)}" ${active ? "disabled" : ""}>${escapeHtml(active ? t("workspace.list.active") : t("workspace.button.activate"))}</button>
+          ${workspace.kind === "disposable-copy" ? `<button class="secondary danger" type="button" data-workspace-action="cleanup" data-workspace-id="${escapeHtml(id)}" ${canCleanup ? "" : `disabled title="${escapeHtml(t("workspace.cleanup.activeBlocked"))}"`}>${escapeHtml(t("workspace.button.cleanup"))}</button>` : ""}
+        </div>
+      </article>`;
+  }).join("");
+}
+
+function workspaceKindLabel(kind) {
+  if (kind === "built-in-demo") return t("workspace.kind.demo");
+  if (kind === "disposable-copy") return t("workspace.kind.copy");
+  return t("workspace.kind.original");
+}
+
+function formatWorkspaceIssue(item) {
+  if (typeof item === "string") return item;
+  if (!item || typeof item !== "object") return String(item || "-");
+  return [item.path, item.reason || item.code, item.detail].filter(Boolean).join(" · ") || t("workspace.preview.unknownIssue");
+}
+
+function formatBytes(value) {
+  const bytes = Number(value) || 0;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function loadRecentRepos() {
   try {
     const parsed = JSON.parse(localStorage.getItem(RECENT_REPOS_KEY) || "[]");
@@ -379,6 +750,8 @@ function hydrateRestoredSession(payload) {
   currentMemory = payload.memory || currentMemory;
   currentPreflight = null;
   repoPath.value = repoProfile.rootPath;
+  if (payload.workspace) adoptServerWorkspace(payload.workspace);
+  else clearWorkspaceAuthority();
   renderPathHelper("ok", t("path.restored"));
   renderPathModeForInput(repoPath.value);
   if (!goalInput.value.trim() && currentTask?.goal) goalInput.value = currentTask.goal;
@@ -421,17 +794,12 @@ function renderSessionRecovery() {
   startFreshButton.textContent = t("session.recovery.fresh");
 }
 
-function startFreshClientWorkflow() {
-  sessionRestoreSuperseded = true;
-  pendingSessionPayload = null;
-  sessionRecoveryMode = "hidden";
+function resetWorkspaceBoundState() {
   repoProfile = null;
   currentTask = null;
   currentMemory = null;
   currentPreflight = null;
   suggestedContextFiles = [];
-  repoPath.value = "";
-  goalInput.value = "";
   repoSummary.innerHTML = "";
   contextOutput.textContent = t("context.output.start");
   timeline.innerHTML = "";
@@ -442,8 +810,6 @@ function startFreshClientWorkflow() {
   patchOutput.textContent = t("patch.output.readContextFirst");
   toolArg.value = "";
   toolOutput.textContent = t("tool.output.scanFirst");
-  renderPathHelperForInput("");
-  renderPathModeForInput("");
   renderPreflightReport(null);
   renderContextCandidates([]);
   renderTask(null);
@@ -451,6 +817,18 @@ function startFreshClientWorkflow() {
   renderRevertPatchOptions(null);
   renderVerifyCommands([]);
   if (currentModelStatus) renderModelStatus(currentModelStatus);
+}
+
+function startFreshClientWorkflow() {
+  sessionRestoreSuperseded = true;
+  pendingSessionPayload = null;
+  sessionRecoveryMode = "hidden";
+  resetWorkspaceBoundState();
+  repoPath.value = "";
+  goalInput.value = "";
+  clearWorkspaceAuthority();
+  renderPathHelperForInput("");
+  renderPathModeForInput("");
   renderSessionRecovery();
   renderGuide();
   updateControls();
@@ -480,13 +858,16 @@ examplePathButton?.addEventListener("click", () => {
 });
 
 repoPath.addEventListener("input", () => {
+  const nextPath = repoPath.value;
   if (sessionRecoveryMode !== "hidden") {
-    const nextPath = repoPath.value;
-    startFreshClientWorkflow();
-    repoPath.value = nextPath;
+    sessionRestoreSuperseded = true;
+    pendingSessionPayload = null;
+    sessionRecoveryMode = "hidden";
+    renderSessionRecovery();
   }
-  currentPreflight = null;
-  renderPreflightReport(null);
+  if (currentWorkspace || repoProfile || currentTask || currentPreflight) resetWorkspaceBoundState();
+  repoPath.value = nextPath;
+  clearWorkspaceAuthority();
   renderPathHelperForInput(repoPath.value);
   renderPathModeForInput(repoPath.value);
   updateControls();
@@ -515,6 +896,7 @@ scanButton.addEventListener("click", async () => {
   try {
     const result = await request("/api/repo/scan", { path });
     repoProfile = result.profile;
+    adoptServerWorkspace(result.workspace);
     currentPreflight = null;
     renderPreflightReport(null);
     rememberRepo(repoProfile);
@@ -554,6 +936,7 @@ preflightButton.addEventListener("click", async () => {
     });
     currentPreflight = payload.report;
     repoProfile = payload.profile;
+    adoptServerWorkspace(payload.workspace);
     currentTask = payload.task || currentTask;
     currentMemory = payload.memory || currentMemory;
     suggestedContextFiles = (currentPreflight.contextFiles || []).map((file) => ({ path: file.path, reason: file.reason || t("preflight.reason.default") }));
@@ -791,7 +1174,7 @@ applyPatchButton.addEventListener("click", async () => {
     patchState.textContent = t("patch.state.noAvailable");
     return;
   }
-  const gate = preflightPatchGateStatus();
+  const gate = applyPatchGateStatus();
   if (gate.blocksPatch) {
     patchState.textContent = gate.title;
     patchOutput.textContent = gate.detail;
@@ -804,8 +1187,9 @@ applyPatchButton.addEventListener("click", async () => {
     t("confirm.apply.review", { count: review.files.length, added: review.total.added, removed: review.total.removed }),
     t("confirm.apply.risks", { risks: review.risks.slice(0, 2).join("; ") }),
     "",
+    t("confirm.apply.workspace", { workspace: currentWorkspace?.name || workspaceKindLabel(currentWorkspace?.kind) }),
     t("confirm.apply.write"),
-    t("confirm.apply.branch"),
+    currentWorkspace?.kind === "disposable-copy" ? t("confirm.apply.copyProtected") : t("confirm.apply.demoProtected"),
     t("confirm.apply.rollback")
   ].join("\n"));
   if (!approved) return;
@@ -819,6 +1203,7 @@ applyPatchButton.addEventListener("click", async () => {
       approved: true
     });
     if (result.task) currentTask = result.task;
+    if (result.workspace) adoptServerWorkspace(result.workspace);
     patchState.textContent = t("patch.state.applied");
     patchOutput.textContent = result.result?.diff || currentTask.patchProposal.diff || t("patch.output.appliedFallback");
     renderTask(currentTask);
@@ -834,6 +1219,12 @@ applyPatchButton.addEventListener("click", async () => {
 revertPatchButton.addEventListener("click", async () => {
   if (!currentTask?.appliedPatches?.some((patch) => !patch.revertedAt)) {
     patchState.textContent = t("patch.state.noRevert");
+    return;
+  }
+  const gate = workspaceWriteGateStatus();
+  if (gate.blocksPatch) {
+    patchState.textContent = gate.title;
+    patchOutput.textContent = gate.detail;
     return;
   }
   const selectedIndex = Number.parseInt(revertPatchSelect.value, 10);
@@ -856,6 +1247,7 @@ revertPatchButton.addEventListener("click", async () => {
       approved: true
     });
     if (result.task) currentTask = result.task;
+    if (result.workspace) adoptServerWorkspace(result.workspace);
     patchState.textContent = t("patch.state.reverted");
     patchOutput.textContent = result.result?.diff || t("patch.output.revertedFallback");
     renderTask(currentTask);
@@ -910,12 +1302,25 @@ guideNextButton.addEventListener("click", runGuideNextStep);
 quickStartPrimary?.addEventListener("click", runQuickStartPrimary);
 quickStartSecondary?.addEventListener("click", () => {
   setActiveView("workspace");
-  preflightButton.click();
+  const model = quickStartModel();
+  if (model.secondaryAction) model.secondaryAction();
+  else preflightButton.click();
 });
 
 runVerifyButton.addEventListener("click", async () => {
   if (!repoProfile) {
     verifyState.textContent = t("verify.state.scanFirst");
+    return;
+  }
+  if (!currentPreflight) {
+    verifyState.textContent = t("verify.state.preflightRequired");
+    return;
+  }
+
+  const workspaceGate = workspaceCommandGateStatus();
+  if (workspaceGate.blocksCommand) {
+    verifyState.textContent = t("verify.state.workspaceBlocked");
+    verifyOutput.textContent = workspaceGate.detail;
     return;
   }
 
@@ -944,6 +1349,7 @@ runVerifyButton.addEventListener("click", async () => {
       }
     }
     if (result.task) currentTask = result.task;
+    if (result.workspace) adoptServerWorkspace(result.workspace);
     verifyState.textContent = result.result?.timedOut ? t("verify.state.timeout") : result.result?.exitCode === 0 ? t("verify.state.passed") : t("verify.state.failed");
     renderVerifyResult(command, result);
     renderTask(currentTask);
@@ -999,7 +1405,11 @@ function updateControls() {
   const activePatches = currentTask?.appliedPatches?.filter((patch) => !patch.revertedAt).length || 0;
   const verificationCommand = selectedVerifyCommand();
   const taskComplete = currentTask?.status === "completed";
-  const patchGateStatus = preflightPatchGateStatus();
+  const patchDraftGateStatus = preflightPatchGateStatus();
+  const patchApplyGateStatus = applyPatchGateStatus();
+  const writeGateStatus = workspaceWriteGateStatus();
+  const commandGateStatus = workspaceCommandGateStatus();
+  const selectedToolRunsProcess = ["git_status", "git_diff"].includes(toolSelect.value);
 
   setControlState(scanButton, !hasRepoPath, hasRepoPath ? "" : t("control.needProjectPathDemo"));
   setControlState(preflightButton, !hasRepoPath, hasRepoPath ? "" : t("control.needProjectPath"));
@@ -1011,15 +1421,17 @@ function updateControls() {
   setControlState(suggestButton, !hasGoal, hasGoal ? "" : t("control.needGoalOrTask"));
   setControlState(contextButton, !hasTask || !hasRepo, !hasTask ? t("control.needPlan") : !hasRepo ? t("control.needScan") : "");
   setControlState(readContextButton, !hasTask || !hasContextCandidates || selectedContextCount === 0, !hasTask ? t("control.needPlan") : !hasContextCandidates ? t("control.needContextCandidates") : selectedContextCount === 0 ? t("control.needContextSelection") : "");
-  setControlState(proposePatchButton, !hasTask || !hasContext || patchGateStatus.blocksPatch, !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : patchGateStatus.detail);
-  setControlState(applyPatchButton, !proposalFiles.length || activePatches > 0 || patchGateStatus.blocksPatch, !proposalFiles.length ? t("control.needApplicablePatch") : activePatches > 0 ? t("control.hasActivePatch") : patchGateStatus.detail);
-  setControlState(revertPatchButton, activePatches === 0, activePatches ? "" : t("control.noRevertPatch"));
-  setControlState(callToolButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
-  setControlState(runVerifyButton, !hasRepo || !verificationCommand, !hasRepo ? t("control.needScan") : !verificationCommand ? t("control.noVerifyCommand") : "");
+  setControlState(proposePatchButton, !hasTask || !hasContext || patchDraftGateStatus.blocksPatch, !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : patchDraftGateStatus.detail);
+  setControlState(applyPatchButton, !proposalFiles.length || activePatches > 0 || patchApplyGateStatus.blocksPatch, !proposalFiles.length ? t("control.needApplicablePatch") : activePatches > 0 ? t("control.hasActivePatch") : patchApplyGateStatus.detail);
+  setControlState(revertPatchButton, activePatches === 0 || writeGateStatus.blocksPatch, activePatches === 0 ? t("control.noRevertPatch") : writeGateStatus.detail);
+  setControlState(callToolButton, !hasRepo || selectedToolRunsProcess && commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : selectedToolRunsProcess ? commandGateStatus.detail : "");
+  setControlState(runVerifyButton, !hasRepo || !currentPreflight || !verificationCommand || commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : !currentPreflight ? t("control.needPreflight") : !verificationCommand ? t("control.noVerifyCommand") : commandGateStatus.detail);
   setControlState(fixFailureButton, !currentTask?.failureSummary, currentTask?.failureSummary ? "" : t("control.needFailedVerify"));
   setControlState(guideNextButton, !canRunGuideNextStep(), t("guide.disabled.currentInfo"));
-  renderPatchGate(patchGateStatus);
-  renderApplyReview(currentTask?.patchProposal, currentTask, patchGateStatus);
+  renderPatchGate(proposalFiles.length ? patchApplyGateStatus : patchDraftGateStatus);
+  renderApplyReview(currentTask?.patchProposal, currentTask, patchApplyGateStatus);
+  renderVerifyBoundary();
+  renderWorkspaceSafety();
   renderQuickStart();
 
   if (!hasPlan && !hasGoal) planIntent.textContent = t("state.waiting");
@@ -1071,13 +1483,52 @@ function preflightPatchGateStatus() {
   };
 }
 
+function applyPatchGateStatus() {
+  const preflightGate = preflightPatchGateStatus();
+  return preflightGate.blocksPatch ? preflightGate : workspaceWriteGateStatus();
+}
+
+function workspaceWriteGateStatus() {
+  if (!currentWorkspace) return {
+    severity: "blocked",
+    title: t("patch.gate.workspace.title"),
+    detail: t("patch.gate.workspace.unverified"),
+    blocksPatch: true
+  };
+  if (currentWorkspace.kind === "original-readonly") return {
+    severity: "blocked",
+    title: t("patch.gate.workspace.originalTitle"),
+    detail: t("patch.gate.workspace.originalDetail"),
+    blocksPatch: true
+  };
+  if (!workspaceCanWrite()) return {
+    severity: "blocked",
+    title: t("patch.gate.workspace.invalidTitle"),
+    detail: t("patch.gate.workspace.invalidDetail"),
+    blocksPatch: true
+  };
+  return {
+    severity: "ok",
+    title: t("patch.gate.workspace.readyTitle"),
+    detail: currentWorkspace.kind === "built-in-demo" ? t("patch.gate.workspace.demoReady") : t("patch.gate.workspace.copyReady"),
+    blocksPatch: false
+  };
+}
+
+function workspaceCommandGateStatus() {
+  if (!currentWorkspace) return { blocksCommand: true, detail: t("verifyBoundary.unverified") };
+  if (currentWorkspace.kind === "original-readonly") return { blocksCommand: true, detail: t("verifyBoundary.originalReadonly") };
+  if (!workspaceCanRunCommands()) return { blocksCommand: true, detail: t("verifyBoundary.invalidWorkspace") };
+  return { blocksCommand: false, detail: "" };
+}
+
 function renderPatchGate(gate) {
   if (!patchGate || !gate) return;
   patchGate.className = `patch-gate ${gate.severity}`;
   patchGate.innerHTML = `<strong>${escapeHtml(gate.title)}</strong><span>${escapeHtml(gate.detail)}</span>`;
 }
 
-function renderApplyReview(proposal, task, gate = preflightPatchGateStatus()) {
+function renderApplyReview(proposal, task, gate = applyPatchGateStatus()) {
   if (!applyReview) return;
   const model = patchReviewModel(proposal, task);
   if (!model.files.length) {
@@ -1197,6 +1648,16 @@ function quickStartModel() {
     action: () => proposePatchButton.click(),
     steps
   };
+  if (!hasActivePatch && !workspaceCanWrite()) return {
+    state: t("quick.state.needsDisposableCopy"),
+    copy: t("quick.copy.needsDisposableCopy"),
+    primary: disposableCopyPreview?.eligible ? t("workspace.button.create") : t("workspace.button.prepare"),
+    secondary: t("workspace.button.refresh"),
+    secondaryDisabled: false,
+    secondaryAction: () => refreshWorkspaces({ adoptActive: false }),
+    action: runWorkspacePreparationAction,
+    steps
+  };
   if (!hasActivePatch) return {
     state: t("quick.state.waitingApply"),
     copy: t("quick.copy.waitingApply"),
@@ -1254,6 +1715,16 @@ function runQuickStartPrimary() {
   quickStartModel().action();
 }
 
+function runWorkspacePreparationAction() {
+  setActiveView("workspace");
+  workspaceCapability?.closest(".workspace-safety-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (currentWorkspace?.kind === "original-readonly" && disposableCopyPreview?.eligible) {
+    createCopyButton.click();
+    return;
+  }
+  if (currentWorkspace?.kind === "original-readonly") previewCopyButton.click();
+}
+
 function setControlState(control, disabled, title = "") {
   if (!control) return;
   control.disabled = Boolean(disabled);
@@ -1266,8 +1737,11 @@ function canRunGuideNextStep() {
   if (step.id === "preflight") return Boolean(repoPath.value.trim() || repoProfile?.rootPath);
   if (step.id === "plan") return Boolean(goalInput.value.trim() || currentTask?.goal);
   if (step.id === "context") return Boolean(currentTask?.id && repoProfile?.rootPath);
-  if (step.id === "patch") return Boolean((currentTask?.contextFiles?.length || currentTask?.patchProposal) && !preflightPatchGateStatus().blocksPatch);
-  if (step.id === "verify") return Boolean(repoProfile?.rootPath && selectedVerifyCommand());
+  if (step.id === "patch") {
+    const gate = currentTask?.patchProposal ? applyPatchGateStatus() : preflightPatchGateStatus();
+    return Boolean((currentTask?.contextFiles?.length || currentTask?.patchProposal) && !gate.blocksPatch);
+  }
+  if (step.id === "verify") return Boolean(repoProfile?.rootPath && currentPreflight && selectedVerifyCommand() && !workspaceCommandGateStatus().blocksCommand);
   if (step.id === "complete") return Boolean(currentTask?.id);
   return true;
 }
@@ -1386,6 +1860,15 @@ function renderVerifyBoundary() {
     verifyBoundary.innerHTML = `<strong>${escapeHtml(t("verifyBoundary.title"))}</strong><span>${escapeHtml(t("verifyBoundary.empty"))}</span>`;
     return;
   }
+  const workspaceGate = workspaceCommandGateStatus();
+  if (workspaceGate.blocksCommand) {
+    verifyBoundary.className = "boundary-note command-boundary blocked";
+    verifyBoundary.innerHTML = `
+      <strong>${escapeHtml(t("verifyBoundary.command", { command: command.command }))}</strong>
+      <span>${escapeHtml(workspaceGate.detail)}</span>
+    `;
+    return;
+  }
   const name = command.name || t("verifyBoundary.detectedCommand");
   verifyBoundary.className = "boundary-note command-boundary ready";
   verifyBoundary.innerHTML = `
@@ -1446,14 +1929,22 @@ function renderPathModeForInput(value) {
     titleKey = "path.mode.example.title";
     bodyKey = "path.mode.example.body";
     modeClass = "example";
-  } else if (systemInfo?.demoPath && pathValue && normalizePathForCompare(pathValue) === normalizePathForCompare(systemInfo.demoPath)) {
+  } else if (currentWorkspace?.kind === "built-in-demo") {
     titleKey = "path.mode.demo.title";
     bodyKey = "path.mode.demo.body";
     modeClass = "demo";
-  } else if (pathValue) {
+  } else if (currentWorkspace?.kind === "disposable-copy") {
+    titleKey = "path.mode.copy.title";
+    bodyKey = "path.mode.copy.body";
+    modeClass = "copy";
+  } else if (currentWorkspace?.kind === "original-readonly") {
     titleKey = "path.mode.real.title";
     bodyKey = "path.mode.real.body";
     modeClass = "real";
+  } else if (pathValue) {
+    titleKey = "path.mode.unverified.title";
+    bodyKey = "path.mode.unverified.body";
+    modeClass = "unverified";
   }
   pathMode.className = `path-mode ${modeClass}`;
   pathMode.innerHTML = `<strong>${escapeHtml(t(titleKey))}</strong><span>${escapeHtml(t(bodyKey))}</span>`;
@@ -1478,10 +1969,6 @@ function renderPathHelperForInput(value) {
     return;
   }
   renderPathHelper("ok", t("path.looksFolder"));
-}
-
-function normalizePathForCompare(value) {
-  return String(value || "").replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase();
 }
 
 function renderVerifyResult(command, result) {
@@ -1816,7 +2303,8 @@ function preflightGuideDetail() {
 
 function guideModel() {
   const activePatches = currentTask?.appliedPatches?.filter((patch) => !patch.revertedAt).length || 0;
-  const patchGateStatus = preflightPatchGateStatus();
+  const patchGateStatus = currentTask?.patchProposal ? applyPatchGateStatus() : preflightPatchGateStatus();
+  const commandGateStatus = workspaceCommandGateStatus();
   const contextDetail = currentTask?.contextFiles?.length
     ? t("guide.context.detail.read", { count: currentTask.contextFiles.length })
     : suggestedContextFiles.length
@@ -1833,7 +2321,7 @@ function guideModel() {
     { id: "plan", title: t("guide.plan.title"), detail: currentTask?.plan ? t("guide.plan.detail.ready") : t("guide.plan.detail.generate"), hint: t("guide.plan.hint"), blocked: !currentTask?.plan && !goalInput.value.trim(), done: Boolean(currentTask?.plan), action: () => { setActiveView("workspace"); planButton.click(); } },
     { id: "context", title: t("guide.context.title"), detail: contextDetail, hint: suggestedContextFiles.length ? t("guide.context.hint.readSelected", { count: selectedContextFiles().length || suggestedContextFiles.length }) : t("guide.context.hint.rank"), blocked: !currentTask?.id || !repoProfile?.rootPath, done: Boolean(currentTask?.contextFiles?.length), action: runContextGuideStep },
     { id: "patch", title: t("guide.patch.title"), detail: patchGateStatus.blocksPatch ? patchGateStatus.title : patchDetail, hint: patchGateStatus.blocksPatch ? patchGateStatus.detail : currentTask?.patchProposal ? t("guide.patch.hint.reviewApply") : t("guide.patch.hint.generate"), blocked: patchGateStatus.blocksPatch || (!currentTask?.contextFiles?.length && !currentTask?.patchProposal), done: patchDone, action: runPatchGuideStep },
-    { id: "verify", title: t("guide.verify.title"), detail: currentTask?.verification ? t("guide.verify.detail.exit", { code: currentTask.verification.exitCode }) : t("guide.verify.detail.runTests"), hint: t("guide.verify.hint"), blocked: !repoProfile?.rootPath || !selectedVerifyCommand(), done: Boolean(currentTask?.verification), action: () => runVerifyButton.click() },
+    { id: "verify", title: t("guide.verify.title"), detail: currentTask?.verification ? t("guide.verify.detail.exit", { code: currentTask.verification.exitCode }) : commandGateStatus.blocksCommand ? commandGateStatus.detail : t("guide.verify.detail.runTests"), hint: commandGateStatus.blocksCommand ? commandGateStatus.detail : t("guide.verify.hint"), blocked: !repoProfile?.rootPath || !currentPreflight || !selectedVerifyCommand() || commandGateStatus.blocksCommand, done: Boolean(currentTask?.verification), action: () => runVerifyButton.click() },
     { id: "complete", title: t("guide.complete.title"), detail: currentTask?.summary ? t("guide.complete.detail.done") : t("guide.complete.detail.summary"), hint: t("guide.complete.hint"), blocked: !currentTask?.id, done: Boolean(currentTask?.summary), action: () => completeTaskButton.click() }
   ];
 }
@@ -1940,6 +2428,15 @@ function friendlyErrorMessage(error) {
   const message = String(error?.message || error || "未知错误");
   const codeMessage = `${error?.code || ""} ${message}`;
   const structuredRules = [
+    [/WORKSPACE_ORIGINAL_READ_?ONLY|WORKSPACE_WRITE_FORBIDDEN/, t("error.workspaceOriginalReadonly")],
+    [/WORKSPACE_COMMAND_FORBIDDEN|WORKSPACE_TOOL_NOT_ALLOWED/, t("error.workspaceCommandForbidden")],
+    [/WORKSPACE_CLEANUP_ACTIVE/, t("workspace.cleanup.activeBlocked")],
+    [/WORKSPACE_COPY_PREVIEW_STALE|WORKSPACE_COPY_SOURCE_CHANGED|DATA_BOUNDARY_SOURCE_CHANGED/, t("error.copyPreviewStale")],
+    [/WORKSPACE_COPY_BLOCKED|COPY_POLICY_BLOCKED|DATA_BOUNDARY_(?:BYTE|FILE)_LIMIT/, t("error.copyPreviewBlocked")],
+    [/WORKSPACE_COPY_(?:MANIFEST_CHANGED|MARKER_INVALID|RECORD_INVALID|VERIFY_FAILED)|DATA_BOUNDARY_(?:MANIFEST_INVALID|COPY_VERIFY_FAILED)/, t("error.copyManifestMismatch")],
+    [/WORKSPACE_(?:COPY|CLEANUP)_OWNERSHIP_CHANGED|WORKSPACE_CLEANUP_(?:PENDING|ENTRY_UNSAFE)|WORKSPACE_OWNERSHIP_STATE_MISSING/, t("error.copyOwnership")],
+    [/WORKSPACE_COPY_(?:PATH_INVALID|SOURCE_UNSAFE|ROOT_CHANGED|IDENTITY_CHANGED)|WORKSPACE_CLEANUP_LINK_FOUND|DATA_BOUNDARY_(?:PATH_CHANGED|ROOT_MISSING|ROOT_UNSAFE|IGNORE_UNREADABLE|IGNORE_UNSAFE)/, t("error.copyBoundary")],
+    [/WORKSPACE_(?:CAPABILITY_MISMATCH|ACTIVATION_REQUIRED|APPROVAL_STALE|CONTEXT_MISSING|TASK_RESCAN_REQUIRED|UNKNOWN|IDENTITY_CHANGED|ORIGINAL_CHANGED|DEMO_CHANGED|OWNER_INVALID|STATE_INTEGRITY_FAILED|STATE_MISSING)/, t("error.workspaceInvalid")],
     [/PATCH_APPROVAL_STALE/, t("error.patchApprovalStale")],
     [/PROJECT_WRITE_LOCKED/, t("error.projectWriteLocked")],
     [/TASK_STORE_LOCKED/, t("error.taskStoreLocked")],

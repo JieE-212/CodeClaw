@@ -167,6 +167,25 @@
             <div class="action-row"><button id="preflightButton" data-i18n="button.runPreflight" type="button">运行预检</button></div>
             <div class="preflight-output" id="preflightOutput" data-i18n="preflight.default">在真实项目上继续前，先运行只读预检。它只读取上下文，不会写入文件。</div>
           </div>
+          <div class="panel workspace-safety-panel" data-view="workspace" data-ui-marker="server-authoritative-workspace">
+            <div class="panel-header"><h3 data-i18n="panel.workspaceSafety">安全工作区</h3><span id="workspaceState" data-i18n="workspace.state.unverified">待服务端验证</span></div>
+            <p class="panel-purpose" data-i18n="purpose.workspaceSafety">查看当前工作区的服务端权限；预览、创建、激活或删除由 CodeClaw 管理的可丢弃副本。</p>
+            <div class="workspace-capability empty" id="workspaceCapability" aria-live="polite"></div>
+            <div class="boundary-note workspace-disclosure">
+              <strong data-i18n="workspace.disclosure.title">副本仍包含源码</strong>
+              <span data-i18n="workspace.disclosure.body">可丢弃副本不是匿名化副本，也不代表适合上传或分享。CodeClaw 会排除已知秘密文件、忽略项、生成目录和链接，但仍请检查预览。</span>
+            </div>
+            <div class="action-row workspace-copy-actions">
+              <button id="previewCopyButton" data-i18n="workspace.button.preview" type="button">预览可丢弃副本</button>
+              <button id="createCopyButton" data-i18n="workspace.button.create" type="button">创建副本（复制源码）</button>
+              <button class="secondary" id="refreshWorkspacesButton" data-i18n="workspace.button.refresh" type="button">刷新工作区列表</button>
+            </div>
+            <div class="copy-preview empty" id="copyPreview" aria-live="polite"></div>
+            <details class="workspace-list-disclosure" open>
+              <summary data-i18n="workspace.list.title">已登记工作区</summary>
+              <div class="workspace-list" id="workspaceList"></div>
+            </details>
+          </div>
           <div class="panel task-panel" data-view="workspace">
             <div class="panel-header"><h3 data-i18n="panel.taskGoal">任务目标</h3><span data-i18n="state.planningMode">规划模式</span></div>
             <p class="panel-purpose" data-i18n="purpose.goal">用一句话说明希望 CodeClaw 完成什么，计划会围绕这个目标生成。</p>

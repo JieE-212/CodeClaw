@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,10 +18,15 @@ import { PatchTransactionStore, recoverPatchTransactions } from "../../packages/
 import { PatchTransactionClaimStore, loadPatchStateOwnerId } from "../../packages/patch-transaction/src/claim-store.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../../packages/shared/src/cross-process-lock.js";
 import { captureWorkspaceIdentity, captureWorkspaceParentIdentity } from "../../packages/shared/src/workspace-identity.js";
+import { isProtectedDirectory, isSensitiveFile } from "../../packages/shared/src/path-utils.js";
+import { WorkspaceCapabilityStore } from "../../packages/workspace-capability/src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
 const localStateDir = path.resolve(process.env.CODECLAW_STATE_DIR || path.join(process.cwd(), ".codeclaw"));
+const demoPath = path.resolve(__dirname, "../../examples/demo-js");
+const disposableCopyRoot = path.resolve(process.env.CODECLAW_DISPOSABLE_ROOT
+  || (process.env.CODECLAW_STATE_DIR ? path.join(localStateDir, "disposable-copies") : defaultDisposableCopyRoot(localStateDir)));
 const auditLog = new AuditLog({ storagePath: path.join(localStateDir, "audit.jsonl") });
 const taskStore = new TaskStore({ storagePath: path.join(localStateDir, "tasks.json") });
 const patchTransactionStore = new PatchTransactionStore({ storagePath: path.join(localStateDir, "patch-transactions") });
@@ -37,14 +43,22 @@ const patchClaimStore = new PatchTransactionClaimStore({
   ownerId: await loadPatchStateOwnerId(localStateDir)
 });
 const memoryStore = new MemoryStore({ storagePath: path.join(localStateDir, "memory.json") });
+const workspaceCapabilityStore = new WorkspaceCapabilityStore({
+  storagePath: path.join(localStateDir, "workspace-capabilities.json"),
+  copyRootPath: disposableCopyRoot,
+  demoPath
+});
 const modelConfigPath = path.join(localStateDir, "model.json");
 const MAX_CONTEXT_CONTENT_CHARS = 50000;
+const UNTRUSTED_REQUEST_REJECTION_CODES = new Set(["LOCAL_ORIGIN_REQUIRED", "JSON_CONTENT_TYPE_REQUIRED", "JSON_BODY_INVALID"]);
 const port = DEFAULT_PORT;
 let lastRepoProfile = null;
 let toolRegistry = null;
 let modelConfig = sanitizeModelConfig({ type: "mock", name: "mock", model: "mock-codeclaw" });
 let modelProvider = new ModelProvider(modelConfig);
 let patchRecoveryStatus = emptyPatchRecoveryStatus();
+let lastWorkspace = null;
+let lastWorkspaceBinding = null;
 const patchOperationQueues = new Map();
 
 function defaultProjectCoordinationDir() {
@@ -54,9 +68,19 @@ function defaultProjectCoordinationDir() {
   return path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "codeclaw", "transaction-coordination-v1");
 }
 
+function defaultDisposableCopyRoot(stateDir) {
+  const canonicalState = process.platform === "win32" ? path.resolve(stateDir).toLowerCase() : path.resolve(stateDir);
+  const stateKey = createHash("sha256").update(canonicalState, "utf8").digest("hex").slice(0, 24);
+  if (process.platform === "win32") {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "CodeClaw", "disposable-workspaces-v1", stateKey);
+  }
+  return path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "codeclaw", "disposable-workspaces-v1", stateKey);
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    assertLocalJsonRequest(request);
     if (request.method === "GET" && url.pathname === "/api/health") return json(response, { ok: true, app: "CodeClaw", time: new Date().toISOString() });
     if (request.method === "GET" && url.pathname === "/api/system/check") return await systemCheck(response);
     if (request.method === "GET" && url.pathname === "/api/session/last") return await getLastSession(response);
@@ -65,6 +89,11 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/memory/notes") return await updateMemoryNotes(request, response);
     if (request.method === "GET" && url.pathname === "/api/model/status") return await getModelStatus(response);
     if (request.method === "GET" && url.pathname === "/api/patch-recovery/status") return json(response, { ok: true, recovery: patchRecoveryStatus });
+    if (request.method === "GET" && url.pathname === "/api/workspaces") return await listWorkspaces(response);
+    if (request.method === "POST" && url.pathname === "/api/workspaces/copy/preview") return await previewWorkspaceCopy(request, response);
+    if (request.method === "POST" && url.pathname === "/api/workspaces/copy/create") return await createWorkspaceCopy(request, response);
+    if (request.method === "POST" && url.pathname === "/api/workspaces/activate") return await activateWorkspace(request, response);
+    if (request.method === "POST" && url.pathname === "/api/workspaces/cleanup") return await cleanupWorkspace(request, response);
     if (request.method === "POST" && url.pathname === "/api/model/config") return await setModelConfig(request, response);
     if (request.method === "POST" && url.pathname === "/api/model/suggest") return await suggestWithModel(request, response);
     if (request.method === "POST" && url.pathname === "/api/model/context-files") return await suggestContextFiles(request, response);
@@ -82,7 +111,9 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/tools/call") return await callTool(request, response);
     return await serveStatic(url.pathname, response);
   } catch (error) {
-    await recordAudit({ type: "server.error", status: "error", title: "Server error", detail: error.message, rootPath: lastRepoProfile?.rootPath });
+    if (!UNTRUSTED_REQUEST_REJECTION_CODES.has(error.code)) {
+      await recordAudit({ type: "server.error", status: "error", title: "Server error", detail: error.message, rootPath: lastRepoProfile?.rootPath });
+    }
     return json(response, { ok: false, code: error.code || "SERVER_ERROR", error: error.message }, error.status || 500);
   }
 });
@@ -102,6 +133,7 @@ async function startServer() {
       { timeoutMs: 1000 }
     )
   });
+  await workspaceCapabilityStore.initialize();
   server.listen(port, "127.0.0.1", () => {
     console.log(`CodeClaw workspace running at http://127.0.0.1:${port}`);
   });
@@ -122,23 +154,40 @@ async function getMemory(url, response) {
 async function getLastSession(response) {
   await ensureModelConfigLoaded();
   const memory = await memoryStore.latest();
-  const profile = memory ? profileFromMemory(memory) : null;
-  const task = profile ? await taskStore.latest({ rootPath: profile.rootPath }) : await taskStore.latest();
+  let profile = memory ? profileFromMemory(memory) : null;
   if (profile) {
-    lastRepoProfile = profile;
-    toolRegistry = new ToolRegistry({ rootPath: profile.rootPath, allowedCommands: profile.commands });
+    try {
+      profile.rootPath = await assertRepositoryDirectory(profile.rootPath, "restore a saved session");
+    } catch {
+      profile = null;
+    }
+  }
+  const restorableMemory = profile ? memory : null;
+  const task = profile
+    ? await taskStore.latest({ rootPath: profile.rootPath })
+    : memory
+      ? null
+      : await taskStore.latest();
+  let workspace = null;
+  if (profile) {
+    workspace = await workspaceCapabilityStore.register(profile.rootPath).catch(() => null);
+    if (workspace) {
+      lastRepoProfile = profile;
+      await bindLastWorkspace(workspace, profile.rootPath, profile.commands);
+    }
   }
   return json(response, {
     ok: true,
-    session: memory ? {
+    session: restorableMemory ? {
       restored: true,
-      rootPath: memory.rootPath,
+      rootPath: restorableMemory.rootPath,
       restoredAt: new Date().toISOString(),
       needsPreflight: true
     } : null,
     profile,
     task,
-    memory,
+    memory: restorableMemory,
+    workspace,
     model: publicModelConfig(modelConfig)
   });
 }
@@ -152,20 +201,165 @@ async function updateMemoryNotes(request, response) {
 }
 
 async function systemCheck(response) {
-  const demoPath = path.join(process.cwd(), "examples", "demo-js");
-  let demoExists = false;
+  let demoDirectoryPresent = false;
   try {
-    demoExists = (await fs.stat(demoPath)).isDirectory();
+    demoDirectoryPresent = (await fs.stat(demoPath)).isDirectory();
   } catch {}
+  const workspace = demoDirectoryPresent ? await workspaceCapabilityStore.describePath(demoPath) : null;
+  const demoExists = workspace?.kind === "built-in-demo";
   return json(response, {
     ok: true,
     node: process.version,
     cwd: process.cwd(),
     demoPath,
     demoExists,
+    workspace,
     model: modelProvider.status(),
     recovery: patchRecoveryStatus
   });
+}
+
+async function listWorkspaces(response) {
+  const result = await workspaceCapabilityStore.list();
+  return json(response, { ok: true, ...result });
+}
+
+async function previewWorkspaceCopy(request, response) {
+  const body = await readJson(request);
+  const sourcePath = await assertDisposableCopySourceDirectory(body.sourcePath);
+  const preview = await workspaceCapabilityStore.previewCopy(sourcePath);
+  await recordAudit({
+    type: "workspace.copy.preview",
+    status: preview.eligible ? "ok" : "blocked",
+    title: "Disposable copy previewed",
+    detail: `${preview.fileCount} file(s), ${preview.excluded.length} excluded, ${preview.blockers.length} blocked`,
+    rootPath: preview.sourcePath,
+    metadata: { policyVersion: preview.policyVersion, eligible: preview.eligible, fileCount: preview.fileCount, excluded: preview.excluded.length, blockers: preview.blockers.length }
+  });
+  return json(response, { ok: true, preview });
+}
+
+async function createWorkspaceCopy(request, response) {
+  const body = await readJson(request);
+  const workspace = await workspaceCapabilityStore.createCopy({
+    previewId: body.previewId,
+    previewDigest: body.previewDigest
+  });
+  await recordAudit({
+    type: "workspace.copy.create",
+    title: "Disposable copy created",
+    detail: workspace.id,
+    rootPath: workspace.rootPath,
+    metadata: { workspaceId: workspace.id, kind: workspace.kind }
+  });
+  return json(response, { ok: true, workspace });
+}
+
+async function activateWorkspace(request, response) {
+  const body = await readJson(request);
+  const listed = await workspaceCapabilityStore.list();
+  const selected = listed.workspaces.find((item) => item.id === body.workspaceId);
+  if (selected?.rootPath) await assertRepositoryDirectory(selected.rootPath, "activate a workspace");
+  const workspace = await workspaceCapabilityStore.activate({
+    workspaceId: body.workspaceId,
+    workspaceDigest: body.workspaceDigest
+  });
+  const repositoryPath = await assertRepositoryDirectory(workspace.rootPath, "activate a workspace");
+  const profile = await scanRepositoryWithFriendlyErrors(repositoryPath);
+  lastRepoProfile = profile;
+  await bindLastWorkspace(workspace, profile.rootPath, profile.commands);
+  const memory = await memoryStore.upsertProfile(profile);
+  await recordAudit({
+    type: "workspace.activate",
+    title: "Workspace activated",
+    detail: `${workspace.kind}: ${workspace.id}`,
+    rootPath: workspace.rootPath,
+    metadata: { workspaceId: workspace.id, kind: workspace.kind, canWrite: workspace.canWrite, canRunCommands: workspace.canRunCommands }
+  });
+  return json(response, { ok: true, workspace, profile, memory });
+}
+
+async function cleanupWorkspace(request, response) {
+  const body = await readJson(request);
+  if (body.approved !== true) {
+    throw patchOperationError("WORKSPACE_CLEANUP_APPROVAL_REQUIRED", "Permanently deleting a disposable copy requires explicit approval.", 409);
+  }
+  const listed = await workspaceCapabilityStore.list();
+  const selected = listed.workspaces.find((item) => item.id === body.workspaceId && item.kind === "disposable-copy");
+  if (!selected) throw patchOperationError("WORKSPACE_UNKNOWN", "The disposable copy is not registered by this CodeClaw state.", 404);
+  const result = await serializePatchOperation(selected.rootPath, async () => {
+    if (selected.status !== "cleanup-pending") {
+      const identity = await captureWorkspaceIdentity(selected.rootPath);
+      await ensurePatchRecoveryReady(selected.rootPath, identity.digest);
+    }
+    return workspaceCapabilityStore.cleanup({ workspaceId: body.workspaceId, workspaceDigest: body.workspaceDigest });
+  });
+  if (lastRepoProfile && canonicalRootPath(lastRepoProfile.rootPath) === canonicalRootPath(selected.rootPath)) {
+    lastRepoProfile = null;
+    lastWorkspace = null;
+    lastWorkspaceBinding = null;
+    toolRegistry = null;
+  }
+  await recordAudit({
+    type: "workspace.copy.cleanup",
+    title: "Disposable copy removed",
+    detail: result.workspaceId,
+    metadata: { workspaceId: result.workspaceId }
+  });
+  return json(response, { ok: true, result });
+}
+
+async function assertDisposableCopySourceDirectory(inputPath) {
+  const action = "preview a disposable copy";
+  const trimmed = String(inputPath || "").trim().replace(/^["']|["']$/g, "");
+  if (!trimmed) throw pathInputError("PATH_EMPTY", `Missing repository path for ${action}.`, 400);
+
+  const requestedRoot = path.resolve(trimmed);
+  let before;
+  try {
+    before = await fs.lstat(requestedRoot, { bigint: true });
+  } catch (error) {
+    if (error.code === "ENOENT") throw pathInputError("PATH_NOT_FOUND", `Project path was not found: ${requestedRoot}`, 404);
+    if (error.code === "EACCES" || error.code === "EPERM") {
+      throw pathInputError("PATH_PERMISSION_DENIED", `Permission denied while reading project path: ${requestedRoot}`, 403);
+    }
+    throw error;
+  }
+  if (before.isSymbolicLink()) {
+    throw pathInputError("PATH_LINKED_DIRECTORY", "A disposable-copy source must be the real project directory, not a symbolic link or junction.", 409);
+  }
+  if (!before.isDirectory()) {
+    throw pathInputError("PATH_IS_FILE", `Project path must be a folder, not a file: ${requestedRoot}`, 400);
+  }
+
+  let canonicalRoot;
+  let after;
+  let canonicalStat;
+  try {
+    canonicalRoot = await fs.realpath(requestedRoot);
+    [after, canonicalStat] = await Promise.all([
+      fs.lstat(requestedRoot, { bigint: true }),
+      fs.lstat(canonicalRoot, { bigint: true })
+    ]);
+  } catch {
+    throw pathInputError("PATH_CHANGED", "The disposable-copy source changed while CodeClaw was checking it.", 409);
+  }
+  if (after.isSymbolicLink()
+    || !after.isDirectory()
+    || canonicalStat.isSymbolicLink()
+    || !canonicalStat.isDirectory()
+    || !sameRequestedDirectoryEntity(before, after)
+    || !sameRequestedDirectoryEntity(after, canonicalStat)) {
+    throw pathInputError("PATH_CHANGED", "The disposable-copy source changed while CodeClaw was checking it.", 409);
+  }
+  await assertRepositoryRootAllowed(canonicalRoot, action);
+  return requestedRoot;
+}
+
+function sameRequestedDirectoryEntity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.birthtimeNs === right.birthtimeNs;
 }
 
 async function assertRepositoryDirectory(inputPath, action = "scan") {
@@ -189,7 +383,48 @@ async function assertRepositoryDirectory(inputPath, action = "scan") {
   if (!stat.isDirectory()) {
     throw pathInputError("PATH_IS_FILE", `Project path must be a folder, not a file: ${resolved}`, 400);
   }
-  return fs.realpath(resolved);
+  const canonicalRoot = await fs.realpath(resolved);
+  await assertRepositoryRootAllowed(canonicalRoot, action);
+  return canonicalRoot;
+}
+
+async function assertRepositoryRootAllowed(rootPath, action) {
+  const stateRoot = await fs.realpath(localStateDir).catch(() => path.resolve(localStateDir));
+  const copyManagerRoot = await fs.realpath(disposableCopyRoot).catch(() => path.resolve(disposableCopyRoot));
+  const coordinationRoot = await fs.realpath(projectLockDir).catch(() => path.resolve(projectLockDir));
+  if (canonicalRootPath(rootPath) === canonicalRootPath(copyManagerRoot)) {
+    throw pathInputError("PATH_PROTECTED_STATE", `The disposable-copy manager directory cannot be used to ${action}.`, 403);
+  }
+  if (pathIsAtOrWithin(rootPath, copyManagerRoot)) {
+    const registered = await workspaceCapabilityStore.describePath(rootPath).catch(() => null);
+    if (registered?.kind === "disposable-copy") return;
+    throw pathInputError("PATH_PROTECTED_STATE", `Only an exact registered disposable-copy root can be used to ${action}.`, 403);
+  }
+  if (pathIsAtOrWithin(rootPath, stateRoot)) {
+    throw pathInputError("PATH_PROTECTED_STATE", `CodeClaw private state cannot be used to ${action}.`, 403);
+  }
+  if (pathIsAtOrWithin(rootPath, coordinationRoot)) {
+    throw pathInputError("PATH_PROTECTED_STATE", `CodeClaw private coordination state cannot be used to ${action}.`, 403);
+  }
+  if (isProtectedDirectory(path.basename(rootPath))) {
+    throw pathInputError("PATH_PROTECTED_ROOT", `Protected metadata or generated directories cannot be used to ${action}.`, 403);
+  }
+  if (privateRootWouldBeVisible(rootPath, stateRoot)
+    || privateRootWouldBeVisible(rootPath, copyManagerRoot)
+    || privateRootWouldBeVisible(rootPath, coordinationRoot)) {
+    throw pathInputError("PATH_PROTECTED_STATE", `This project selection would expose CodeClaw private state while attempting to ${action}.`, 403);
+  }
+}
+
+function privateRootWouldBeVisible(workspaceRoot, privateRoot) {
+  if (!pathIsAtOrWithin(privateRoot, workspaceRoot) || canonicalRootPath(privateRoot) === canonicalRootPath(workspaceRoot)) return false;
+  const relative = path.relative(workspaceRoot, privateRoot);
+  return relative.split(path.sep).filter(Boolean).every((segment) => !isProtectedDirectory(segment));
+}
+
+function pathIsAtOrWithin(candidate, parent) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 function pathInputError(code, message, status) {
@@ -287,10 +522,13 @@ async function proposePatch(request, response) {
   const body = await readJson(request);
   const task = body.taskId ? await taskStore.get(body.taskId) : await taskStore.latest({ rootPath: body.rootPath || lastRepoProfile?.rootPath });
   if (!task) throw new Error("Create a task before requesting a patch proposal.");
+  await assertTaskWorkspaceCurrent(task, "generate a patch proposal");
   const repoProfile = body.repoProfile || lastRepoProfile || {};
   const modelProposal = await modelProvider.proposePatch({ goal: body.goal || task.goal, repoProfile, task });
-  const proposal = await attachPatchBaselines(modelProposal, task, getToolRegistry(task.rootPath));
+  await assertTaskWorkspaceCurrent(await taskStore.get(task.id), "bind patch proposal baselines");
+  const proposal = await attachPatchBaselines(modelProposal, task, getToolRegistry(task.rootPath, task.rootIdentity));
   const updatedTask = await taskStore.setPatchProposal(task.id, proposal);
+  await assertTaskWorkspaceCurrent(updatedTask, "complete a patch proposal");
   await recordAudit({
     type: "model.patch",
     title: "Patch proposed",
@@ -323,19 +561,22 @@ async function runPreflight(request, response) {
   const repositoryPath = await assertRepositoryDirectory(targetPath, "preflight");
 
   const repoProfile = await scanRepositoryWithFriendlyErrors(repositoryPath);
+  const workspace = await workspaceCapabilityStore.register(repoProfile.rootPath);
   lastRepoProfile = repoProfile;
-  toolRegistry = new ToolRegistry({ rootPath: repoProfile.rootPath, allowedCommands: repoProfile.commands });
+  await bindLastWorkspace(workspace, repoProfile.rootPath, repoProfile.commands);
   const memory = await memoryStore.upsertProfile(repoProfile);
-  const task = await taskStore.create({ goal, rootPath: repoProfile.rootPath });
+  const task = await taskStore.create({ goal, rootPath: repoProfile.rootPath, workspaceId: workspace.id });
+  await assertTaskWorkspaceCurrent(task, "run preflight tools");
   const plan = createTaskPlan(goal, repoProfile);
   const plannedTask = await taskStore.setPlan(task.id, plan);
   const selected = selectContextFiles({ goal, repoProfile, task: plannedTask, limit: Number.isInteger(body.limit) ? body.limit : 5 });
   let updatedTask = plannedTask;
   const readFiles = [];
-  const registry = getToolRegistry(repoProfile.rootPath);
+  const registry = getToolRegistry(repoProfile.rootPath, task.rootIdentity);
 
   for (const file of selected) {
     const read = await registry.call("read_file", { path: file.path });
+    await assertTaskWorkspaceCurrent(await taskStore.get(task.id), "complete a preflight read");
     await recordAudit({
       type: "preflight.read",
       status: read.ok ? "ok" : "error",
@@ -367,6 +608,7 @@ async function runPreflight(request, response) {
 
   const searchQuery = pickSearchQuery(goal, selected, repoProfile);
   const search = await registry.call("search_code", { query: searchQuery });
+  await assertTaskWorkspaceCurrent(await taskStore.get(task.id), "complete a preflight search");
   updatedTask = await taskStore.appendToolCall(task.id, {
     tool: "search_code",
     args: { query: searchQuery },
@@ -412,16 +654,18 @@ async function runPreflight(request, response) {
     rootPath: repoProfile.rootPath,
     metadata: { taskId: task.id, contextCoverage: report.contextCoverage, warnings: report.nextGate.warnings }
   });
-  return json(response, { ok: true, report, profile: repoProfile, task: updatedTask, memory });
+  return json(response, { ok: true, report, profile: repoProfile, task: updatedTask, memory, workspace });
 }
 
 async function createTask(request, response) {
   const body = await readJson(request);
   const requestedRoot = body.rootPath || lastRepoProfile?.rootPath;
   const rootPath = requestedRoot ? await assertRepositoryDirectory(requestedRoot, "create a task") : null;
-  const task = await taskStore.create({ goal: body.goal, rootPath });
+  const workspace = rootPath ? await workspaceCapabilityStore.register(rootPath) : null;
+  const task = await taskStore.create({ goal: body.goal, rootPath, workspaceId: workspace?.id || null });
+  if (rootPath) await assertTaskWorkspaceCurrent(task, "create a task");
   await recordAudit({ type: "task.create", title: "Task created", detail: task.goal, rootPath: task.rootPath, metadata: { taskId: task.id } });
-  return json(response, { ok: true, task });
+  return json(response, { ok: true, task, workspace });
 }
 
 async function completeTask(request, response) {
@@ -452,9 +696,10 @@ async function addTaskContextFile(request, response) {
 async function applyPatch(request, response) {
   const body = await readJson(request);
   const initialTask = await taskStore.get(body.taskId);
+  await assertTaskCanMutate(initialTask, "apply patches");
   const proposalFiles = getProposalFiles(initialTask.patchProposal);
   if (!proposalFiles.length) throw new Error("No applicable patch proposal.");
-  if (!body.approved) {
+  if (body.approved !== true) {
     return json(response, {
       ok: false,
       blocked: true,
@@ -466,13 +711,15 @@ async function applyPatch(request, response) {
   return serializePatchOperation(initialTask.rootPath, async () => {
     let task = await taskStore.get(body.taskId);
     task = await canonicalizeTaskRoot(task, "apply a patch");
+    await assertTaskCanMutate(task, "apply patches");
     await ensurePatchRecoveryReady(task.rootPath, task.rootIdentity);
     task = await canonicalizeTaskRoot(await taskStore.get(body.taskId), "apply a patch");
+    await assertTaskCanMutate(task, "apply patches");
     const proposal = task.patchProposal;
     assertProposalApproval(proposal, body, task.rootIdentity);
     const currentProposalFiles = getProposalFiles(proposal);
     if (!currentProposalFiles.length) throw new Error("No applicable patch proposal.");
-    const registry = getToolRegistry(task.rootPath);
+    const registry = getToolRegistry(task.rootPath, task.rootIdentity);
     const files = await preparePatchWrites(registry, task, currentProposalFiles, proposal);
     const writes = [];
     const batchId = `apply-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -575,6 +822,7 @@ async function applyPatch(request, response) {
 async function revertPatch(request, response) {
   const body = await readJson(request);
   const initialTask = await taskStore.get(body.taskId);
+  await assertTaskCanMutate(initialTask, "revert patches");
   const patches = initialTask.appliedPatches || [];
   const patchIndex = Number.isInteger(body.patchIndex)
     ? body.patchIndex
@@ -583,7 +831,7 @@ async function revertPatch(request, response) {
       : patches.findLastIndex((item) => !item.revertedAt);
   const patch = patches[patchIndex];
   if (!patch || patch.revertedAt) throw new Error("No active applied patch to revert.");
-  if (!body.approved) {
+  if (body.approved !== true) {
     return json(response, {
       ok: false,
       blocked: true,
@@ -596,8 +844,10 @@ async function revertPatch(request, response) {
   return serializePatchOperation(initialTask.rootPath, async () => {
     let task = await taskStore.get(body.taskId);
     task = await canonicalizeTaskRoot(task, "revert a patch");
+    await assertTaskCanMutate(task, "revert patches");
     await ensurePatchRecoveryReady(task.rootPath, task.rootIdentity);
     task = await canonicalizeTaskRoot(await taskStore.get(body.taskId), "revert a patch");
+    await assertTaskCanMutate(task, "revert patches");
     const currentPatch = (task.appliedPatches || [])[patchIndex];
     if (!currentPatch || currentPatch.revertedAt) throw new Error("No active applied patch to revert.");
     assertRevertApproval(currentPatch, body, task.rootIdentity);
@@ -605,7 +855,7 @@ async function revertPatch(request, response) {
     if (!currentPatch.parentIdentity || currentParentIdentity !== currentPatch.parentIdentity) {
       throw patchOperationError("PATCH_PARENT_CHANGED", "The applied patch parent directory changed after review. Revert was stopped before any write.", 409);
     }
-    const registry = getToolRegistry(task.rootPath);
+    const registry = getToolRegistry(task.rootPath, task.rootIdentity);
     if (typeof currentPatch.nextContent !== "string") {
       throw patchOperationError("PATCH_REVERT_BASELINE_MISSING", `The saved patch baseline is unavailable for ${currentPatch.path}. Inspect the file and revert it manually.`, 409);
     }
@@ -844,6 +1094,56 @@ function patchOperationError(code, message, status) {
   return error;
 }
 
+async function assertTaskCanMutate(task, action) {
+  await assertTaskWorkspaceCurrent(task, action);
+  const workspace = await workspaceCapabilityStore.assertCanMutate(task.rootPath, action);
+  if (task.workspaceId && task.workspaceId !== workspace.id) {
+    throw patchOperationError("WORKSPACE_CAPABILITY_MISMATCH", `The task belongs to a different workspace and cannot ${action}. Create a new task in the active workspace.`, 409);
+  }
+  if (!task.workspaceId && workspace.kind !== "built-in-demo") {
+    throw patchOperationError("WORKSPACE_TASK_RESCAN_REQUIRED", `This saved task predates server-bound workspace capabilities. Scan the active disposable copy and create a new task before attempting to ${action}.`, 409);
+  }
+  return workspace;
+}
+
+async function assertTaskWorkspaceCurrent(task, action) {
+  if (!task?.rootPath || !task.rootIdentity || !task.workspaceId) {
+    throw patchOperationError("WORKSPACE_TASK_RESCAN_REQUIRED", `This task does not have a complete server-bound workspace identity. Rescan the project and create a new task before attempting to ${action}.`, 409);
+  }
+  return assertBoundWorkspaceCurrent({
+    rootPath: task.rootPath,
+    rootIdentity: task.rootIdentity,
+    workspaceId: task.workspaceId
+  }, action);
+}
+
+async function assertLastWorkspaceCurrent(rootPath, action) {
+  if (!lastWorkspaceBinding
+    || !rootPath
+    || canonicalRootPath(rootPath) !== canonicalRootPath(lastWorkspaceBinding.rootPath)) {
+    throw patchOperationError("WORKSPACE_CONTEXT_MISSING", `Scan or activate a server-registered workspace before attempting to ${action}.`, 409);
+  }
+  return assertBoundWorkspaceCurrent(lastWorkspaceBinding, action);
+}
+
+async function assertBoundWorkspaceCurrent(binding, action) {
+  let current;
+  try {
+    current = await captureWorkspaceIdentity(binding.rootPath);
+  } catch {
+    throw patchOperationError("WORKSPACE_IDENTITY_CHANGED", `The workspace root is unavailable, linked, or unsafe. CodeClaw stopped before attempting to ${action}.`, 409);
+  }
+  if (current.digest !== binding.rootIdentity) {
+    throw patchOperationError("WORKSPACE_IDENTITY_CHANGED", `The folder at this path is not the same workspace that the server selected. CodeClaw stopped before attempting to ${action}.`, 409);
+  }
+  await assertRepositoryRootAllowed(current.rootPath, action);
+  const workspace = await workspaceCapabilityStore.describePath(current.rootPath).catch(() => null);
+  if (!workspace || workspace.id !== binding.workspaceId) {
+    throw patchOperationError("WORKSPACE_CAPABILITY_MISMATCH", `The workspace is no longer registered to this server state. Rescan it before attempting to ${action}.`, 409);
+  }
+  return { current, workspace };
+}
+
 function assertProposalApproval(proposal, requestBody, workspaceIdentity) {
   const digestIsCurrent = proposal?.proposalDigest && proposal.proposalDigest === patchProposalDigest(proposal);
   if (!proposal?.proposalId
@@ -888,7 +1188,8 @@ async function scanRepo(request, response) {
   const body = await readJson(request);
   const repositoryPath = await assertRepositoryDirectory(body.path, "scan");
   lastRepoProfile = await scanRepositoryWithFriendlyErrors(repositoryPath);
-  toolRegistry = new ToolRegistry({ rootPath: lastRepoProfile.rootPath, allowedCommands: lastRepoProfile.commands });
+  const workspace = await workspaceCapabilityStore.register(lastRepoProfile.rootPath);
+  await bindLastWorkspace(workspace, lastRepoProfile.rootPath, lastRepoProfile.commands);
   const memory = await memoryStore.upsertProfile(lastRepoProfile);
   await recordAudit({
     type: "repo.scan",
@@ -897,7 +1198,7 @@ async function scanRepo(request, response) {
     rootPath: lastRepoProfile.rootPath,
     metadata: { languages: lastRepoProfile.languages, commands: lastRepoProfile.commands }
   });
-  return json(response, { ok: true, profile: lastRepoProfile, memory });
+  return json(response, { ok: true, profile: lastRepoProfile, memory, workspace: lastWorkspace });
 }
 
 async function createPlan(request, response) {
@@ -922,17 +1223,48 @@ async function callTool(request, response) {
   if (body.tool === "write_patch") {
     throw patchOperationError("PATCH_TRANSACTION_REQUIRED", "Direct file writes are disabled. Generate a patch proposal, review it, and use the transaction-protected Apply action.", 409);
   }
-  const registry = getToolRegistry(body.rootPath);
-  const result = await registry.call(body.tool, body.args || {}, { approved: Boolean(body.approved) });
-  const rootPath = lastRepoProfile?.rootPath || body.rootPath;
+  if (!new Set(["list_files", "read_file", "search_code", "git_status", "git_diff", "run_command"]).has(body.tool)) {
+    throw patchOperationError("WORKSPACE_TOOL_NOT_ALLOWED", "This tool is not available through the generic workspace endpoint.", 409);
+  }
+  if (body.tool === "read_file") assertPublicReadPath(body.args?.path);
+  let task = body.taskId ? await taskStore.get(body.taskId) : null;
+  const rootPath = task?.rootPath || lastRepoProfile?.rootPath;
+  if (!rootPath) throw patchOperationError("WORKSPACE_CONTEXT_MISSING", "Scan or activate a server-registered workspace before calling tools.", 409);
+  if (body.rootPath && canonicalRootPath(body.rootPath) !== canonicalRootPath(rootPath)) {
+    throw patchOperationError("WORKSPACE_CAPABILITY_MISMATCH", "The client path does not match the server-bound task or active workspace.", 409);
+  }
+  const binding = task
+    ? await assertTaskWorkspaceCurrent(task, `call ${body.tool}`)
+    : await assertLastWorkspaceCurrent(rootPath, `call ${body.tool}`);
+  const registry = getToolRegistry(rootPath, binding.current.digest);
+  let result;
+  if (["run_command", "git_status", "git_diff"].includes(body.tool)) {
+    if (task) await assertTaskCanMutate(task, "run project commands");
+    else await workspaceCapabilityStore.assertCanMutate(rootPath, "run project commands");
+    if (body.tool !== "run_command" || body.approved === true) {
+      result = await serializePatchOperation(rootPath, async () => {
+        if (task) await assertTaskCanMutate(await taskStore.get(task.id), "run project commands");
+        else await workspaceCapabilityStore.assertCanMutate(rootPath, "run project commands");
+        return registry.call(body.tool, body.args || {}, { approved: body.approved === true });
+      });
+    } else {
+      result = await registry.call(body.tool, body.args || {}, { approved: false });
+    }
+  } else {
+    result = await registry.call(body.tool, body.args || {}, { approved: body.approved === true });
+  }
 
-  let task = null;
-  if (body.taskId) {
+  if (!result.blocked) {
+    if (task) await assertTaskWorkspaceCurrent(await taskStore.get(task.id), `complete ${body.tool}`);
+    else await assertLastWorkspaceCurrent(rootPath, `complete ${body.tool}`);
+  }
+
+  if (task) {
     task = await taskStore.appendToolCall(body.taskId, {
       tool: body.tool,
       args: summarizeArgs(body.args || {}),
       blocked: Boolean(result.blocked),
-      approved: Boolean(body.approved),
+      approved: body.approved === true,
       permission: result.permission,
       summary: summarizeToolResult(result)
     });
@@ -961,20 +1293,49 @@ async function callTool(request, response) {
       taskId: body.taskId || null,
       tool: body.tool,
       args: summarizeArgs(body.args || {}),
-      approved: Boolean(body.approved),
+      approved: body.approved === true,
       permission: result.permission
     }
   });
   return json(response, { ...result, task });
 }
 
-function getToolRegistry(rootPath) {
-  if (rootPath && (!lastRepoProfile || path.resolve(rootPath) !== lastRepoProfile.rootPath)) {
-    lastRepoProfile = { rootPath: path.resolve(rootPath), commands: [] };
-    toolRegistry = new ToolRegistry({ rootPath });
+function assertPublicReadPath(filePath) {
+  const segments = String(filePath || "").replaceAll("\\", "/").split("/").filter((segment) => segment && segment !== ".");
+  const basename = segments.at(-1) || "";
+  if (isSensitiveFile(basename) || segments.slice(0, -1).some(isProtectedDirectory)) {
+    throw patchOperationError("READ_PROTECTED_PATH_REFUSED", "CodeClaw refused to read private workspace metadata or sensitive files.", 409);
   }
-  if (!toolRegistry) throw new Error("Scan a repository before calling tools.");
-  return toolRegistry;
+}
+
+function getToolRegistry(rootPath, rootIdentity = "") {
+  if (!rootPath) throw new Error("Scan a repository before calling tools.");
+  const resolved = path.resolve(rootPath);
+  if (toolRegistry
+    && lastRepoProfile?.rootPath
+    && canonicalRootPath(lastRepoProfile.rootPath) === canonicalRootPath(resolved)
+    && (!rootIdentity || toolRegistry.rootIdentity === rootIdentity)) return toolRegistry;
+  return new ToolRegistry({ rootPath: resolved, rootIdentity, allowedCommands: [] });
+}
+
+async function bindLastWorkspace(workspace, rootPath, allowedCommands = []) {
+  const current = await captureWorkspaceIdentity(rootPath);
+  await assertRepositoryRootAllowed(current.rootPath, "bind the active workspace");
+  const registered = await workspaceCapabilityStore.describePath(current.rootPath).catch(() => null);
+  if (!registered || registered.id !== workspace.id) {
+    throw patchOperationError("WORKSPACE_CAPABILITY_MISMATCH", "The selected folder no longer matches the workspace registered by this server state.", 409);
+  }
+  lastWorkspace = workspace;
+  lastWorkspaceBinding = {
+    workspaceId: workspace.id,
+    rootPath: current.rootPath,
+    rootIdentity: current.digest
+  };
+  toolRegistry = new ToolRegistry({
+    rootPath: current.rootPath,
+    rootIdentity: current.digest,
+    allowedCommands
+  });
 }
 
 async function ensurePatchRecoveryReady(rootPath, rootIdentity) {
@@ -1140,6 +1501,26 @@ async function serveStatic(pathname, response) {
   response.end(content);
 }
 
+function assertLocalJsonRequest(request) {
+  if (request.method !== "POST") return;
+  const contentType = String(request.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw patchOperationError("JSON_CONTENT_TYPE_REQUIRED", "CodeClaw accepts state-changing requests only as application/json.", 415);
+  }
+  const origin = request.headers.origin;
+  if (!origin) return;
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw patchOperationError("LOCAL_ORIGIN_REQUIRED", "CodeClaw rejected an invalid request origin.", 403);
+  }
+  const loopback = parsed.protocol === "http:"
+    && ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)
+    && Number(parsed.port || 80) === port;
+  if (!loopback) throw patchOperationError("LOCAL_ORIGIN_REQUIRED", "CodeClaw rejected a cross-site request to the local workspace service.", 403);
+}
+
 function contentType(filePath) {
   const ext = path.extname(filePath);
   if (ext === ".html") return "text/html; charset=utf-8";
@@ -1152,7 +1533,11 @@ function contentType(filePath) {
 async function readJson(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch {
+    throw patchOperationError("JSON_BODY_INVALID", "CodeClaw rejected a malformed JSON request body.", 400);
+  }
 }
 
 async function loadModelConfig() {

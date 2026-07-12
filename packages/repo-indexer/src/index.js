@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { loadGitignoreMatcher } from "../../shared/src/ignore-utils.js";
-import { isSensitiveFile, isSkippedDirectory, isTextLikeFile, relativePath } from "../../shared/src/path-utils.js";
+import { isPathIgnoredStrict } from "../../shared/src/ignore-utils.js";
+import { isSensitiveDirectory, isSensitiveFile, isSkippedDirectory, isTextLikeFile, relativePath } from "../../shared/src/path-utils.js";
 
 const MAX_FILES = 800;
 const MAX_SUMMARY_BYTES = 6000;
@@ -14,7 +14,9 @@ export async function scanRepository(rootPath, options = {}) {
 
   const files = [];
   const skipped = [];
-  const isIgnored = options.ignoreMatcher || await loadGitignoreMatcher(resolvedRoot);
+  const isIgnored = options.ignoreMatcher
+    ? async (relative, isDirectory) => options.ignoreMatcher(relative, isDirectory)
+    : async (relative, isDirectory) => isPathIgnoredStrict(resolvedRoot, relative, isDirectory);
   await walk(resolvedRoot, resolvedRoot, files, skipped, options.maxFiles || MAX_FILES, isIgnored);
 
   const manifests = await readKnownManifests(resolvedRoot);
@@ -45,12 +47,16 @@ async function walk(rootPath, currentPath, files, skipped, maxFiles, isIgnored) 
     const rel = relativePath(rootPath, absolutePath);
 
     if (entry.isDirectory()) {
-      if (isIgnored(rel, true)) {
-        skipped.push({ path: rel, reason: "gitignore" });
+      if (isSensitiveDirectory(entry.name)) {
+        skipped.push({ path: rel, reason: "sensitive-directory" });
         continue;
       }
       if (isSkippedDirectory(entry.name)) {
         skipped.push({ path: rel, reason: "skipped-directory" });
+        continue;
+      }
+      if (await isIgnored(rel, true)) {
+        skipped.push({ path: rel, reason: "gitignore" });
         continue;
       }
       await walk(rootPath, absolutePath, files, skipped, maxFiles, isIgnored);
@@ -58,27 +64,31 @@ async function walk(rootPath, currentPath, files, skipped, maxFiles, isIgnored) 
     }
 
     if (!entry.isFile()) continue;
-    if (isIgnored(rel, false)) {
-      skipped.push({ path: rel, reason: "gitignore" });
-      continue;
-    }
     if (isSensitiveFile(entry.name)) {
       skipped.push({ path: rel, reason: "sensitive-file" });
       continue;
     }
+    if (await isIgnored(rel, false)) {
+      skipped.push({ path: rel, reason: "gitignore" });
+      continue;
+    }
 
-    const stat = await fs.stat(absolutePath);
+    const stat = await fs.lstat(absolutePath, { bigint: true });
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) {
+      skipped.push({ path: rel, reason: "unsafe-filesystem-entry" });
+      continue;
+    }
     const item = {
       path: rel,
       name: entry.name,
       extension: path.extname(entry.name).toLowerCase(),
-      size: stat.size,
+      size: Number(stat.size),
       textLike: isTextLikeFile(absolutePath),
       summary: null,
       symbols: []
     };
 
-    if (item.textLike && stat.size <= MAX_SUMMARY_BYTES) {
+    if (item.textLike && stat.size <= BigInt(MAX_SUMMARY_BYTES)) {
       const details = await inspectTextFile(absolutePath, item.extension);
       item.summary = details.summary;
       item.symbols = details.symbols;
@@ -89,7 +99,7 @@ async function walk(rootPath, currentPath, files, skipped, maxFiles, isIgnored) 
 
 async function inspectTextFile(filePath, extension) {
   try {
-    const content = stripBom(await fs.readFile(filePath, "utf8"));
+    const content = stripBom(await readStableUtf8File(filePath));
     return {
       summary: content.split(/\r?\n/).filter(Boolean).slice(0, 24).join("\n").slice(0, 1200),
       symbols: extractSymbols(content, extension)
@@ -130,12 +140,37 @@ async function readKnownManifests(rootPath) {
   const manifests = {};
   for (const name of ["package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod"]) {
     try {
-      const content = stripBom(await fs.readFile(path.join(rootPath, name), "utf8"));
+      const content = stripBom(await readStableUtf8File(path.join(rootPath, name)));
       manifests[name] = content;
       if (name === "package.json") manifests.packageJson = JSON.parse(content);
     } catch {}
   }
   return manifests;
+}
+
+async function readStableUtf8File(filePath) {
+  const before = await fs.lstat(filePath, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("Unsafe manifest or source file.");
+  const handle = await fs.open(filePath, "r");
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!sameStableFileStat(before, opened)) throw new Error("Source file changed before read.");
+    const raw = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (!sameStableFileStat(opened, after)) throw new Error("Source file changed during read.");
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw);
+  } finally {
+    await handle.close();
+  }
+}
+
+function sameStableFileStat(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.birthtimeNs === right.birthtimeNs
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 function stripBom(value) {

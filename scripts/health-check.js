@@ -53,6 +53,12 @@ try {
     sessionRecovery: html.includes("sessionRecovery") && appJs.includes("function hydrateRestoredSession") && appJs.includes("function startFreshClientWorkflow"),
     modulePurpose: html.includes("purpose.preflight") && html.includes("purpose.patch") && i18nJs.includes("purpose.verify"),
     explicitBoundaries: html.includes("applyBoundary.title") && html.includes("verifyBoundary") && appJs.includes("function renderVerifyBoundary"),
+    workspaceCapabilities: html.includes("workspaceCapability")
+      && html.includes("previewCopyButton")
+      && html.includes("workspaceList")
+      && appJs.includes("/api/workspaces/copy/preview")
+      && appJs.includes("function workspaceWriteGateStatus")
+      && i18nJs.includes("workspace.disclosure.body"),
     friendlyErrors: appJs.includes("function friendlyErrorMessage")
   };
   for (const [name, ok] of Object.entries(markers)) assert(ok, `Missing UI marker: ${name}`);
@@ -79,11 +85,25 @@ try {
   assert(preflight.ok, "Preflight did not return ok.");
   assert(preflight.report?.mode === "read-only-preflight", "Preflight mode changed.");
   assert(preflight.report?.writeAttempted === false, "Preflight attempted a write.");
+  assert(preflight.workspace?.kind === "original-readonly", "A normal preflight did not receive the original-readonly capability.");
+  assert(preflight.workspace?.canWrite === false, "A normal preflight unexpectedly received write capability.");
   assert(preflight.report?.contextFiles?.length > 0, "Preflight selected no context files.");
   const tools = new Set((preflight.task?.toolCalls || []).map((call) => call.tool));
   assert(tools.has("read_file"), "Preflight did not read files.");
   assert(tools.has("search_code"), "Preflight did not search code.");
   assert(!tools.has("write_patch") && !tools.has("run_command"), "Preflight used a write or command tool.");
+  await expectApiFailure("/api/tools/call", {
+    tool: "run_command",
+    args: { command: preflight.profile.commands[0]?.command || "npm run test" },
+    rootPath: preflight.profile.rootPath,
+    taskId: preflight.task.id,
+    approved: true,
+    mode: "disposable-copy"
+  }, "WORKSPACE_ORIGINAL_READ_ONLY");
+
+  const copyPreview = await request("/api/workspaces/copy/preview", { sourcePath: fixturePath });
+  assert(copyPreview.preview?.disclosure?.createsCopy === false, "Copy Preview unexpectedly created a workspace.");
+  assert(copyPreview.preview?.disclosure?.safeToShare === false, "Copy Preview incorrectly claimed the source is safe to share.");
 
   const session = await request("/api/session/last");
   assert(session.session?.restored, "Last session was not restorable after preflight.");
@@ -95,6 +115,7 @@ try {
     goal: demoGoal
   });
   assert(demoPreflight.report?.writeAttempted === false, "Chinese Demo preflight attempted a write.");
+  assert(demoPreflight.workspace?.kind === "built-in-demo", "Demo capability was not resolved by the server.");
   const demoPatch = await request("/api/model/patch-proposal", {
     goal: demoGoal,
     repoProfile: demoPreflight.profile,

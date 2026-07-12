@@ -7,7 +7,7 @@
 ## 重启后的第一条指令
 
 ```text
-请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.10 崩溃安全事务已完成机器验证，下一阶段是 3.0.11 可丢弃项目副本；之后依次推进 3.0.12、3.0.13、3.0.14 和 4B。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。每阶段实现、验证、清理并独立提交；不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码，也不要直接 push。
+请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.11 可丢弃项目副本已完成机器验证，下一阶段是 3.0.12 模型出站透明度与隐私；之后依次推进 3.0.13、3.0.14 和 4B。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。每阶段实现、验证、清理并独立提交；不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码，也不要直接 push。
 ```
 
 ## 当前结论
@@ -26,9 +26,10 @@ c402b45 Prioritize remediation in trial status
 ```
 
 - 最新阶段提交以 `git log -1 --oneline` 为准。后续提交仍由用户决定何时运行 `git pushall`；Codex 不直接 push。
-- 下一轮真人测试明确暂缓。`Stage 3.0.10` 已完成机器验证，当前下一阶段是 `Stage 3.0.11`，详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
+- 下一轮真人测试明确暂缓。`Stage 3.0.11` 已完成机器验证，当前下一阶段是 `Stage 3.0.12`，详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
 - `Stage 3.0.9` 的工程映射完成不代表复测准入通过：host-1 七项人工验收仍缺失，真实状态保持 `REMEDIATION_HOLD`；tester-3 仍为 `not scheduled`。
 - Stage 3.0.10 的最终机器证据为 `npm.cmd test` 187/187、`npm.cmd run check` 通过，以及 health、smoke、四个 pilot 全部通过。它实现了三阶段全局 claim、写前 journal、root/parent/临时文件实体身份绑定和跨 state-dir 恢复阻断，但没有宣称真实断电、自定义 ACL、杀毒软件/网络盘或真人原项目写入已验收。
+- Stage 3.0.11 的最终机器证据为 `npm.cmd test` 245 pass、0 fail、1 个环境性 symlink skip（246 total），`npm.cmd run check` 通过且三语各 665 键，以及 health、smoke、四个 pilot 全部通过。它实现了完整 Data Boundary Manifest、三类服务端工作区能力、显式副本创建/激活/清理、崩溃恢复和 exact-target 复验；原项目仍不可写或运行项目命令。副本不等于匿名化或适合分享，自身被忽略的 `.gitignore` 也不宣称规则快照已被保留。
 
 ## 重启后先检查
 

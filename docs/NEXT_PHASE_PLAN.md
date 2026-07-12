@@ -340,8 +340,8 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 | 阶段 | 状态 | 机器退出条件 | 不得自动宣称的结果 |
 | --- | --- | --- | --- |
 | 3.0.10 崩溃安全 Apply/Revert | machine verified；host acceptance pending | 写前 WAL、原子替换、跨进程项目锁、启动恢复、冲突停写、事务绕行关闭、故障矩阵通过 | 断电绝对持久性、跨操作系统用户/不同锁目录互斥、Windows 自定义 ACL 完整保留、真实项目写入已开放 |
-| 3.0.11 可丢弃项目副本 | next | 统一数据边界策略、预览/创建/激活/清理、哈希 Manifest、原项目服务端只读能力 | “副本可安全分享”或“副本不含普通源码” |
-| 3.0.12 隐私与模型出站透明度 | planned | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化 | 在线模型零出站；本机模型零本地 HTTP 数据传输 |
+| 3.0.11 可丢弃项目副本 | machine verified；host acceptance pending | 统一数据边界策略、预览/创建/激活/清理、哈希 Manifest、原项目服务端只读能力 | “副本可安全分享”或“副本不含普通源码” |
+| 3.0.12 隐私与模型出站透明度 | next | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化 | 在线模型零出站；本机模型零本地 HTTP 数据传输 |
 | 3.0.13 新手界面与无障碍 | planned | 单一权威流程、新手/高级模式、语义标签、焦点/键盘/响应式静态契约、三语门禁 | 新手主观清晰度、NVDA/高对比度/真实像素验收 |
 | 3.0.14 稳定性与性能 | planned | 测试 fixture 全隔离、请求/扫描/模型预算、取消与超时、进程/端口/状态清理、增长上限 | 真实大型项目的主观等待感和真实断电体验 |
 | 4B Windows 启动器与候选包 | planned | 候选身份校验、回环监听、就绪后开页、端口冲突分流、哈希 Manifest/篡改检测、无孤儿进程 | 干净 Windows 10/11、Defender/SmartScreen、双击体验等人工验收 |
@@ -373,4 +373,18 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 5. 每阶段提交前运行聚焦测试、全量 `test/check`、health/smoke 和相关 pilot；随后检查 Git 暂存清单并删除临时 fixture、状态目录和测试开关。
 6. 不运行 tester-2 after-live，不创建 tester-3，不生成或提交真人记录、截图、日志、`dist/`、`.codeclaw/` 或 evidence packet。
 
-当前正式状态：`Stage 3.0.10 machine verified; Stage 3.0.11 next; remediation REMEDIATION_HOLD`。host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
+### 15.3 Stage 3.0.11 已完成的机器证据
+
+- Data Boundary Policy 完整枚举复制范围并绑定 SHA-256、目录/文件实体身份、严格 nested `.gitignore`、敏感对象阻断和便携路径冲突；它不复用最多 800 文件的 UI 扫描清单。
+- 服务端只发放 `original-readonly`、`built-in-demo`、`disposable-copy` 三类能力。客户端路径、模式、工作区 ID 或确认字段不能把原项目提升为可写。
+- 副本创建使用签名 Preview、私有 copy-root owner claim、持久创建阶段、原子 rename、marker 和 exact-target 复验；pre-marker、post-marker、post-rename、恢复和首次激活都拒绝额外 excluded 内容。
+- Cleanup 先持久预约再移入可证明所有权的 quarantine；同路径替换、未知 copy-root 条目、linked ancestor、linked source 和 linked Demo 均 fail closed。
+- 所有 task-bound 读取、补丁 baseline、Apply/Revert 和命令都绑定 workspace ID 与 root identity；原路径替换成指向私有 state 的 junction 时不泄露内容。
+- Git 工具不向父仓库发现，不执行外部 fsmonitor/ext diff；原项目的 Apply、Revert、Git 与项目命令保持禁止。
+- UI 明确副本仍含普通源码、未匿名化、不代表适合分享，创建后也不会自动激活。
+
+最终机器证据：`npm.cmd test` 为 246 total、245 pass、0 fail、1 个环境性 file-symlink skip；`npm.cmd run check` 通过（三语各 665 个 key，0 warning/failure）；health、smoke、`pilot:self`、`pilot:fixture`、`pilot:inbox`、`pilot:model` 全部通过，fake model 请求为 9，Demo/副本 fixture 恢复且源 fixture 未变化。
+
+诚实边界：Node 路径 API 仍有极小 TOCTOU 窗口；未验证真实断电、异常文件系统、ACL/杀毒软件干预和真人副本使用。若 `.gitignore` 忽略其自身，该规则文件不会进入副本，因此不宣称原 ignore 规则快照会约束副本未来新建路径。浏览器插件缺少自动化 helper，像素、键盘、NVDA、高对比度和干净 Windows 验收仍为人工项。
+
+当前正式状态：`Stage 3.0.11 machine verified; Stage 3.0.12 next; remediation REMEDIATION_HOLD`。host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。

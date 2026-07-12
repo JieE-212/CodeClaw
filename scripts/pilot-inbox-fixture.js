@@ -14,6 +14,7 @@ const originalApi = await fs.readFile(apiPath, "utf8");
 const originalInbox = await fs.readFile(inboxPath, "utf8");
 const originalInboxTest = await fs.readFile(inboxTestPath, "utf8");
 const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-inbox-fixture-"));
+const copyRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-inbox-copies-"));
 const appPort = await findFreePort();
 const modelPort = await findFreePort();
 const appBaseUrl = `http://127.0.0.1:${appPort}`;
@@ -47,7 +48,8 @@ const appServer = spawn(process.execPath, ["apps/web/server.js"], {
     ...process.env,
     CODECLAW_PORT: String(appPort),
     CODECLAW_STATE_DIR: stateDir,
-    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks"),
+    CODECLAW_DISPOSABLE_ROOT: copyRoot
   },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
@@ -70,7 +72,8 @@ try {
     model: "inbox-fixture-model"
   });
 
-  const scan = await appRequest("/api/repo/scan", { path: fixturePath });
+  const disposableWorkspace = await createActivatedDisposableCopy(fixturePath);
+  const scan = await appRequest("/api/repo/scan", { path: disposableWorkspace.rootPath });
   const task = await appRequest("/api/tasks/create", {
     rootPath: scan.profile.rootPath,
     goal: "add channel filtering to the support inbox API and view state"
@@ -147,11 +150,17 @@ try {
     await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: index, patchIdentity: applied.task.appliedPatches[index].patchIdentity, workspaceIdentity: applied.task.rootIdentity, approved: true });
   }
 
-  const finalApi = await fs.readFile(apiPath, "utf8");
-  const finalInbox = await fs.readFile(inboxPath, "utf8");
-  const finalInboxTest = await fs.readFile(inboxTestPath, "utf8");
-  if (finalApi !== originalApi || finalInbox !== originalInbox || finalInboxTest !== originalInboxTest) {
-    throw new Error("Inbox fixture pilot did not restore files after revert.");
+  const finalCopyApi = await fs.readFile(path.join(disposableWorkspace.rootPath, "src", "api.js"), "utf8");
+  const finalCopyInbox = await fs.readFile(path.join(disposableWorkspace.rootPath, "src", "inbox.js"), "utf8");
+  const finalCopyInboxTest = await fs.readFile(path.join(disposableWorkspace.rootPath, "test", "inbox.test.js"), "utf8");
+  if (finalCopyApi !== originalApi || finalCopyInbox !== originalInbox || finalCopyInboxTest !== originalInboxTest) {
+    throw new Error("Inbox fixture pilot did not restore disposable-copy files after revert.");
+  }
+  const finalSourceApi = await fs.readFile(apiPath, "utf8");
+  const finalSourceInbox = await fs.readFile(inboxPath, "utf8");
+  const finalSourceInboxTest = await fs.readFile(inboxTestPath, "utf8");
+  if (finalSourceApi !== originalApi || finalSourceInbox !== originalInbox || finalSourceInboxTest !== originalInboxTest) {
+    throw new Error("Inbox fixture pilot changed its source fixture instead of the disposable copy.");
   }
 
   console.log(JSON.stringify({
@@ -167,15 +176,42 @@ try {
     patchFiles: proposal.proposal.files.map((file) => file.path),
     verificationExitCode: verification.result.exitCode,
     reviewDraft: completed.task.reviewDraft.split("\n")[0],
-    fixtureRestored: true
+    workspaceKind: disposableWorkspace.kind,
+    disposableCopyRestored: true,
+    sourceFixtureUnchanged: true
   }, null, 2));
 } finally {
-  appServer.kill();
-  fakeModelServer.close();
-  await fs.writeFile(apiPath, originalApi, "utf8").catch(() => null);
-  await fs.writeFile(inboxPath, originalInbox, "utf8").catch(() => null);
-  await fs.writeFile(inboxTestPath, originalInboxTest, "utf8").catch(() => null);
+  await stopChild(appServer);
+  await closeServer(fakeModelServer);
+  await restoreFileIfChanged(apiPath, originalApi);
+  await restoreFileIfChanged(inboxPath, originalInbox);
+  await restoreFileIfChanged(inboxTestPath, originalInboxTest);
   await fs.rm(stateDir, { recursive: true, force: true });
+  await fs.rm(copyRoot, { recursive: true, force: true });
+}
+
+async function createActivatedDisposableCopy(sourcePath) {
+  const previewResult = await appRequest("/api/workspaces/copy/preview", { sourcePath });
+  const preview = previewResult.preview;
+  if (!preview?.eligible || preview.blockers?.length) {
+    throw new Error(`Inbox disposable-copy preview was blocked (${preview?.blockers?.length || 0} blocker(s)).`);
+  }
+  const created = await appRequest("/api/workspaces/copy/create", {
+    previewId: preview.previewId,
+    previewDigest: preview.previewDigest
+  });
+  if (created.workspace?.active) throw new Error("Creating a disposable copy must not activate it automatically.");
+  const activated = await appRequest("/api/workspaces/activate", {
+    workspaceId: created.workspace.id,
+    workspaceDigest: created.workspace.workspaceDigest
+  });
+  if (activated.workspace?.kind !== "disposable-copy"
+    || activated.workspace.active !== true
+    || activated.workspace.canWrite !== true
+    || activated.workspace.canRunCommands !== true) {
+    throw new Error("Inbox disposable copy did not receive an activated server capability.");
+  }
+  return activated.workspace;
 }
 
 function ensureContextPaths(files) {
@@ -269,6 +305,38 @@ function listen(server, port) {
       resolve();
     });
   });
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill();
+  if (await waitForChildExit(child, 5000)) return;
+  child.kill("SIGKILL");
+  if (!(await waitForChildExit(child, 5000))) throw new Error("CodeClaw server did not stop during pilot cleanup.");
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const finish = (exited) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      resolve(exited);
+    };
+    child.once("exit", onExit);
+  });
+}
+
+function closeServer(server) {
+  if (!server?.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+async function restoreFileIfChanged(filePath, expected) {
+  const current = await fs.readFile(filePath, "utf8").catch(() => null);
+  if (current !== expected) await fs.writeFile(filePath, expected, "utf8");
 }
 
 function findFreePort() {

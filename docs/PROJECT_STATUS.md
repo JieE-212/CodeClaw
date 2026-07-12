@@ -639,15 +639,14 @@ The remediation mapping, candidate-binding checks, and engineering safeguards ar
 
 ## Next Planned Phase
 
-Stage 3.0.11 is next: build a server-authoritative disposable-copy workflow before allowing any original-project write. Real-person testing remains intentionally postponed.
+Stage 3.0.11 is machine verified. Stage 3.0.12 is next: require an exact, single-use preview/approval boundary before any model operation can send data. Real-person testing remains intentionally postponed.
 
 The engineering order is:
 
-1. Stage 3.0.11 disposable project copies and workspace capabilities.
-2. Stage 3.0.12 exact model outbound preview/approval and local-state privacy reduction.
-3. Stage 3.0.13 beginner UI and accessibility semantics, with real visual/NVDA checks kept manual.
-4. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
-5. Stage 4B candidate-aware Windows launcher and hashed candidate package.
+1. Stage 3.0.12 exact model outbound preview/approval and local-state privacy reduction.
+2. Stage 3.0.13 beginner UI and accessibility semantics, with real visual/NVDA checks kept manual.
+3. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
+4. Stage 4B candidate-aware Windows launcher and hashed candidate package.
 
 Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code and fixture copies must be deleted after verification; do not retain tombstone code.
 
@@ -680,4 +679,23 @@ Honest remaining limits:
 - Browser automation is unavailable because the bundled browser plugin is missing `scripts/browser-client.mjs`; no pixel-level or real keyboard/NVDA acceptance is claimed.
 - The seven host-1 manual checks, a disposable-copy real-project exercise, and real forced-termination/power-loss acceptance remain pending. Original-project writes are not declared open.
 
-Next: Stage 3.0.11 builds a server-authoritative disposable-copy workflow and keeps original projects read-only. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
+## Stage 3.0.11 - Server-authoritative disposable workspaces
+
+Stage 3.0.11 is machine verified. Original projects remain server-enforced read-only; only the built-in Demo and an explicitly activated, registered disposable copy can Apply, Revert, or run an allowlisted project command.
+
+Implemented:
+
+- Added a complete bounded Data Boundary Policy independent of the 800-file display scan, with strict nested `.gitignore`, SHA-256, filesystem entity identities, portable-path collision detection, and fail-closed handling for sensitive names, links, hard links, and special objects.
+- Added server-authoritative `original-readonly`, `built-in-demo`, and `disposable-copy` capabilities. Client paths, modes, workspace IDs, and `approved: true` cannot elevate authority.
+- Added copy Preview/Create/List/Activate/Cleanup APIs and UI. Creation uses durable phases, a private copy-root owner claim, signed state, an ownership marker, quarantine-based recovery, and exact target verification before the marker, after the marker, after rename, during recovery, and before first activation.
+- Required the marker to be the target's only exclusion, so injected `.git`, `node_modules`, gitignored/generated content, sensitive files, or unexpected objects cannot be registered as a verified copy.
+- Bound tasks and read/write/command tools to workspace ID plus root identity. Same-path replacement with a junction cannot redirect task reads into CodeClaw private state.
+- Rejected linked source roots before server canonicalization and rejected missing copy roots below linked ancestors before mkdir or ownership-claim writes.
+- Prevented Git discovery above the workspace, cleared inherited `GIT_*` behavior, and kept original-project Apply, Revert, Git tools, and project commands blocked.
+- Kept the user-facing disclosure explicit: a copy contains ordinary source, is not anonymized, is not automatically safe to share, and does not sandbox project scripts.
+
+Machine evidence: `npm.cmd test` reported 246 total, 245 pass, 0 fail, and 1 environment-only file-symlink skip; `npm.cmd run check` passed with 665 keys in each of `en`, `zh-CN`, and `ru`; `health`, `smoke`, `pilot:self`, `pilot:fixture`, `pilot:inbox`, and `pilot:model` passed. The model contract made 9 fake local requests; Demo and disposable fixtures were restored and source fixtures remained unchanged.
+
+Honest limits: Node path operations retain a very small documented TOCTOU interval; real power loss, unusual filesystems, ACL/antivirus interference, and real-person copy use remain unverified. If a `.gitignore` ignores itself, it is excluded with its ignored payload and the original ignore-rule snapshot is not preserved for future paths created inside the copy. The bundled browser automation helper is unavailable, so no pixel, keyboard, NVDA, high-contrast, or clean-Windows acceptance is claimed.
+
+Next: Stage 3.0.12 adds exact model outbound preview/approval, single-use send authorization, endpoint restrictions, and local-state privacy reduction. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).

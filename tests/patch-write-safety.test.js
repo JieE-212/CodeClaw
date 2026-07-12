@@ -8,17 +8,43 @@ import { spawn } from "node:child_process";
 import { TaskStore } from "../packages/task-store/src/index.js";
 import { hashContent } from "../packages/tool-registry/src/index.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../packages/shared/src/cross-process-lock.js";
+import { createActivatedWorkspace } from "./helpers/activated-workspace.js";
 
-test("patch APIs reject stale baselines, roll back partial batches, and protect post-apply edits", async () => {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-patch-safety-workspace-"));
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-patch-safety-state-"));
+test("patch APIs reject stale and ignored targets, while protecting post-apply edits", async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-patch-safety-"));
+  const source = path.join(base, "source");
+  const stateDir = path.join(base, "state");
+  const copyRoot = path.join(base, "copies");
+  const calculatorOriginal = [
+    "import test from \"node:test\";",
+    "import assert from \"node:assert/strict\";",
+    "import { divide } from \"../src/calculator.js\";",
+    "test(\"divide\", () => assert.equal(divide(8, 2), 4));",
+    ""
+  ].join("\n");
+  await fs.mkdir(path.join(source, "test"), { recursive: true });
+  await fs.writeFile(path.join(source, ".gitignore"), "blocked.txt\n", "utf8");
+  await fs.writeFile(path.join(source, "test", "calculator.test.js"), calculatorOriginal, "utf8");
+  await fs.writeFile(path.join(source, "first.txt"), "first-old\n", "utf8");
+  const activated = await createActivatedWorkspace({ sourcePath: source, stateDir, copyRoot });
+  const workspace = activated.rootPath;
+  // Ignored source payloads are intentionally absent from the disposable copy. This
+  // local file proves that a later ignored target is rejected before any batch write.
+  await fs.writeFile(path.join(workspace, "blocked.txt"), "blocked-old\n", "utf8");
+
   const port = await findFreePort();
   const projectLockDir = path.join(stateDir, "project-locks");
   const baseUrl = `http://127.0.0.1:${port}`;
   const store = new TaskStore({ storagePath: path.join(stateDir, "tasks.json") });
   const server = spawn(process.execPath, ["apps/web/server.js"], {
     cwd: process.cwd(),
-    env: { ...process.env, CODECLAW_PORT: String(port), CODECLAW_STATE_DIR: stateDir, CODECLAW_PROJECT_LOCK_DIR: projectLockDir },
+    env: {
+      ...process.env,
+      CODECLAW_PORT: String(port),
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: projectLockDir,
+      CODECLAW_DISPOSABLE_ROOT: copyRoot
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
@@ -29,23 +55,11 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
   const calculatorPath = path.join(workspace, "test", "calculator.test.js");
   const firstPath = path.join(workspace, "first.txt");
   const ignoredPath = path.join(workspace, "blocked.txt");
-  const calculatorOriginal = [
-    "import test from \"node:test\";",
-    "import assert from \"node:assert/strict\";",
-    "import { divide } from \"../src/calculator.js\";",
-    "test(\"divide\", () => assert.equal(divide(8, 2), 4));",
-    ""
-  ].join("\n");
 
   try {
-    await fs.mkdir(path.dirname(calculatorPath), { recursive: true });
-    await fs.writeFile(path.join(workspace, ".gitignore"), "blocked.txt\n", "utf8");
-    await fs.writeFile(calculatorPath, calculatorOriginal, "utf8");
-    await fs.writeFile(firstPath, "first-old\n", "utf8");
-    await fs.writeFile(ignoredPath, "blocked-old\n", "utf8");
     await waitForHealth({ baseUrl, server, serverOutput: () => serverOutput });
 
-    const staleTask = await store.create({ goal: "add divide by zero test", rootPath: workspace });
+    const staleTask = await store.create({ goal: "add divide by zero test", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(staleTask.id, {
       path: "test/calculator.test.js",
       content: calculatorOriginal,
@@ -72,12 +86,12 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
     assert.equal(await fs.readFile(calculatorPath, "utf8"), privateManualEdit);
     assert.equal((await store.get(staleTask.id)).appliedPatches.length, 0);
 
-    const batchTask = await store.create({ goal: "apply two files", rootPath: workspace });
+    const batchTask = await store.create({ goal: "reject an ignored target before starting a batch", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(batchTask.id, { path: "first.txt", content: "first-old\n", contentComplete: true });
     await store.appendContextFile(batchTask.id, { path: "blocked.txt", content: "blocked-old\n", contentComplete: true });
     const batchProposal = await store.setPatchProposal(batchTask.id, {
       applicable: true,
-      summary: "Update two files.",
+      summary: "Attempt a batch containing an ignored target.",
       files: [
         { path: "first.txt", content: "first-next\n" },
         { path: "blocked.txt", content: "blocked-next\n" }
@@ -85,14 +99,14 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
     });
     const failedBatch = await request(baseUrl, "/api/tasks/apply-patch", { taskId: batchTask.id, proposalId: batchProposal.patchProposal.proposalId, proposalDigest: batchProposal.patchProposal.proposalDigest, approved: true });
     assert.equal(failedBatch.response.status, 409);
-    assert.equal(failedBatch.payload.code, "PATCH_APPLY_FAILED");
+    assert.equal(failedBatch.payload.code, "READ_IGNORED_PATH_REFUSED");
     assert.equal(await fs.readFile(firstPath, "utf8"), "first-old\n");
     assert.equal(await fs.readFile(ignoredPath, "utf8"), "blocked-old\n");
     const batchAfterFailure = await store.get(batchTask.id);
     assert.equal(batchAfterFailure.status, "patch_ready");
     assert.equal(batchAfterFailure.appliedPatches.length, 0);
 
-    const revertTask = await store.create({ goal: "protect later edits", rootPath: workspace });
+    const revertTask = await store.create({ goal: "protect later edits", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(revertTask.id, { path: "first.txt", content: "first-old\n", contentComplete: true });
     const revertProposal = await store.setPatchProposal(revertTask.id, {
       applicable: true,
@@ -119,7 +133,7 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
     assert.equal(await fs.readFile(firstPath, "utf8"), "first-old\n");
     assert.ok((await store.get(revertTask.id)).appliedPatches[0].revertedAt);
 
-    const stackedTask = await store.create({ goal: "revert the newest change first", rootPath: workspace });
+    const stackedTask = await store.create({ goal: "revert the newest change first", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(stackedTask.id, { path: "first.txt", content: "first-old\n", contentComplete: true });
     const firstStackedProposal = await store.setPatchProposal(stackedTask.id, {
       applicable: true,
@@ -151,7 +165,7 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
     assert.equal(await fs.readFile(firstPath, "utf8"), "first-old\n");
 
     const createdPath = path.join(workspace, "generated.txt");
-    const createTask = await store.create({ goal: "create and safely revert a file", rootPath: workspace });
+    const createTask = await store.create({ goal: "create and safely revert a file", rootPath: workspace, workspaceId: activated.workspace.id });
     const createProposal = await store.setPatchProposal(createTask.id, {
       applicable: true,
       path: "generated.txt",
@@ -168,7 +182,7 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
     assert.equal(removedAgain.response.status, 200);
     await assert.rejects(fs.access(createdPath), { code: "ENOENT" });
 
-    const approvalTask = await store.create({ goal: "bind approval to reviewed proposal", rootPath: workspace });
+    const approvalTask = await store.create({ goal: "bind approval to reviewed proposal", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(approvalTask.id, { path: "first.txt", content: "first-old\n", contentComplete: true });
     const reviewed = await store.setPatchProposal(approvalTask.id, { applicable: true, path: "first.txt", content: "reviewed-change\n", summary: "reviewed A" });
     const lockManager = new CrossProcessLockManager({
@@ -196,7 +210,7 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
     assert.equal(await fs.readFile(firstPath, "utf8"), "first-old\n");
     await assert.rejects(fs.access(path.join(workspace, "surprise.txt")), { code: "ENOENT" });
 
-    const legacyTask = await store.create({ goal: "revert legacy patch record", rootPath: workspace });
+    const legacyTask = await store.create({ goal: "revert legacy patch record", rootPath: workspace, workspaceId: activated.workspace.id });
     await fs.writeFile(firstPath, "legacy-after\n", "utf8");
     await store.recordAppliedPatch(legacyTask.id, {
       path: "first.txt",
@@ -222,8 +236,7 @@ test("patch APIs reject stale baselines, roll back partial batches, and protect 
   } finally {
     server.kill();
     await waitForExit(server);
-    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 3 });
-    await fs.rm(stateDir, { recursive: true, force: true, maxRetries: 3 });
+    await fs.rm(base, { recursive: true, force: true, maxRetries: 3 });
   }
 });
 

@@ -29,7 +29,8 @@ test("saved sessions require an explicit restore decision and Demo starts clean"
   assert.match(app, /if \(sessionRestoreSuperseded\) return;/);
   assert.match(app, /continueSessionButton\?\.addEventListener[\s\S]*hydrateRestoredSession\(payload\)/);
   assert.match(app, /demoButton\.addEventListener\("click", \(\) => \{\s*setActiveView\("workspace"\);\s*startFreshClientWorkflow\(\);/);
-  assert.match(app, /sessionRestoreSuperseded = true;[\s\S]*toolOutput\.textContent = t\("tool\.output\.scanFirst"\);/);
+  assert.match(app, /function resetWorkspaceBoundState\(\)[\s\S]*toolOutput\.textContent = t\("tool\.output\.scanFirst"\);/);
+  assert.match(app, /function startFreshClientWorkflow\(\)[\s\S]*sessionRestoreSuperseded = true;[\s\S]*resetWorkspaceBoundState\(\);/);
   assert.doesNotMatch(app, /async function refreshTask\(/);
   assert.match(app, /preflight\.autoProgress\.body/);
 });
@@ -81,3 +82,94 @@ test("write-safety conflicts use localized guidance without exposing raw file co
     ]) assert.ok(DICTIONARIES[language][key]?.length > 20, `${language}.${key} should be actionable`);
   }
 });
+
+test("disposable-copy controls expose one server-authoritative workspace surface", () => {
+  assert.match(html, /data-ui-marker="server-authoritative-workspace"/);
+  for (const id of [
+    "workspaceState",
+    "workspaceCapability",
+    "previewCopyButton",
+    "createCopyButton",
+    "refreshWorkspacesButton",
+    "copyPreview",
+    "workspaceList"
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+
+  assert.match(styles, /\.workspace-safety-panel \{ grid-column:1 \/ -1; \}/);
+  assert.match(styles, /\.workspace-capability\.readonly/);
+  assert.match(styles, /\.workspace-capability\.copy/);
+  assert.match(styles, /\.copy-preview-metrics/);
+  assert.match(styles, /\.workspace-list-item/);
+});
+
+test("copy lifecycle uses opaque server records and never auto-activates a created copy", () => {
+  for (const endpoint of [
+    "/api/workspaces",
+    "/api/workspaces/copy/preview",
+    "/api/workspaces/copy/create",
+    "/api/workspaces/activate",
+    "/api/workspaces/cleanup"
+  ]) assert.ok(app.includes(endpoint), `missing ${endpoint}`);
+
+  assert.match(app, /request\("\/api\/workspaces\/copy\/create", \{\s*previewId: preview\.previewId,\s*previewDigest: preview\.previewDigest\s*\}\)/);
+  assert.match(app, /request\("\/api\/workspaces\/activate", \{\s*workspaceId,\s*workspaceDigest: workspace\.workspaceDigest\s*\}\)/);
+  assert.match(app, /request\("\/api\/workspaces\/cleanup", \{\s*workspaceId,\s*workspaceDigest: workspace\.workspaceDigest,\s*approved: true\s*\}\)/);
+  assert.doesNotMatch(app, /\bmode\s*:\s*["'](?:disposable-copy|original-readonly|built-in-demo)["']/);
+
+  const createFlow = section(app, "async function createDisposableCopy()", "async function refreshWorkspaces");
+  assert.doesNotMatch(createFlow, /activateWorkspace|\/api\/workspaces\/activate|preflightButton\.click/);
+  assert.match(createFlow, /workspace\.notice\.created/);
+
+  const activateFlow = section(app, "async function activateWorkspace(workspace)", "async function cleanupWorkspace");
+  assert.match(activateFlow, /resetWorkspaceBoundState\(\);[\s\S]*adoptServerWorkspace\(payload\.workspace, \{ syncPath: true \}\)/);
+  assert.match(activateFlow, /workspace\.notice\.activated/);
+  assert.doesNotMatch(activateFlow, /preflightButton\.click/);
+});
+
+test("client path text cannot infer write authority and changing it clears bound state", () => {
+  const pathMode = section(app, "function renderPathModeForInput(value)", "function renderPathHelperForInput");
+  assert.match(pathMode, /currentWorkspace\?\.kind === "built-in-demo"/);
+  assert.match(pathMode, /currentWorkspace\?\.kind === "disposable-copy"/);
+  assert.match(pathMode, /currentWorkspace\?\.kind === "original-readonly"/);
+  assert.doesNotMatch(pathMode, /systemInfo\?\.demoPath|normalizePathForCompare/);
+
+  const inputFlow = section(app, 'repoPath.addEventListener("input"', 'goalInput.addEventListener("input"');
+  assert.match(inputFlow, /resetWorkspaceBoundState\(\)/);
+  assert.match(inputFlow, /clearWorkspaceAuthority\(\)/);
+
+  const demoFlow = section(app, 'demoButton.addEventListener("click"', "examplePathButton?.addEventListener");
+  assert.match(demoFlow, /preflightButton\.click\(\)/);
+  assert.doesNotMatch(demoFlow, /currentWorkspace\s*=|canWrite\s*=/);
+  const preflightFlow = section(app, 'preflightButton.addEventListener("click"', 'planButton.addEventListener("click"');
+  assert.match(preflightFlow, /adoptServerWorkspace\(payload\.workspace\)/);
+});
+
+test("original projects are gated from Apply, Revert, and project commands", () => {
+  assert.match(app, /function workspaceCanWrite\(\)[\s\S]*\["built-in-demo", "disposable-copy"\]\.includes\(currentWorkspace\.kind\)/);
+  assert.match(app, /function workspaceWriteGateStatus\(\)[\s\S]*currentWorkspace\.kind === "original-readonly"/);
+  assert.match(app, /applyPatchButton\.addEventListener[\s\S]*const gate = applyPatchGateStatus\(\)/);
+  assert.match(app, /revertPatchButton\.addEventListener[\s\S]*const gate = workspaceWriteGateStatus\(\)/);
+  assert.match(app, /runVerifyButton\.addEventListener[\s\S]*const workspaceGate = workspaceCommandGateStatus\(\)/);
+  assert.match(app, /setControlState\(runVerifyButton,[^\n]*commandGateStatus\.blocksCommand/);
+});
+
+test("all languages state that disposable copies still contain source and are not anonymized", () => {
+  const disclosurePatterns = {
+    en: /not anonymized[\s\S]*upload or share/i,
+    "zh-CN": /不是匿名化副本[\s\S]*上传或分享/,
+    ru: /не анонимизирована[\s\S]*загрузки или передачи/i
+  };
+  for (const language of SUPPORTED_LANGUAGES) {
+    assert.match(DICTIONARIES[language]["workspace.disclosure.body"], disclosurePatterns[language]);
+    assert.ok(DICTIONARIES[language]["workspace.capability.original.body"].length > 30);
+    assert.ok(DICTIONARIES[language]["workspace.cleanup.confirm.ownership"].length > 25);
+  }
+});
+
+function section(content, start, end) {
+  const startIndex = content.indexOf(start);
+  const endIndex = content.indexOf(end, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `missing section start: ${start}`);
+  assert.notEqual(endIndex, -1, `missing section end: ${end}`);
+  return content.slice(startIndex, endIndex);
+}

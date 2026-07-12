@@ -3,11 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ToolRegistry } from "../packages/tool-registry/src/index.js";
 import { patchWriteTemporaryPath } from "../packages/shared/src/atomic-file.js";
 import { captureWorkspaceIdentity, captureWorkspaceParentIdentity } from "../packages/shared/src/workspace-identity.js";
 
 const temporaryRoots = [];
+const execFileAsync = promisify(execFile);
 
 async function makeFixture() {
   const root = await makeTemporaryRoot("codeclaw-tools-");
@@ -48,6 +51,148 @@ test("ToolRegistry list_files and search_code respect gitignore", async () => {
   assert.deepEqual(searched.result.map((item) => item.path), ["src/index.js"]);
   assert.equal(searched.result[0].matches[0].line, 1);
   assert.match(searched.result[0].matches[0].text, /find-me/);
+});
+
+test("ToolRegistry enforces nested ignores, excluded parents, and protected state reads", async () => {
+  const root = await makeTemporaryRoot("codeclaw-tools-read-boundary-");
+  await fs.mkdir(path.join(root, "nested"));
+  await fs.mkdir(path.join(root, "ignored"));
+  await fs.mkdir(path.join(root, ".codeclaw"));
+  await fs.mkdir(path.join(root, ".AWS"));
+  await fs.writeFile(path.join(root, ".gitignore"), "ignored/\n!ignored/file.txt\n", "utf8");
+  await fs.writeFile(path.join(root, "nested", ".gitignore"), "*.tmp\n!keep.tmp\n", "utf8");
+  await fs.writeFile(path.join(root, "nested", "drop.tmp"), "nested-hidden-marker\n", "utf8");
+  await fs.writeFile(path.join(root, "nested", "keep.tmp"), "nested-visible-marker\n", "utf8");
+  await fs.writeFile(path.join(root, "ignored", "file.txt"), "parent-hidden-marker\n", "utf8");
+  await fs.writeFile(path.join(root, ".codeclaw", "workspace-owner.json"), JSON.stringify({ secret: "synthetic-secret" }), "utf8");
+  await fs.writeFile(path.join(root, ".AWS", "credentials"), "not-real\n", "utf8");
+  await fs.writeFile(path.join(root, ".npmrc"), "not-real\n", "utf8");
+  await fs.writeFile(path.join(root, "credentials.json"), "{}\n", "utf8");
+  await fs.writeFile(path.join(root, "private.key"), "not-real\n", "utf8");
+  for (const name of ["token.js", "tokenizer.js", "secretary.js"]) {
+    await fs.writeFile(path.join(root, name), `export const fileName = ${JSON.stringify(name)};\n`, "utf8");
+  }
+  const registry = new ToolRegistry({ rootPath: root });
+
+  const listed = await registry.call("list_files");
+  assert.ok(listed.result.includes("nested/keep.tmp"));
+  assert.ok(!listed.result.includes("nested/drop.tmp"));
+  assert.ok(!listed.result.includes("ignored/file.txt"));
+  assert.ok(!listed.result.some((item) => item.startsWith(".codeclaw/")));
+  assert.ok(!listed.result.some((item) => item.startsWith(".AWS/")));
+  for (const relative of [".npmrc", "credentials.json", "private.key"]) assert.ok(!listed.result.includes(relative), relative);
+  for (const relative of ["token.js", "tokenizer.js", "secretary.js"]) {
+    assert.ok(listed.result.includes(relative), relative);
+    assert.match((await registry.call("read_file", { path: relative })).result, /fileName/);
+  }
+  assert.deepEqual((await registry.call("search_code", { query: "hidden-marker" })).result, []);
+  await assert.rejects(
+    () => registry.call("read_file", { path: "ignored/file.txt" }),
+    (error) => error.code === "READ_IGNORED_PATH_REFUSED"
+  );
+  await assert.rejects(
+    () => registry.call("read_file", { path: ".codeclaw/workspace-owner.json" }),
+    (error) => error.code === "READ_PROTECTED_PATH_REFUSED"
+  );
+  await assert.rejects(
+    () => registry.call("read_file", { path: ".AWS/credentials" }),
+    (error) => error.code === "READ_PROTECTED_PATH_REFUSED"
+  );
+  for (const relative of [".npmrc", "credentials.json", "private.key"]) {
+    await assert.rejects(() => registry.call("read_file", { path: relative }), /sensitive file/i);
+  }
+});
+
+test("ToolRegistry search_code cannot read a hard-linked file discovered after listing", async (t) => {
+  const base = await makeTemporaryRoot("codeclaw-tools-search-link-");
+  const root = path.join(base, "root");
+  const external = path.join(base, "external.txt");
+  await fs.mkdir(root);
+  await fs.writeFile(external, "outside-hardlink-marker\n", "utf8");
+  try {
+    await fs.link(external, path.join(root, "alias.txt"));
+  } catch (error) {
+    if (["EACCES", "EPERM", "ENOSYS", "EXDEV"].includes(error.code)) return t.skip("Hard links are unavailable in this environment.");
+    throw error;
+  }
+
+  const registry = new ToolRegistry({ rootPath: root });
+  assert.deepEqual((await registry.call("search_code", { query: "outside-hardlink-marker" })).result, []);
+  await assert.rejects(
+    () => registry.call("read_file", { path: "alias.txt" }),
+    /hard-linked file/i
+  );
+});
+
+test("ToolRegistry read_file rejects a same-path entity replacement between validation and open", async (t) => {
+  const base = await makeTemporaryRoot("codeclaw-tools-read-race-");
+  const root = path.join(base, "root");
+  const target = path.join(root, "target.txt");
+  const moved = path.join(root, "target-original.txt");
+  const external = path.join(base, "external.txt");
+  await fs.mkdir(root);
+  await fs.writeFile(target, "reviewed-content\n", "utf8");
+  await fs.writeFile(external, "outside-content\n", "utf8");
+  try {
+    const probe = path.join(base, "hardlink-probe.txt");
+    await fs.link(external, probe);
+    await fs.unlink(probe);
+  } catch (error) {
+    if (["EACCES", "EPERM", "ENOSYS", "EXDEV"].includes(error.code)) return t.skip("Hard links are unavailable in this environment.");
+    throw error;
+  }
+
+  const originalOpen = fs.open.bind(fs);
+  let replaced = false;
+  t.mock.method(fs, "open", async (filePath, ...args) => {
+    if (!replaced && path.resolve(filePath) === path.resolve(target)) {
+      replaced = true;
+      await fs.rename(target, moved);
+      await fs.link(external, target);
+    }
+    return originalOpen(filePath, ...args);
+  });
+
+  const registry = new ToolRegistry({ rootPath: root });
+  await assert.rejects(
+    () => registry.call("read_file", { path: "target.txt" }),
+    (error) => error.code === "READ_PATH_CHANGED"
+  );
+});
+
+test("ToolRegistry Git tools neither execute fsmonitor nor discover a parent repository", async (t) => {
+  const root = await makeTemporaryRoot("codeclaw-tools-git-boundary-");
+  await execFileAsync("git", ["init"], { cwd: root });
+  await fs.writeFile(path.join(root, "monitor.sh"), ["#!/bin/sh", "echo invoked > fsmonitor-ran.txt", "echo '{}'", ""].join("\n"), "utf8");
+  await execFileAsync("git", ["config", "core.fsmonitor", "./monitor.sh"], { cwd: root });
+
+  const inheritedGitEnvironment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase().startsWith("GIT_")));
+  t.after(() => {
+    for (const name of Object.keys(process.env).filter((item) => item.toUpperCase().startsWith("GIT_"))) delete process.env[name];
+    Object.assign(process.env, inheritedGitEnvironment);
+  });
+  process.env.GIT_DIR = path.join(root, "redirected-git-dir");
+  process.env.GIT_WORK_TREE = path.join(root, "redirected-work-tree");
+  process.env.GIT_CONFIG_COUNT = "1";
+  process.env.GIT_CONFIG_KEY_0 = "core.fsmonitor";
+  process.env.GIT_CONFIG_VALUE_0 = "./monitor.sh";
+
+  const rootRegistry = new ToolRegistry({ rootPath: root });
+  const status = await rootRegistry.call("git_status");
+  assert.equal(status.ok, true);
+  await assert.rejects(() => fs.stat(path.join(root, "fsmonitor-ran.txt")), (error) => error.code === "ENOENT");
+
+  const nested = path.join(root, "nested-workspace");
+  await fs.mkdir(nested);
+  const nestedRegistry = new ToolRegistry({ rootPath: nested });
+  await assert.rejects(
+    () => nestedRegistry.call("git_status"),
+    (error) => error.code === "GIT_WORKSPACE_ROOT_REQUIRED"
+  );
+  await assert.rejects(
+    () => nestedRegistry.call("git_diff"),
+    (error) => error.code === "GIT_WORKSPACE_ROOT_REQUIRED"
+  );
 });
 
 test("ToolRegistry blocks write tools without approval", async () => {

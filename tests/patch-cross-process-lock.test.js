@@ -6,23 +6,30 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { TaskStore } from "../packages/task-store/src/index.js";
+import { createActivatedWorkspace } from "./helpers/activated-workspace.js";
 
-test("two state-dir instances cannot mistake the other instance's patch for their own", async (t) => {
+test("two server processes sharing one authoritative disposable workspace serialize the same patch", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-cross-instance-"));
-  const workspace = path.join(base, "project");
+  const source = path.join(base, "source");
   const lockDir = path.join(base, "project-locks");
-  const stateDirs = [path.join(base, "state-a"), path.join(base, "state-b")];
-  await fs.mkdir(workspace, { recursive: true });
-  await fs.writeFile(path.join(workspace, "file.txt"), "before\n", "utf8");
+  const stateDir = path.join(base, "state");
+  const copyRoot = path.join(base, "copies");
+  await fs.mkdir(source, { recursive: true });
+  await fs.writeFile(path.join(source, "file.txt"), "before\n", "utf8");
+  const activated = await createActivatedWorkspace({ sourcePath: source, stateDir, copyRoot });
+  const workspace = activated.rootPath;
 
   const ports = [await findFreePort(), await findFreePort()];
-  const servers = ports.map((port, index) => spawn(process.execPath, ["apps/web/server.js"], {
+  // Separate capability states intentionally cannot both own the same managed copy. Two
+  // processes share the signed state here so this test continues to exercise the project lock.
+  const servers = ports.map((port) => spawn(process.execPath, ["apps/web/server.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       CODECLAW_PORT: String(port),
-      CODECLAW_STATE_DIR: stateDirs[index],
-      CODECLAW_PROJECT_LOCK_DIR: lockDir
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: lockDir,
+      CODECLAW_DISPOSABLE_ROOT: copyRoot
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -42,10 +49,10 @@ test("two state-dir instances cannot mistake the other instance's patch for thei
 
   const approvals = [];
   const stores = [];
-  for (const stateDir of stateDirs) {
+  for (let index = 0; index < ports.length; index += 1) {
     const store = new TaskStore({ storagePath: path.join(stateDir, "tasks.json") });
     stores.push(store);
-    const task = await store.create({ goal: "same patch from two instances", rootPath: workspace });
+    const task = await store.create({ goal: "same patch from two instances", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(task.id, { path: "file.txt", content: "before\n", contentComplete: true });
     const updated = await store.setPatchProposal(task.id, { applicable: true, path: "file.txt", content: "after\n", summary: "same change" });
     approvals.push({ taskId: task.id, proposalId: updated.patchProposal.proposalId, proposalDigest: updated.patchProposal.proposalDigest, approved: true });
@@ -56,13 +63,11 @@ test("two state-dir instances cannot mistake the other instance's patch for thei
   assert.equal(results.find((result) => result.response.status === 409).payload.code, "PATCH_BASELINE_CONFLICT");
   assert.equal(await fs.readFile(path.join(workspace, "file.txt"), "utf8"), "after\n");
 
-  const tasks = await Promise.all(stores.map((store) => store.latest({ rootPath: workspace })));
+  const tasks = await Promise.all(stores.map((store, index) => store.get(approvals[index].taskId)));
   assert.deepEqual(tasks.map((task) => task.appliedPatches.length).sort(), [0, 1]);
-  for (const stateDir of stateDirs) {
-    const transactionDir = path.join(stateDir, "patch-transactions");
-    const entries = await fs.readdir(transactionDir).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
-    assert.deepEqual(entries, []);
-  }
+  const transactionDir = path.join(stateDir, "patch-transactions");
+  const entries = await fs.readdir(transactionDir).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
+  assert.deepEqual(entries, []);
 });
 
 async function request(baseUrl, pathname, body) {

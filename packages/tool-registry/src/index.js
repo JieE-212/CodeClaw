@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { classifyToolCall } from "../../permission-engine/src/index.js";
 import { atomicRemoveFile, atomicWriteFile, capturePathIdentity, patchWriteTemporaryPath, removeOwnedTemporaryFile } from "../../shared/src/atomic-file.js";
-import { loadGitignoreMatcher } from "../../shared/src/ignore-utils.js";
-import { isSensitiveFile, isSkippedDirectory, relativePath } from "../../shared/src/path-utils.js";
-import { workspaceIdentityMatches, workspaceParentIdentityMatches } from "../../shared/src/workspace-identity.js";
+import { isPathIgnoredStrict } from "../../shared/src/ignore-utils.js";
+import { isProtectedDirectory, isSensitiveFile, relativePath } from "../../shared/src/path-utils.js";
+import { captureWorkspaceIdentity, workspaceIdentityMatches, workspaceParentIdentityMatches } from "../../shared/src/workspace-identity.js";
 
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 30000;
@@ -30,8 +31,9 @@ const DANGEROUS_COMMAND_PATTERNS = [
 ];
 
 export class ToolRegistry {
-  constructor({ rootPath, allowedCommands = [] }) {
+  constructor({ rootPath, rootIdentity = "", allowedCommands = [] }) {
     this.rootPath = path.resolve(rootPath);
+    this.rootIdentity = String(rootIdentity || "");
     this.allowedCommands = normalizeAllowedCommands(allowedCommands);
     this.tools = new Map();
     this.registerDefaults();
@@ -43,9 +45,10 @@ export class ToolRegistry {
 
   async call(name, args = {}, options = {}) {
     const permission = classifyToolCall(name, args);
-    if (permission.requiresApproval && !options.approved) return { ok: false, permission, blocked: true, message: "Tool call requires approval." };
+    if (permission.requiresApproval && options.approved !== true) return { ok: false, permission, blocked: true, message: "Tool call requires approval." };
     const handler = this.tools.get(name);
     if (!handler) throw new Error(`Unknown tool: ${name}`);
+    await assertWorkspaceReadIdentity(this.rootPath, this.rootIdentity);
     return { ok: true, permission, result: await handler(args) };
   }
 
@@ -77,11 +80,11 @@ export class ToolRegistry {
   }
 
   registerDefaults() {
-    this.register("list_files", async () => listFiles(this.rootPath));
-    this.register("read_file", async ({ path: filePath }) => readFileSafe(this.rootPath, filePath));
-    this.register("search_code", async ({ query }) => searchCode(this.rootPath, query));
-    this.register("git_status", async () => runGit(this.rootPath, ["status", "--short"]));
-    this.register("git_diff", async () => runGit(this.rootPath, ["diff", "--"]));
+    this.register("list_files", async () => listFiles(this.rootPath, this.rootIdentity));
+    this.register("read_file", async ({ path: filePath }) => readFileSafe(this.rootPath, filePath, this.rootIdentity));
+    this.register("search_code", async ({ query }) => searchCode(this.rootPath, query, this.rootIdentity));
+    this.register("git_status", async () => runGit(this.rootPath, ["status", "--short", "--untracked-files=normal", "--", "."], this.rootIdentity));
+    this.register("git_diff", async () => runGit(this.rootPath, ["diff", "--no-ext-diff", "--no-textconv", "--", "."], this.rootIdentity));
     this.register("write_patch", async ({ path: filePath, content, expectedBaseline, remove = false, transactionId = "", rootIdentity = "", parentIdentity = "", onTemporaryReady = null }) => writePatch(this.rootPath, filePath, content, {
       expectedBaseline,
       remove,
@@ -90,18 +93,36 @@ export class ToolRegistry {
       parentIdentity,
       onTemporaryReady
     }));
-    this.register("run_command", async (args) => runCommand(this.rootPath, args, this.allowedCommands));
+    this.register("run_command", async (args) => runCommand(this.rootPath, args, this.allowedCommands, this.rootIdentity));
   }
 }
 
-async function listFiles(rootPath) {
+async function assertWorkspaceReadIdentity(rootPath, rootIdentity) {
+  let current;
+  try {
+    current = await captureWorkspaceIdentity(rootPath);
+  } catch {
+    current = null;
+  }
+  if (!current || rootIdentity && (!validIdentityDigest(rootIdentity) || current.digest !== rootIdentity)) {
+    const error = new Error("The workspace root changed after it was selected. The tool call was stopped.");
+    error.code = "WORKSPACE_IDENTITY_CHANGED";
+    error.status = 409;
+    throw error;
+  }
+  return current;
+}
+
+async function listFiles(rootPath, rootIdentity = "") {
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   const output = [];
-  const isIgnored = await loadGitignoreMatcher(rootPath);
-  await walk(rootPath, rootPath, output, isIgnored);
+  await walk(rootPath, rootPath, output, rootIdentity);
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   return output.slice(0, 500);
 }
 
-async function walk(rootPath, currentPath, output, isIgnored) {
+async function walk(rootPath, currentPath, output, rootIdentity) {
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   const entries = await fs.readdir(currentPath, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -109,34 +130,51 @@ async function walk(rootPath, currentPath, output, isIgnored) {
     const absolutePath = path.join(currentPath, entry.name);
     const rel = relativePath(rootPath, absolutePath);
     if (entry.isDirectory()) {
-      if (isSkippedDirectory(entry.name) || isIgnored(rel, true)) continue;
-      await walk(rootPath, absolutePath, output, isIgnored);
-    } else if (entry.isFile() && !isSensitiveFile(entry.name) && !isIgnored(rel, false)) {
+      if (isProtectedDirectory(entry.name) || await isPathIgnoredStrict(rootPath, rel, true)) continue;
+      await walk(rootPath, absolutePath, output, rootIdentity);
+    } else if (entry.isFile() && !isSensitiveFile(entry.name) && !(await isPathIgnoredStrict(rootPath, rel, false))) {
       output.push(rel);
     }
   }
 }
 
-async function readFileSafe(rootPath, filePath) {
+async function readFileSafe(rootPath, filePath, rootIdentity = "") {
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   const absolutePath = resolveInside(rootPath, filePath);
+  const rel = relativePath(rootPath, absolutePath);
+  if (rel.split("/").slice(0, -1).some(isProtectedDirectory)) {
+    const error = new Error("Refusing to read protected project metadata or generated content.");
+    error.code = "READ_PROTECTED_PATH_REFUSED";
+    error.status = 409;
+    throw error;
+  }
   if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to read sensitive file.");
   await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
-  return decodeUtf8(await fs.readFile(absolutePath), absolutePath);
+  if (await isPathIgnoredStrict(rootPath, rel, false)) {
+    const error = new Error("Refusing to read an ignored file.");
+    error.code = "READ_IGNORED_PATH_REFUSED";
+    error.status = 409;
+    throw error;
+  }
+  const content = decodeUtf8(await readStableRegularFile(rootPath, absolutePath), absolutePath);
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
+  return content;
 }
 
-async function searchCode(rootPath, query = "") {
-  const files = await listFiles(rootPath);
+async function searchCode(rootPath, query = "", rootIdentity = "") {
+  const files = await listFiles(rootPath, rootIdentity);
   const normalizedQuery = String(query).toLowerCase();
   const matches = [];
   if (!normalizedQuery) return matches;
 
   for (const file of files.slice(0, 300)) {
     try {
-      const content = await fs.readFile(path.join(rootPath, file), "utf8");
+      const content = await readFileSafe(rootPath, file, rootIdentity);
       const lineMatches = findLineMatches(content, normalizedQuery);
       if (lineMatches.length) matches.push({ path: file, matches: lineMatches, preview: lineMatches.map((item) => `${item.line}: ${item.text}`).join("\n").slice(0, 800) });
     } catch {}
   }
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   return matches.slice(0, 20);
 }
 
@@ -160,6 +198,48 @@ function findLineMatches(content, normalizedQuery) {
   return matches;
 }
 
+async function readStableRegularFile(rootPath, absolutePath) {
+  await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
+  const expected = await fs.lstat(absolutePath, { bigint: true });
+  if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1n) {
+    throw toolError("READ_PATH_CHANGED", "The file selected for reading is linked or is not a normal file.");
+  }
+
+  const handle = await fs.open(absolutePath, "r");
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!sameStableFileStat(expected, opened) || !opened.isFile() || opened.nlink !== 1n) {
+      throw toolError("READ_PATH_CHANGED", "The file changed identity while it was opened for reading.");
+    }
+    const content = await handle.readFile();
+    const [afterHandle, afterPath] = await Promise.all([
+      handle.stat({ bigint: true }),
+      fs.lstat(absolutePath, { bigint: true })
+    ]);
+    await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
+    if (!sameStableFileStat(opened, afterHandle)
+      || !sameStableFileStat(opened, afterPath)
+      || !afterPath.isFile()
+      || afterPath.isSymbolicLink()
+      || afterPath.nlink !== 1n
+      || BigInt(content.length) !== afterHandle.size) {
+      throw toolError("READ_PATH_CHANGED", "The file or one of its parent directories changed while it was being read.");
+    }
+    return content;
+  } finally {
+    await handle.close();
+  }
+}
+
+function sameStableFileStat(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.birthtimeNs === right.birthtimeNs
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
 async function writePatch(rootPath, filePath, content, {
   expectedBaseline = null,
   remove = false,
@@ -180,17 +260,16 @@ async function writePatch(rootPath, filePath, content, {
   await assertWorkspaceWriteIdentity(rootPath, filePath, rootIdentity, parentIdentity);
   const absolutePath = resolveInside(rootPath, filePath);
   const rel = relativePath(rootPath, absolutePath);
-  if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to write sensitive file.");
-  if (rel.split("/").some((segment) => isSkippedDirectory(segment.toLowerCase()))) {
+  if (rel.split("/").slice(0, -1).some(isProtectedDirectory)) {
     const error = new Error("Refusing to write inside a protected project metadata or generated directory.");
     error.code = "PATCH_PROTECTED_PATH_REFUSED";
     error.status = 409;
     throw error;
   }
+  if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to write sensitive file.");
   await assertNoLinkedPathSegments(rootPath, absolutePath, "write");
 
-  const isIgnored = await loadGitignoreMatcher(rootPath);
-  if (isIgnored(rel, false)) throw new Error("Refusing to write ignored file.");
+  if (await isPathIgnoredStrict(rootPath, rel, false)) throw new Error("Refusing to write ignored file.");
 
   const current = await readFileState(absolutePath);
   assertExpectedBaseline(expectedBaseline, current, rel);
@@ -199,7 +278,7 @@ async function writePatch(rootPath, filePath, content, {
   const verifyCurrentBaseline = async () => {
     await assertWorkspaceWriteIdentity(rootPath, filePath, rootIdentity, parentIdentity);
     await assertNoLinkedPathSegments(rootPath, absolutePath, "write");
-    if ((await loadGitignoreMatcher(rootPath))(rel, false)) throw new Error("Refusing to write ignored file.");
+    if (await isPathIgnoredStrict(rootPath, rel, false)) throw new Error("Refusing to write ignored file.");
     assertExpectedBaseline(expectedBaseline, await readFileState(absolutePath), rel);
   };
 
@@ -285,6 +364,13 @@ function temporaryIdentityMatches(current, expected) {
 }
 
 async function assertNoLinkedPathSegments(rootPath, absolutePath, action) {
+  const rootStat = await fs.lstat(rootPath);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    const error = new Error(`Refusing to ${action} through a linked or non-directory workspace root.`);
+    error.code = "PATH_SYMLINK_REFUSED";
+    error.status = 409;
+    throw error;
+  }
   const rel = path.relative(rootPath, absolutePath);
   let current = rootPath;
   for (const segment of rel.split(path.sep).filter(Boolean)) {
@@ -378,12 +464,63 @@ function splitLines(value) {
   return normalized.endsWith("\n") ? normalized.slice(0, -1).split("\n") : normalized.split("\n");
 }
 
-async function runGit(rootPath, args) {
-  const { stdout, stderr } = await execFileAsync("git", args, { cwd: rootPath, timeout: 10000 });
+async function runGit(rootPath, args, rootIdentity = "") {
+  const realRoot = (await assertWorkspaceReadIdentity(rootPath, rootIdentity)).rootPath;
+  const env = safeGitEnvironment(realRoot);
+  let topLevel;
+  try {
+    const result = await execFileAsync("git", ["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"], {
+      cwd: realRoot,
+      timeout: 10000,
+      env
+    });
+    topLevel = await fs.realpath(path.resolve(realRoot, result.stdout.trim()));
+  } catch {
+    throw toolError("GIT_WORKSPACE_ROOT_REQUIRED", "Git metadata was not found at this workspace root. CodeClaw will not discover a repository from a parent directory.");
+  }
+  if (!sameCanonicalPath(topLevel, realRoot)) {
+    throw toolError("GIT_WORKSPACE_ROOT_REQUIRED", "Git metadata belongs to a parent or different workspace. CodeClaw refused to cross the active workspace boundary.");
+  }
+
+  const { stdout, stderr } = await execFileAsync("git", ["-c", "core.fsmonitor=false", ...args], {
+    cwd: realRoot,
+    timeout: 10000,
+    env
+  });
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   return { stdout, stderr };
 }
 
-async function runCommand(rootPath, request = {}, allowedCommands) {
+function safeGitEnvironment(rootPath) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith("GIT_")));
+  return {
+    ...env,
+    GIT_CEILING_DIRECTORIES: path.dirname(rootPath),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : os.devNull,
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_EXTERNAL_DIFF: "",
+    GIT_TERMINAL_PROMPT: "0"
+  };
+}
+
+function sameCanonicalPath(left, right) {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function toolError(code, message, status = 409) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+async function runCommand(rootPath, request = {}, allowedCommands, rootIdentity = "") {
+  const current = await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   const selected = selectAllowedCommand(request, allowedCommands);
   if (isDangerousCommand(selected.command)) throw new Error("Refusing to run dangerous command.");
 
@@ -392,7 +529,9 @@ async function runCommand(rootPath, request = {}, allowedCommands) {
 
   const executable = resolveExecutable(parts[0]);
   const args = parts.slice(1);
-  return executeCommand(rootPath, executable, args, selected.command, request.timeoutMs);
+  const result = await executeCommand(current.rootPath, executable, args, selected.command, request.timeoutMs);
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
+  return result;
 }
 
 function normalizeAllowedCommands(commands = []) {

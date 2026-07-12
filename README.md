@@ -19,6 +19,8 @@
 - 模型上下文文件推荐和手动读取归档
 - 补丁草案、审查应用和最近补丁回滚
 - 崩溃安全的 Apply/Revert 写前日志、跨 state-dir 所有权 claim、启动恢复和冲突停写
+- 服务端权威工作区能力：原项目只读、内置 Demo、已登记可丢弃副本
+- 可丢弃副本 Preview/Create/List/Activate/Cleanup、完整 SHA-256 Manifest 和所有权校验
 - 原子文件替换、工作区/父目录实体身份绑定、任务状态串行写入和 Windows 路径别名防护
 - OpenAI-compatible 结构化 JSON patch 解析
 - 多文件 patch proposal 展示和应用
@@ -76,7 +78,7 @@ npm.cmd run dev
 2. 点击 `Demo`。CodeClaw 会自动填入内置 demo 仓库、填入默认目标并运行只读预检。
 3. 确认 `Read-only preflight` 通过，`Patch proposal` 里的闸门显示可以继续。
 4. 按 `Task guide` 的 `Next` 依次推进：生成计划、选择上下文、读取文件、生成补丁。
-5. 看到 patch proposal 后确认 `Apply`，再运行检测到的 `npm run test` 验证命令。
+5. 在内置 Demo 或已激活的 CodeClaw 可丢弃副本中，看到 patch proposal 后确认 `Apply`，再运行检测到的 `npm run test` 验证命令。原项目只能审阅草案，不能写入或运行项目命令。
 6. 验证通过后点击 `Complete task`，查看任务摘要、Review 草稿和 Audit 记录。
 
 ## 启动
@@ -100,6 +102,15 @@ start-codeclaw.cmd
 ```bash
 npm run scan -- "C:\\path\\to\\repo"
 ```
+
+## 安全工作区边界
+
+- 任意普通项目路径默认登记为 `original-readonly`。客户端传入 `mode`、路径、工作区 ID 或 `approved: true` 都不能开启写入。
+- 内置 Demo 由服务端按安装路径和目录实体身份识别，可以 Apply、Revert 和运行白名单命令。
+- 真实项目若要试写，先在“安全工作区”中运行副本预览。CodeClaw 会完整枚举复制范围、逐文件计算 SHA-256，并拒绝秘密文件名、链接、硬链接、特殊对象和便携路径碰撞；ignored、VCS 元数据和生成目录不会复制。
+- 创建副本不会自动激活。显式激活并重新运行只读预检后，该副本才可 Apply、Revert 或运行项目命令。
+- 副本仍包含复制范围内的普通源码，不是匿名化副本，也不代表适合上传或分享。命令执行也不是操作系统沙箱；确认前仍要检查完整命令和项目脚本。
+- Cleanup 只接受服务端签名记录中的副本 ID，并在托管根、目录实体和所有权 marker 都匹配时删除；它不会接受客户端指定的删除路径。
 
 ## 测试
 
@@ -274,7 +285,7 @@ Windows 本地启动指南在 [`docs/START_GUIDE.md`](docs/START_GUIDE.md)。
 - 试用包：`docs/LOCAL_TRIAL_PACKAGE.md` 记录本地 trial package 应包含/排除的文件、验证命令、试用任务和停止条件。
 - 试用包脚本：`npm.cmd run package:local-trial` 会生成干净的 `dist/CodeClaw-local-trial-YYYYMMDD` 文件夹和 `PACKAGE_MANIFEST.md`。
 
-当前安全边界：Stage 3.0.10 的机器测试覆盖已知中断状态的恢复或 fail-closed，但不等于真实断电、杀毒软件占用、网络盘、自定义 Windows ACL 或真人项目写入已经验收。原项目继续按只读范围对待；写入实验只应在后续 Stage 3.0.11 登记并验证的无秘密可丢弃副本中进行。
+当前安全边界：Stage 3.0.11 已完成服务端权威工作区能力和可丢弃副本的机器验证。原项目继续强制只读；写入和项目命令仅限内置 Demo，或由当前服务创建、登记、显式激活并重新验证的可丢弃副本。副本仍含普通源码，不代表无秘密、匿名化或适合分享；真实断电、杀毒软件占用、网络盘、自定义 Windows ACL、真人原项目写入和真实 Windows 视觉体验仍未验收。
 - 发包检查：`npm.cmd run trial:ready` 会生成试用包、检查敏感文件排除、在包内复跑验证并输出 `dist/TRIAL_READINESS_REPORT.json`。
 - 模拟试用：`npm.cmd run trial:simulate` 会扮演第一位安全路径试用者，输出 `dist/SIMULATED_FIRST_TRIAL_REPORT.md`。
 - 夜跑验证：`npm.cmd run nightly:trial` 会跑 2.5 小时安全检查和模拟试用，输出 `dist/nightly-trial/.../summary.md`。

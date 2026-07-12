@@ -3,13 +3,18 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export async function captureWorkspaceIdentity(rootPath) {
-  const realRoot = await fs.realpath(path.resolve(rootPath));
-  const stat = await fs.lstat(realRoot, { bigint: true });
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    const error = new Error("Workspace root must resolve to a normal directory.");
-    error.code = "PATCH_WORKSPACE_ROOT_UNSAFE";
-    error.status = 409;
-    throw error;
+  const requestedRoot = path.resolve(rootPath);
+  const before = await fs.lstat(requestedRoot, { bigint: true });
+  assertNormalWorkspaceDirectory(before);
+  const realRoot = await fs.realpath(requestedRoot);
+  const [after, stat] = await Promise.all([
+    fs.lstat(requestedRoot, { bigint: true }),
+    fs.lstat(realRoot, { bigint: true })
+  ]);
+  assertNormalWorkspaceDirectory(after);
+  assertNormalWorkspaceDirectory(stat);
+  if (!sameDirectoryEntity(before, after) || !sameDirectoryEntity(before, stat)) {
+    throw unsafeWorkspaceRootError("Workspace root changed identity while it was being verified.");
   }
   const canonicalRoot = process.platform === "win32" ? realRoot.toLowerCase() : realRoot;
   const digest = createHash("sha256").update(JSON.stringify({
@@ -20,6 +25,25 @@ export async function captureWorkspaceIdentity(rootPath) {
     birthtimeNs: stat.birthtimeNs.toString()
   }), "utf8").digest("hex");
   return { rootPath: realRoot, digest };
+}
+
+function assertNormalWorkspaceDirectory(stat) {
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw unsafeWorkspaceRootError("Workspace root must be a normal directory, not a symbolic link or junction.");
+  }
+}
+
+function sameDirectoryEntity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.birthtimeNs === right.birthtimeNs;
+}
+
+function unsafeWorkspaceRootError(message) {
+  const error = new Error(message);
+  error.code = "PATCH_WORKSPACE_ROOT_UNSAFE";
+  error.status = 409;
+  return error;
 }
 
 export async function workspaceIdentityMatches(rootPath, expectedDigest) {

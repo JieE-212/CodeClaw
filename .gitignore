@@ -14,5 +14,7 @@ coverage/
 .codeclaw/*.json
 .codeclaw/patch-transactions/
 .codeclaw/.task-locks/
+.codeclaw/.workspace-locks/
+.codeclaw/disposable-copies/
 .codeclaw/**/*.tmp
 *.log

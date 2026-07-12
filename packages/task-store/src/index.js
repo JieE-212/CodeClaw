@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteFile } from "../../shared/src/atomic-file.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../../shared/src/cross-process-lock.js";
-import { captureWorkspaceIdentity, captureWorkspaceParentIdentity } from "../../shared/src/workspace-identity.js";
+import { captureWorkspaceIdentity, captureWorkspaceParentIdentity, workspaceIdentityMatches } from "../../shared/src/workspace-identity.js";
 
 export class TaskStore {
   constructor({ storagePath, lockManager = null }) {
@@ -18,7 +18,7 @@ export class TaskStore {
     this.mutationQueue = Promise.resolve();
   }
 
-  async create({ goal, rootPath }) {
+  async create({ goal, rootPath, workspaceId = null }) {
     if (!goal?.trim()) throw new Error("Missing task goal.");
     const workspace = rootPath ? await captureWorkspaceIdentity(rootPath).catch(() => null) : null;
     return this.serializeMutation(async () => {
@@ -28,6 +28,7 @@ export class TaskStore {
         goal: goal.trim(),
         rootPath: workspace?.rootPath || (rootPath ? path.resolve(rootPath) : null),
         rootIdentity: workspace?.digest || null,
+        workspaceId: typeof workspaceId === "string" && workspaceId ? workspaceId : null,
         status: "planned",
         plan: null,
         toolCalls: [],
@@ -227,6 +228,12 @@ export class TaskStore {
 
 async function bindProposalParentIdentities(proposal, task) {
   if (!task.rootIdentity || !task.rootPath) return proposal;
+  if (!(await workspaceIdentityMatches(task.rootPath, task.rootIdentity))) {
+    const error = new Error("The task workspace changed before the patch proposal could be bound.");
+    error.code = "WORKSPACE_IDENTITY_CHANGED";
+    error.status = 409;
+    throw error;
+  }
   if (proposal?.files?.length) {
     const files = await Promise.all(proposal.files.map(async (file) => ({
       ...file,
