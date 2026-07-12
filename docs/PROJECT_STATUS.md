@@ -639,11 +639,11 @@ The remediation mapping, candidate-binding checks, and engineering safeguards ar
 
 ## Next Planned Phase
 
-Stage 3.0.11 is machine verified. Stage 3.0.12 is next: require an exact, single-use preview/approval boundary before any model operation can send data. Real-person testing remains intentionally postponed.
+Stage 3.0.12 is machine verified and awaits only its final Git audit and independent commit. Stage 3.0.13 is next. Real-person testing remains intentionally postponed.
 
 The engineering order is:
 
-1. Stage 3.0.12 exact model outbound preview/approval and local-state privacy reduction.
+1. Complete Stage 3.0.12's final Git audit and independent commit without adding local artifacts or pushing.
 2. Stage 3.0.13 beginner UI and accessibility semantics, with real visual/NVDA checks kept manual.
 3. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
 4. Stage 4B candidate-aware Windows launcher and hashed candidate package.
@@ -698,4 +698,38 @@ Machine evidence: `npm.cmd test` reported 246 total, 245 pass, 0 fail, and 1 env
 
 Honest limits: Node path operations retain a very small documented TOCTOU interval; real power loss, unusual filesystems, ACL/antivirus interference, and real-person copy use remain unverified. If a `.gitignore` ignores itself, it is excluded with its ignored payload and the original ignore-rule snapshot is not preserved for future paths created inside the copy. The bundled browser automation helper is unavailable, so no pixel, keyboard, NVDA, high-contrast, or clean-Windows acceptance is claimed.
 
-Next: Stage 3.0.12 adds exact model outbound preview/approval, single-use send authorization, endpoint restrictions, and local-state privacy reduction. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
+Next: complete the final Git audit/commit for Stage 3.0.12, then proceed to Stage 3.0.13. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
+
+## Stage 3.0.12 - Exact model outbound review and minimized local state
+
+Stage 3.0.12 is machine verified. Its implementation, focused regressions, single-concurrency full suite, check/i18n, automation runs, state migration, and cleanup gates passed; only the final Git audit and independent commit remain.
+
+Implemented:
+
+- Replaced direct model calls with a server-authoritative `POST /api/model/preview`, explicit review, `POST /api/model/send` flow for every operation, plus `POST /api/model/cancel`. Preview accepts only `operation` and `taskId`; all request-bearing task, workspace, repository, context, and provider inputs are derived server-side.
+- Made Preview disclose the complete UTF-8 body, byte count and SHA-256, destination endpoint/channel/device boundary, data categories, and every file component with transmitted bytes.
+- Bound approval to task revision, workspace ID/root identity, Data Boundary Manifest digest/policy version, model-configuration generation, and the prepared request. Approval is synchronously single-use; concurrent sends, failed-send replay, cancellation, expiry, and stale task/source/workspace/configuration state fail closed. The same authorities are rechecked before and after transport.
+- Restricted plaintext HTTP to loopback. Public HTTPS checks every DNS answer, pins and rechecks the actual remote address, rejects redirects and endpoint credentials/query/fragment, bounds time and request/response size, requires JSON Content-Type, and rejects API-key reflection in a response.
+- Kept API keys in process memory only and removed credentials from persisted `model.json`. Startup atomically replaces or rewrites corrupt, unknown, non-canonical, or legacy credential-bearing configuration to a safe credential-free document.
+- Added TaskStore revisions/CAS and minimized persistence: context stores path plus validated line/byte metadata, size, hash, source/completeness and time; model events store operation/provider/model/request-response hashes/status/time. Patch proposal and model event commit atomically in one CAS update. Startup removes legacy context/suggestion/model bodies and redacts legacy model/server-error audit detail.
+- Excluded ignored Manifest content from both model request components and derived command/framework/package-manager metadata.
+- Unified automation finalization across eight scripts: child exit/timeout termination, listener shutdown, fixture restoration, parent/prefix/filesystem-identity-checked directory cleanup, and aggregation of work plus cleanup errors.
+
+Machine evidence:
+
+- Preview/UI/provider tests: 46/46.
+- Server model-outbound integration: 8/8.
+- Automation resource-scope fault injection: 8/8.
+- `health`, `smoke`, `pilot:self`, `real-repo-preflight`, `simulate-first-trial`, `pilot:fixture`, `pilot:inbox`, and `pilot:model` each completed successfully in direct focused runs.
+- `pilot:model` made 9 fake-model requests and passed 9 exact-body checks.
+- The final single-concurrency `npm.cmd test` reported 319 total, 318 pass, 0 fail, and 1 environment-only file-symlink skip. A default-concurrency run had one shared-state interference failure; that case passed independently, and the isolated single-concurrency full run is the authoritative result.
+- `npm.cmd run check` passed with 714 keys in each of `en`, `zh-CN`, and `ru`; relevant `node --check` and `git diff --check` passed.
+- Default local state was migrated to 26 tasks and 59 context records with zero persisted bodies, all 59 sources equal to the allowed `read_file` value, zero legacy suggestion entries, no credential field in `model.json`, and blank detail in all model/server-error audit entries.
+- All 14 automation `%TEMP%` prefixes had zero remaining directories; the known historical leftovers and `server-bg.log` were removed, port 4173 had no listener, and the Demo, task-board, and support-inbox examples were unchanged.
+
+Pending before the stage commit:
+
+- Review the complete combined diff, rerun `git diff --check`, and stage only an explicit source/test/document list.
+- Confirm `dist`, `.codeclaw`, logs, screenshots, evidence, and real-person records remain outside the index; then create the independent Stage 3.0.12 commit without pushing.
+
+Honest limits: this stage did not rerun a real managed-cloud provider. An approved online request still leaves the device and provider retention is outside CodeClaw's control; a local provider still receives bytes over loopback HTTP; retained request-buffer overwriting is best effort rather than cryptographic erasure. Manifest revalidation and the later TaskStore rename are not one filesystem-atomic snapshot, so an extreme external edit can leave a stale draft; Apply's baseline-hash check prevents it from overwriting the changed file, but not every external TOCTOU is claimed closed. No real-person, pixel-level, keyboard/NVDA, high-contrast, clean-Windows, real-power-loss, unusual-filesystem, or provider-retention acceptance is claimed. `REMEDIATION_HOLD`, tester-2's `AFTER_LIVE_BLOCKED`, tester-3's `not scheduled` state, and the original-project write prohibition remain unchanged.

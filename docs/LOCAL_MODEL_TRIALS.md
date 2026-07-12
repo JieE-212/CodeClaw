@@ -14,7 +14,17 @@ Stage three has started with a larger `examples/task-board-js` fixture. `deepsee
 
 The second stage-three fixture, `examples/support-inbox-js`, now covers API query behavior plus view-state derivation. The first real Flash run produced a valid behavior patch and passed tests, but it did not update the available test file. Patch prompting was tightened so behavior changes with test context should include focused test updates or explain why not. After restart, Flash produced a four-file patch covering API, inbox state, API tests, and inbox tests. Pro matched that result on the same fixture, so Flash remains the low-cost default and Pro remains the higher-quality fallback for ambiguous work.
 
-The automated baseline is ready:
+### Stage 3.0.12 outbound contract
+
+The current implementation routes suggest, context selection, patch generation, and failure-fix through the same server-authoritative Preview/review/Send boundary. Preview shows the exact UTF-8 body, bytes, SHA-256, endpoint/channel/device boundary, data categories, and transmitted file components. Approval is single-use and bound to the task revision, workspace identity, complete Data Boundary Manifest, model-configuration generation, and prepared request. Cancel, expiry, source/task/configuration races, a second concurrent send, a replay after failure, and a response that reflects the API key all fail closed.
+
+Online transport now permits HTTP only to loopback and requires public-address HTTPS with all DNS results checked, the selected address pinned and rechecked, redirects disabled, and time/size/JSON Content-Type limits enforced. API keys are memory-only. Persisted context and model events contain minimized metadata and hashes rather than prompt, response, or source bodies; startup migrates legacy state and redacts legacy model/server-error audit detail.
+
+Stage 3.0.12 is machine verified. Its focused evidence is 46/46 Preview/UI/provider tests, 8/8 server outbound integration tests, and 8/8 automation-finalizer fault-injection tests. The final single-concurrency full suite reported 319 total, 318 pass, 0 fail, and 1 environment-only file-symlink skip; `npm.cmd run check` passed with 714 keys in each of `en`, `zh-CN`, and `ru`. Health, smoke, `pilot:self`, `pilot:fixture`, `pilot:inbox`, `pilot:model`, real-repo preflight, and first-trial simulation all passed; `pilot:model` made 9 fake-model sends with 9 exact-body checks. These remain local/fake-provider checks, not a new managed-cloud trial. No DeepSeek, DashScope, OpenAI, or other real remote provider was rerun for Stage 3.0.12.
+
+The remaining low-severity concurrency limit is explicit: Manifest revalidation and the later TaskStore rename are not one filesystem-atomic snapshot, so an extreme external edit can leave a stale proposal draft. Apply's baseline-hash check prevents that draft from overwriting the changed file; this is not a claim that every external TOCTOU is closed.
+
+When a future real-provider trial is authorized after the engineering and host gates, run the full baseline:
 
 - `npm.cmd test`
 - `npm.cmd run check`
@@ -22,7 +32,7 @@ The automated baseline is ready:
 - `npm.cmd run pilot:self`
 - `npm.cmd run pilot:model`
 
-The first real trial should use `examples/demo-js` and should record all four model workflow areas: suggest, context, patch, and failure-fix.
+The next authorized real-provider trial should start with `examples/demo-js` and record all four model workflow areas: suggest, context, patch, and failure-fix. Real-provider and real-person testing remain paused; machine verification does not change `REMEDIATION_HOLD`, schedule tester-3, or substitute for a later explicit host decision.
 
 ## Trial Index
 

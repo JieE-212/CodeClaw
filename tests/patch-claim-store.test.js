@@ -38,6 +38,16 @@ test("patch state owner id is stable for one state directory and distinct across
   });
 });
 
+test("concurrent patch state owner initialization converges on one complete identity", async () => {
+  await withTemporaryDirectory("codeclaw-claim-owner-race-", async (base) => {
+    const state = path.join(base, "shared-state");
+    const ownerIds = await Promise.all(Array.from({ length: 50 }, () => loadPatchStateOwnerId(state)));
+    assert.equal(new Set(ownerIds).size, 1);
+    const persisted = JSON.parse(await fs.readFile(path.join(state, "patch-state-owner.json"), "utf8"));
+    assert.equal(persisted.ownerId, ownerIds[0]);
+  });
+});
+
 test("a reserved claim without a journal can be cleared by its owner", async () => {
   await withClaimFixture(async ({ rootPath, rootIdentity, storagePath }) => {
     const transactionId = "apply-reserved-12345678";

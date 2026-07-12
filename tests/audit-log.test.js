@@ -39,3 +39,52 @@ test("summarizeToolResult creates compact descriptions", () => {
   assert.equal(summarizeToolResult({ result: { exitCode: 0, timedOut: false } }), "exitCode=0, timedOut=false");
   assert.equal(summarizeToolResult({ result: ["a", "b"] }), "2 item(s) returned.");
 });
+
+test("model audit events retain only bounded metadata and never persist bodies", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-audit-private-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const storagePath = path.join(root, "audit.jsonl");
+  const log = new AuditLog({ storagePath });
+  const sentinel = "MODEL-BODY-SECRET-SENTINEL";
+  const entry = await log.record({
+    type: "model.send",
+    detail: sentinel,
+    metadata: {
+      operation: "task-suggest",
+      provider: "test",
+      model: "safe-name",
+      requestSha256: "a".repeat(64),
+      requestBytes: 42,
+      content: sentinel,
+      prompt: sentinel,
+      upstreamError: sentinel,
+      apiKey: sentinel
+    }
+  });
+
+  assert.equal(entry.detail, "");
+  assert.equal(entry.metadata.operation, "task-suggest");
+  assert.equal(entry.metadata.requestBytes, 42);
+  assert.equal(Object.hasOwn(entry.metadata, "content"), false);
+  assert.equal((await fs.readFile(storagePath, "utf8")).includes(sentinel), false);
+});
+
+test("legacy model and server errors can be redacted in place", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-audit-migrate-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const storagePath = path.join(root, "audit.jsonl");
+  const sentinel = "LEGACY-UPSTREAM-SECRET-SENTINEL";
+  await fs.writeFile(storagePath, [
+    JSON.stringify({ id: "1", time: "2026-01-01T00:00:00.000Z", type: "model.suggest", status: "ok", title: "old", detail: sentinel, rootPath: null, metadata: { taskId: "task-1", content: sentinel } }),
+    JSON.stringify({ id: "2", time: "2026-01-01T00:00:00.000Z", type: "server.error", status: "error", title: "old", detail: sentinel, rootPath: null, metadata: { code: "MODEL_UPSTREAM_HTTP_ERROR", error: sentinel } })
+  ].join("\n") + "\n", "utf8");
+  const log = new AuditLog({ storagePath });
+
+  const result = await log.redactLegacyModelData();
+  const content = await fs.readFile(storagePath, "utf8");
+  const entries = await log.readAll();
+  assert.equal(result.changed, true);
+  assert.equal(content.includes(sentinel), false);
+  assert.deepEqual(entries[0].metadata, { taskId: "task-1" });
+  assert.deepEqual(entries[1].metadata, { code: "MODEL_UPSTREAM_HTTP_ERROR" });
+});

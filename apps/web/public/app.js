@@ -1,4 +1,5 @@
 import { initI18n, t } from "./i18n.js";
+import { visualizeModelReviewBody } from "./model-review-text.js";
 
 const healthStatus = document.querySelector("#healthStatus");
 const navItems = [...document.querySelectorAll("[data-nav-view]")];
@@ -67,6 +68,23 @@ const contextCandidates = document.querySelector("#contextCandidates");
 const modelOutput = document.querySelector("#modelOutput");
 const modelState = document.querySelector("#modelState");
 const modelCostHint = document.querySelector("#modelCostHint");
+const modelOutboundReview = document.querySelector("#modelOutboundReview");
+const modelReviewClose = document.querySelector("#modelReviewClose");
+const modelReviewOperation = document.querySelector("#modelReviewOperation");
+const modelReviewProvider = document.querySelector("#modelReviewProvider");
+const modelReviewChannel = document.querySelector("#modelReviewChannel");
+const modelReviewLeavesDevice = document.querySelector("#modelReviewLeavesDevice");
+const modelReviewEndpoint = document.querySelector("#modelReviewEndpoint");
+const modelReviewExpires = document.querySelector("#modelReviewExpires");
+const modelReviewBytes = document.querySelector("#modelReviewBytes");
+const modelReviewSha = document.querySelector("#modelReviewSha");
+const modelReviewBody = document.querySelector("#modelReviewBody");
+const modelReviewControlWarning = document.querySelector("#modelReviewControlWarning");
+const modelReviewDataClasses = document.querySelector("#modelReviewDataClasses");
+const modelReviewFiles = document.querySelector("#modelReviewFiles");
+const modelReviewStatus = document.querySelector("#modelReviewStatus");
+const modelReviewCancel = document.querySelector("#modelReviewCancel");
+const modelReviewApprove = document.querySelector("#modelReviewApprove");
 const proposePatchButton = document.querySelector("#proposePatchButton");
 const applyPatchButton = document.querySelector("#applyPatchButton");
 const revertPatchButton = document.querySelector("#revertPatchButton");
@@ -108,6 +126,9 @@ let activeView = "workspace";
 let pendingSessionPayload = null;
 let sessionRecoveryMode = "hidden";
 let sessionRestoreSuperseded = false;
+let activeModelReview = null;
+let resolveModelReview = null;
+let modelReviewFocusFallback = null;
 const RECENT_REPOS_KEY = "codeclaw.recentRepos.v1";
 const MODEL_PRESETS = {
   mock: { type: "mock", baseUrl: "", model: "mock-codeclaw", apiKeyPlaceholder: "API key" },
@@ -165,6 +186,7 @@ bindI18n();
 bindTrialCommandCopies();
 bindSessionRecovery();
 bindWorkspaceSafety();
+bindModelOutboundReview();
 setActiveView(activeView);
 renderRecentRepos();
 renderPathHelperForInput(repoPath?.value || "");
@@ -234,6 +256,7 @@ function bindI18n() {
     renderVerifyBoundary();
     renderWorkspaceSafety();
     renderGuide();
+    if (activeModelReview) renderModelOutboundReview(activeModelReview);
     syncToolInputs();
     updateControls();
   });
@@ -1055,23 +1078,271 @@ saveModelButton.addEventListener("click", async () => {
     modelState.textContent = t("model.state.configFailed");
     modelOutput.textContent = friendlyErrorMessage(error);
   } finally {
+    modelApiKey.value = "";
     updateControls();
   }
 });
 
+function bindModelOutboundReview() {
+  if (!modelOutboundReview) return;
+  modelReviewClose.addEventListener("click", () => finishModelOutboundReview(false));
+  modelReviewCancel.addEventListener("click", () => finishModelOutboundReview(false));
+  modelReviewApprove.addEventListener("click", () => finishModelOutboundReview(true));
+  modelOutboundReview.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    finishModelOutboundReview(false);
+  });
+  modelOutboundReview.addEventListener("close", () => {
+    if (resolveModelReview) finishModelOutboundReview(false);
+  });
+  modelOutboundReview.addEventListener("click", (event) => {
+    if (event.target !== modelOutboundReview) return;
+    const bounds = modelOutboundReview.getBoundingClientRect();
+    const outside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+    if (outside) finishModelOutboundReview(false);
+  });
+}
+
+async function executeReviewedModelOperation(operation, trigger, stateElement) {
+  if (!currentTask?.id) throw new Error(t("model.review.taskRequired"));
+  stateElement.textContent = t("model.review.state.preparing");
+  const payload = await request("/api/model/preview", { operation, taskId: currentTask.id });
+  assertModelOutboundPreview(payload.preview, operation);
+  stateElement.textContent = t("model.review.state.waiting");
+  let reviewClosed = false;
+  try {
+    let approved;
+    try {
+      approved = await showModelOutboundReview(payload.preview, stateElement);
+    } catch (error) {
+      await discardModelOutboundPreview(payload.preview);
+      throw error;
+    }
+    reviewClosed = true;
+    if (!approved) {
+      await discardModelOutboundPreview(payload.preview);
+      stateElement.textContent = t("model.review.state.cancelled");
+      await refreshAudit().catch(() => {});
+      return null;
+    }
+
+    stateElement.textContent = t("model.review.state.sending");
+    try {
+      return await request("/api/model/send", {
+        previewId: payload.preview.previewId,
+        approvalDigest: payload.preview.approvalDigest,
+        approved: true
+      });
+    } catch (error) {
+      await refreshAudit().catch(() => {});
+      throw error;
+    }
+  } finally {
+    if (reviewClosed) {
+      updateControls();
+      trigger?.focus?.();
+    }
+  }
+}
+
+async function discardModelOutboundPreview(preview) {
+  try {
+    await request("/api/model/cancel", {
+      previewId: preview.previewId,
+      approvalDigest: preview.approvalDigest
+    });
+  } catch {}
+}
+
+function showModelOutboundReview(preview, focusFallback) {
+  if (!modelOutboundReview || typeof modelOutboundReview.showModal !== "function") {
+    throw new Error(t("model.review.unsupported"));
+  }
+  if (resolveModelReview || modelOutboundReview.open) {
+    throw new Error(t("model.review.busy"));
+  }
+  activeModelReview = preview;
+  modelReviewFocusFallback = focusFallback instanceof HTMLElement ? focusFallback : null;
+  if (modelReviewFocusFallback) modelReviewFocusFallback.tabIndex = -1;
+  renderModelOutboundReview(preview);
+
+  return new Promise((resolve, reject) => {
+    resolveModelReview = resolve;
+    try {
+      modelOutboundReview.showModal();
+      modelReviewCancel.focus();
+    } catch (error) {
+      resolveModelReview = null;
+      activeModelReview = null;
+      modelReviewFocusFallback = null;
+      clearModelOutboundReview();
+      reject(error);
+    }
+  });
+}
+
+function finishModelOutboundReview(approved) {
+  if (!resolveModelReview) return;
+  const resolve = resolveModelReview;
+  const focusFallback = modelReviewFocusFallback;
+  resolveModelReview = null;
+  activeModelReview = null;
+  modelReviewFocusFallback = null;
+  if (modelOutboundReview.open) modelOutboundReview.close(approved ? "approved" : "cancelled");
+  clearModelOutboundReview();
+  focusFallback?.focus?.();
+  resolve(approved === true);
+}
+
+function renderModelOutboundReview(preview) {
+  const requestInfo = preview?.request || {};
+  const disclosure = preview?.disclosure || {};
+  const provider = preview?.provider || {};
+  const channel = requestInfo.channel;
+  const operationKey = {
+    "task-suggest": "model.review.operation.taskSuggest",
+    "context-files": "model.review.operation.contextFiles",
+    "patch-proposal": "model.review.operation.patchProposal",
+    "failure-fix": "model.review.operation.failureFix"
+  }[preview?.operation];
+
+  modelReviewOperation.textContent = operationKey ? t(operationKey) : String(preview?.operation || "");
+  modelReviewProvider.textContent = [provider.name || provider.type, provider.model].filter(Boolean).join(" / ") || t("model.review.value.unavailable");
+  modelReviewChannel.textContent = t(`model.review.channel.${channel}`);
+  modelReviewChannel.dataset.channel = channel;
+  modelReviewLeavesDevice.textContent = requestInfo.willLeaveDevice ? t("model.output.yes") : t("model.output.no");
+  modelReviewLeavesDevice.dataset.value = requestInfo.willLeaveDevice ? "yes" : "no";
+  modelReviewEndpoint.textContent = requestInfo.endpoint || t("model.review.endpoint.local");
+  modelReviewExpires.textContent = formatModelReviewTime(preview?.expiresAt);
+  modelReviewBytes.textContent = formatModelReviewNumber(requestInfo.byteLength);
+  modelReviewSha.textContent = requestInfo.sha256 || t("model.review.value.unavailable");
+  const visualizedBody = visualizeModelReviewBody(typeof requestInfo.bodyUtf8 === "string" ? requestInfo.bodyUtf8 : "");
+  modelReviewBody.textContent = visualizedBody.text;
+  modelReviewControlWarning.hidden = visualizedBody.controlCount === 0;
+  modelReviewControlWarning.textContent = visualizedBody.controlCount
+    ? t("model.review.body.controls", { count: visualizedBody.controlCount })
+    : "";
+  const dataClasses = Array.isArray(disclosure.dataClasses) ? disclosure.dataClasses : [];
+  modelReviewDataClasses.textContent = dataClasses.length
+    ? t("model.review.dataClasses", { items: dataClasses.join(", ") })
+    : t("model.review.dataClasses.none");
+  renderModelReviewFiles(Array.isArray(disclosure.files) ? disclosure.files : []);
+  modelReviewStatus.textContent = t("model.review.status.ready");
+}
+
+function renderModelReviewFiles(files) {
+  modelReviewFiles.replaceChildren();
+  if (!files.length) {
+    const empty = document.createElement("p");
+    empty.className = "model-review-empty";
+    empty.textContent = t("model.review.files.empty");
+    modelReviewFiles.append(empty);
+    return;
+  }
+
+  for (const file of files) {
+    const item = document.createElement("article");
+    item.className = "model-review-file";
+    const path = document.createElement("strong");
+    path.textContent = String(file?.path || t("model.review.value.unavailable"));
+    const details = document.createElement("dl");
+    appendModelReviewFileField(details, t("model.review.file.mode"), file?.mode || t("model.review.value.unavailable"), true);
+    appendModelReviewFileField(details, t("model.review.file.transmittedBytes"), formatModelReviewNumber(file?.transmittedUtf8Bytes));
+    appendModelReviewFileField(details, t("model.review.file.sourceBytes"), formatModelReviewNumber(file?.byteLength));
+    appendModelReviewFileField(details, t("model.review.file.sha"), file?.sha256 || t("model.review.value.unavailable"), true);
+    appendModelReviewFileField(details, t("model.review.file.contentIncluded"), file?.contentIncluded ? t("model.output.yes") : t("model.output.no"));
+    item.append(path, details);
+    modelReviewFiles.append(item);
+  }
+}
+
+function appendModelReviewFileField(list, label, value, useCode = false) {
+  const wrapper = document.createElement("div");
+  const term = document.createElement("dt");
+  const detail = document.createElement("dd");
+  const valueNode = useCode ? document.createElement("code") : document.createElement("span");
+  term.textContent = label;
+  valueNode.textContent = String(value);
+  detail.append(valueNode);
+  wrapper.append(term, detail);
+  list.append(wrapper);
+}
+
+function clearModelOutboundReview() {
+  modelReviewBody.textContent = "";
+  modelReviewControlWarning.textContent = "";
+  modelReviewControlWarning.hidden = true;
+  for (const element of [
+    modelReviewOperation,
+    modelReviewProvider,
+    modelReviewChannel,
+    modelReviewLeavesDevice,
+    modelReviewEndpoint,
+    modelReviewExpires,
+    modelReviewBytes,
+    modelReviewSha,
+    modelReviewDataClasses,
+    modelReviewStatus
+  ]) element.textContent = "";
+  delete modelReviewChannel.dataset.channel;
+  delete modelReviewLeavesDevice.dataset.value;
+  modelReviewFiles.replaceChildren();
+}
+
+function assertModelOutboundPreview(preview, expectedOperation) {
+  const requestInfo = preview?.request;
+  const disclosure = preview?.disclosure;
+  const channel = requestInfo?.channel;
+  const encodedBytes = typeof requestInfo?.bodyUtf8 === "string" ? new TextEncoder().encode(requestInfo.bodyUtf8).byteLength : -1;
+  const targetMatches = channel === "local"
+    ? requestInfo?.willLeaveDevice === false && requestInfo?.endpoint === null
+    : channel === "loopback"
+      ? requestInfo?.willLeaveDevice === false && typeof requestInfo?.endpoint === "string" && requestInfo.endpoint.length > 0
+      : channel === "network"
+        ? requestInfo?.willLeaveDevice === true && typeof requestInfo?.endpoint === "string" && requestInfo.endpoint.length > 0
+        : false;
+  const filesValid = Array.isArray(disclosure?.files) && disclosure.files.every((file) => (
+    typeof file?.path === "string" && file.path.length > 0
+    && typeof file?.mode === "string" && file.mode.length > 0
+    && Number.isSafeInteger(file?.byteLength) && file.byteLength >= 0
+    && Number.isSafeInteger(file?.transmittedUtf8Bytes) && file.transmittedUtf8Bytes >= 0
+    && /^[0-9a-f]{64}$/i.test(file?.sha256 || "")
+  ));
+  if (preview?.operation !== expectedOperation
+    || typeof preview?.previewId !== "string" || !preview.previewId
+    || !/^[0-9a-f]{64}$/i.test(preview?.approvalDigest || "")
+    || !targetMatches
+    || !Number.isSafeInteger(requestInfo?.byteLength) || requestInfo.byteLength < 0
+    || encodedBytes !== requestInfo.byteLength
+    || !/^[0-9a-f]{64}$/i.test(requestInfo?.sha256 || "")
+    || !Array.isArray(disclosure?.dataClasses)
+    || !filesValid) {
+    const error = new Error(t("error.modelReviewBlocked"));
+    error.code = "MODEL_REQUEST_INVALID";
+    throw error;
+  }
+}
+
+function formatModelReviewNumber(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0
+    ? new Intl.NumberFormat(document.documentElement.lang || "en").format(number)
+    : t("model.review.value.unavailable");
+}
+
+function formatModelReviewTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? t("model.review.value.unavailable") : date.toLocaleString();
+}
+
 suggestButton.addEventListener("click", async () => {
   suggestButton.disabled = true;
-  modelState.textContent = t("model.state.thinking");
   try {
-    const payload = await request("/api/model/suggest", {
-      goal: goalInput.value.trim() || currentTask?.goal,
-      repoProfile,
-      rootPath: repoProfile?.rootPath,
-      taskId: currentTask?.id
-    });
+    const payload = await executeReviewedModelOperation("task-suggest", suggestButton, modelState);
+    if (!payload) return;
     if (payload.task) currentTask = payload.task;
-    modelState.textContent = payload.suggestion.provider;
-    modelOutput.textContent = payload.suggestion.content;
+    modelState.textContent = payload.result?.provider || t("model.review.state.completed");
+    modelOutput.textContent = payload.result?.content || t("model.review.result.empty");
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
@@ -1084,18 +1355,15 @@ suggestButton.addEventListener("click", async () => {
 
 contextButton.addEventListener("click", async () => {
   contextButton.disabled = true;
-  modelState.textContent = t("model.state.chooseContext");
   try {
-    const payload = await request("/api/model/context-files", {
-      goal: goalInput.value.trim() || currentTask?.goal,
-      repoProfile,
-      rootPath: repoProfile?.rootPath,
-      taskId: currentTask?.id
-    });
-    suggestedContextFiles = payload.suggestion.files || [];
+    const payload = await executeReviewedModelOperation("context-files", contextButton, modelState);
+    if (!payload) return;
+    if (payload.task) currentTask = payload.task;
+    suggestedContextFiles = payload.result?.files || [];
     modelState.textContent = t("model.state.contextCandidates", { count: suggestedContextFiles.length });
     renderContextCandidates(suggestedContextFiles);
-    modelOutput.textContent = (payload.suggestion.note || t("model.context.noteFallback")).trim();
+    modelOutput.textContent = (payload.result?.note || t("model.context.noteFallback")).trim();
+    renderTask(currentTask);
     renderGuide();
     await refreshAudit();
   } catch (error) {
@@ -1147,16 +1415,11 @@ proposePatchButton.addEventListener("click", async () => {
     return;
   }
   proposePatchButton.disabled = true;
-  patchState.textContent = t("patch.state.generating");
   try {
-    const payload = await request("/api/model/patch-proposal", {
-      goal: currentTask.goal,
-      repoProfile,
-      rootPath: repoProfile?.rootPath,
-      taskId: currentTask.id
-    });
+    const payload = await executeReviewedModelOperation("patch-proposal", proposePatchButton, patchState);
+    if (!payload) return;
     currentTask = payload.task;
-    renderPatchProposal(payload.proposal);
+    renderPatchProposal(payload.result);
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
@@ -1368,11 +1631,12 @@ fixFailureButton.addEventListener("click", async () => {
     return;
   }
   fixFailureButton.disabled = true;
-  verifyState.textContent = t("verify.state.fixing");
   try {
-    const payload = await request("/api/model/fix-from-failure", { taskId: currentTask.id, rootPath: repoProfile?.rootPath });
+    const payload = await executeReviewedModelOperation("failure-fix", fixFailureButton, verifyState);
+    if (!payload) return;
     if (payload.task) currentTask = payload.task;
-    modelOutput.textContent = payload.suggestion.content;
+    verifyState.textContent = t("verify.state.fixReady");
+    modelOutput.textContent = payload.result?.content || t("model.review.result.empty");
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
@@ -1418,7 +1682,7 @@ function updateControls() {
   setControlState(saveMemoryButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
   setControlState(refreshMemoryButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
   setControlState(saveModelButton, false);
-  setControlState(suggestButton, !hasGoal, hasGoal ? "" : t("control.needGoalOrTask"));
+  setControlState(suggestButton, !hasTask, hasTask ? "" : t("control.needPlan"));
   setControlState(contextButton, !hasTask || !hasRepo, !hasTask ? t("control.needPlan") : !hasRepo ? t("control.needScan") : "");
   setControlState(readContextButton, !hasTask || !hasContextCandidates || selectedContextCount === 0, !hasTask ? t("control.needPlan") : !hasContextCandidates ? t("control.needContextCandidates") : selectedContextCount === 0 ? t("control.needContextSelection") : "");
   setControlState(proposePatchButton, !hasTask || !hasContext || patchDraftGateStatus.blocksPatch, !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : patchDraftGateStatus.detail);
@@ -2192,7 +2456,15 @@ function renderTask(task) {
         timedOut: task.verification.timedOut ? t("model.output.yes") : t("model.output.no")
       })
     : t("task.verification.notRun");
-  const latestSuggestion = task.suggestions?.at(-1)?.content || t("task.suggestion.empty");
+  const latestModelEvent = task.modelEvents?.at(-1);
+  const latestModelEventText = latestModelEvent
+    ? t("task.summary.modelEventDetail", {
+        operation: latestModelEvent.operation || t("task.value.empty"),
+        provider: latestModelEvent.provider || t("task.value.empty"),
+        model: latestModelEvent.model || t("task.value.empty"),
+        status: latestModelEvent.status || t("task.value.empty")
+      })
+    : t("task.value.empty");
   const activePatches = task.appliedPatches?.filter((patch) => !patch.revertedAt).length || 0;
   taskSummary.textContent = [
     `${t("task.summary.goal")}: ${task.goal}`,
@@ -2200,14 +2472,14 @@ function renderTask(task) {
     `${t("task.summary.plan")}: ${planText}`,
     `${t("task.summary.toolCalls")}: ${task.toolCalls.length}`,
     `${t("task.summary.contextFiles")}: ${task.contextFiles?.length || 0}`,
-    `${t("task.summary.suggestions")}: ${task.suggestions?.length || 0}`,
+    `${t("task.summary.modelEvents")}: ${task.modelEvents?.length || 0}`,
     `${t("task.summary.patchDraft")}: ${task.patchProposal ? patchTargetLabel(task.patchProposal) : t("task.patch.none")}`,
     `${t("task.summary.appliedPatches")}: ${activePatches}`,
     `${t("task.summary.verification")}: ${verification}`,
     `${t("task.summary.failure")}: ${task.failureSummary ? task.failureSummary.slice(0, 220) : t("task.failure.none")}`,
-    `${t("task.summary.summary")}: ${task.summary || t("task.suggestion.empty")}`,
+    `${t("task.summary.summary")}: ${task.summary || t("task.value.empty")}`,
     "",
-    `${t("task.summary.latestSuggestion")}: ${latestSuggestion.slice(0, 400)}`
+    `${t("task.summary.latestModelEvent")}: ${latestModelEventText}`
   ].join("\n");
   reviewDraft.textContent = task.reviewDraft || t("task.review.empty");
   renderGuide();
@@ -2437,6 +2709,9 @@ function friendlyErrorMessage(error) {
     [/WORKSPACE_(?:COPY|CLEANUP)_OWNERSHIP_CHANGED|WORKSPACE_CLEANUP_(?:PENDING|ENTRY_UNSAFE)|WORKSPACE_OWNERSHIP_STATE_MISSING/, t("error.copyOwnership")],
     [/WORKSPACE_COPY_(?:PATH_INVALID|SOURCE_UNSAFE|ROOT_CHANGED|IDENTITY_CHANGED)|WORKSPACE_CLEANUP_LINK_FOUND|DATA_BOUNDARY_(?:PATH_CHANGED|ROOT_MISSING|ROOT_UNSAFE|IGNORE_UNREADABLE|IGNORE_UNSAFE)/, t("error.copyBoundary")],
     [/WORKSPACE_(?:CAPABILITY_MISMATCH|ACTIVATION_REQUIRED|APPROVAL_STALE|CONTEXT_MISSING|TASK_RESCAN_REQUIRED|UNKNOWN|IDENTITY_CHANGED|ORIGINAL_CHANGED|DEMO_CHANGED|OWNER_INVALID|STATE_INTEGRITY_FAILED|STATE_MISSING)/, t("error.workspaceInvalid")],
+    [/MODEL_PREVIEW_(?:UNKNOWN|APPROVAL_MISMATCH|INTEGRITY_FAILED)|MODEL_(?:CONFIG|TASK|WORKSPACE|SOURCE)_CHANGED(?:_AFTER_SEND)?/, t("error.modelReviewStale")],
+    [/MODEL_(?:REQUEST_TOO_LARGE|DISCLOSURE_PATH_BLOCKED|MANIFEST_INELIGIBLE|REQUEST_INVALID|OPERATION_INVALID)/, t("error.modelReviewBlocked")],
+    [/MODEL_SEND_APPROVAL_REQUIRED/, t("error.modelReviewApproval")],
     [/PATCH_APPROVAL_STALE/, t("error.patchApprovalStale")],
     [/PROJECT_WRITE_LOCKED/, t("error.projectWriteLocked")],
     [/TASK_STORE_LOCKED/, t("error.taskStoreLocked")],

@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { findAvailablePort, withAutomationResources } from "./automation-resource-scope.js";
 import { inspectSourceVersion } from "./source-version.js";
+import { previewAndApproveModelOperation } from "./model-operation-client.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -12,34 +12,41 @@ const args = parseArgs(process.argv.slice(2));
 const appRoot = path.resolve(args.appRoot || process.env.CODECLAW_SIM_APP_ROOT || defaultRoot);
 const realRepo = path.resolve(args.realRepo || process.env.CODECLAW_SIM_REAL_REPO || appRoot);
 const reportDir = path.resolve(args.outDir || process.env.CODECLAW_SIM_OUT_DIR || path.join(appRoot, "dist"));
-const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-first-trial-"));
-const port = await findFreePort();
-const baseUrl = `http://127.0.0.1:${port}`;
 const demoPath = path.join(appRoot, "examples", "demo-js");
 const demoTestPath = path.join(demoPath, "test", "calculator.test.js");
-const originalDemoTest = await fs.readFile(demoTestPath, "utf8");
-
-const server = spawn(process.execPath, ["apps/web/server.js"], {
-  cwd: appRoot,
-  env: {
-    ...process.env,
-    CODECLAW_PORT: String(port),
-    CODECLAW_STATE_DIR: stateDir,
-    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true
-});
-
+let stateDir = "";
+let noCommandRepo = "";
+let port = 0;
+let baseUrl = "";
+let originalDemoTest = "";
+let server = null;
 let serverOutput = "";
-server.stdout.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
-server.stderr.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
 
-try {
+await withAutomationResources(async (scope) => {
+  stateDir = await scope.temporaryDirectory("codeclaw-first-trial-");
+  noCommandRepo = await scope.temporaryDirectory("codeclaw-no-command-repo-");
+  originalDemoTest = await fs.readFile(demoTestPath, "utf8");
+  scope.defer("restore simulated-trial Demo fixture", () => restoreFileIfChanged(demoTestPath, originalDemoTest));
+  port = await findAvailablePort();
+  baseUrl = `http://127.0.0.1:${port}`;
+  server = scope.child(spawn(process.execPath, ["apps/web/server.js"], {
+    cwd: appRoot,
+    env: {
+      ...process.env,
+      CODECLAW_PORT: String(port),
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  }), "CodeClaw simulated-trial server");
+  server.stdout.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
+  server.stderr.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
+
   await waitForHealth();
   await request("/api/model/config", {
     type: "mock",
@@ -124,10 +131,7 @@ try {
     frictionAudit: report.frictionAudit.map((item) => ({ area: item.area, status: item.status })),
     findings: report.simulatedTesterFindings
   }, null, 2));
-} finally {
-  server.kill();
-  await fs.rm(stateDir, { recursive: true, force: true });
-}
+});
 
 async function inspectUi() {
   const [html, appJs, i18nJs] = await Promise.all([text("/"), text("/app.js"), text("/i18n.js")]);
@@ -151,16 +155,14 @@ async function runDemoTrial() {
   const preflight = await request("/api/preflight/run", { path: demoPath, goal });
   const task = preflight.task;
   const plan = await request("/api/agent/plan", { goal, repoProfile: preflight.profile, taskId: task.id });
-  const patch = await request("/api/model/patch-proposal", {
-    goal,
-    repoProfile: preflight.profile,
-    rootPath: preflight.profile.rootPath,
+  const patch = (await previewAndApproveModelOperation(request, {
+    operation: "patch-proposal",
     taskId: task.id
-  });
+  })).result;
   const latest = await request(`/api/tasks/latest?rootPath=${encodeURIComponent(preflight.profile.rootPath)}`);
   const finalDemoTest = await fs.readFile(demoTestPath, "utf8");
   const tools = new Set((latest.task?.toolCalls || []).map((call) => call.tool));
-  const patchFiles = proposalFiles(patch.proposal);
+  const patchFiles = proposalFiles(patch);
   return {
     repo: preflight.profile.name,
     rootPath: preflight.profile.rootPath,
@@ -207,8 +209,6 @@ async function runFailurePathTrial(demo) {
   const emptyPath = await expectApiFailure("/api/preflight/run", { path: "", goal: "empty path simulation" }, "PATH_EMPTY");
   const filePath = await expectApiFailure("/api/preflight/run", { path: path.join(demoPath, "package.json"), goal: "file path simulation" }, "PATH_IS_FILE");
 
-  const noCommandRepo = path.join(stateDir, "no-command-repo");
-  await fs.mkdir(noCommandRepo, { recursive: true });
   await fs.writeFile(path.join(noCommandRepo, "README.md"), "# No command fixture\n\nThis fixture intentionally has no runnable scripts.\n", "utf8");
   const noCommandPreflight = await request("/api/preflight/run", {
     path: noCommandRepo,
@@ -479,16 +479,9 @@ function parseArgs(rawArgs) {
   return parsed;
 }
 
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const selected = address.port;
-      probe.close(() => resolve(selected));
-    });
-  });
+async function restoreFileIfChanged(filePath, expected) {
+  const current = await fs.readFile(filePath, "utf8").catch(() => null);
+  if (current !== expected) await fs.writeFile(filePath, expected, "utf8");
 }
 
 function yes(value) {

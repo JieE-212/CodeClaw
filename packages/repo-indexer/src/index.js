@@ -19,7 +19,7 @@ export async function scanRepository(rootPath, options = {}) {
     : async (relative, isDirectory) => isPathIgnoredStrict(resolvedRoot, relative, isDirectory);
   await walk(resolvedRoot, resolvedRoot, files, skipped, options.maxFiles || MAX_FILES, isIgnored);
 
-  const manifests = await readKnownManifests(resolvedRoot);
+  const manifests = await readKnownManifests(resolvedRoot, new Set(files.map((file) => file.path)));
   return {
     rootPath: resolvedRoot,
     name: path.basename(resolvedRoot),
@@ -136,9 +136,10 @@ function extractSymbols(content, extension) {
   return symbols;
 }
 
-async function readKnownManifests(rootPath) {
+async function readKnownManifests(rootPath, allowedFiles) {
   const manifests = {};
   for (const name of ["package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod"]) {
+    if (!allowedFiles.has(name)) continue;
     try {
       const content = stripBom(await readStableUtf8File(path.join(rootPath, name)));
       manifests[name] = content;

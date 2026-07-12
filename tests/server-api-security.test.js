@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { previewAndApproveModelOperation } from "../scripts/model-operation-client.js";
 
 test("POST transport and private workspace state fail closed", async (t) => {
   const fixture = await createFixture("transport");
@@ -44,6 +45,18 @@ test("POST transport and private workspace state fail closed", async (t) => {
   });
   assert.equal(sameOrigin.response.status, 200);
   assert.equal(sameOrigin.payload.workspace.kind, "original-readonly");
+
+  for (const pathname of [
+    "/api/model/suggest",
+    "/api/model/context-files",
+    "/api/model/patch-proposal",
+    "/api/model/fix-from-failure",
+    "/api/tasks/context-file"
+  ]) {
+    const removed = await request(server.baseUrl, pathname, {});
+    assert.equal(removed.response.status, 404, pathname);
+    assert.equal(removed.payload.code, "API_NOT_FOUND", pathname);
+  }
 
   for (const pathname of ["/api/repo/scan", "/api/preflight/run"]) {
     const result = await request(server.baseUrl, pathname, { path: fixture.stateDir, goal: "read private state" });
@@ -127,9 +140,8 @@ test("task-bound and active-workspace reads reject a same-path junction replacem
       rootPath: fixture.original,
       taskId
     }),
-    await request(server.baseUrl, "/api/model/patch-proposal", {
-      goal: "change workspace-owner.json",
-      rootPath: fixture.original,
+    await request(server.baseUrl, "/api/model/preview", {
+      operation: "patch-proposal",
       taskId
     }),
     await request(server.baseUrl, "/api/tools/call", {
@@ -239,19 +251,17 @@ test("strict approvals and server capabilities reject every client-side elevatio
 
   const goal = "Add a divide-by-zero test and verify the project";
   const preflight = await request(server.baseUrl, "/api/preflight/run", { path: copy.rootPath, goal });
-  const proposal = await request(server.baseUrl, "/api/model/patch-proposal", {
-    goal,
-    rootPath: copy.rootPath,
-    repoProfile: preflight.payload.profile,
-    taskId: preflight.payload.task.id
-  });
-  assert.equal(proposal.payload.proposal.applicable, true);
+  const proposal = await previewAndApproveModelOperation(
+    (pathname, body) => request(server.baseUrl, pathname, body),
+    { operation: "patch-proposal", taskId: preflight.payload.task.id }
+  );
+  assert.equal(proposal.result.applicable, true);
   const targetPath = path.join(copy.rootPath, "test", "calculator.test.js");
   const beforeApply = await fs.readFile(targetPath, "utf8");
   const applyBody = {
     taskId: preflight.payload.task.id,
-    proposalId: proposal.payload.proposal.proposalId,
-    proposalDigest: proposal.payload.proposal.proposalDigest
+    proposalId: proposal.result.proposalId,
+    proposalDigest: proposal.result.proposalDigest
   };
 
   for (const approved of [false, "true", "TRUE", 1, {}, []]) {

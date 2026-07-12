@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +12,10 @@ import { ToolRegistry, hashContent } from "../../packages/tool-registry/src/inde
 import { AuditLog, summarizeToolResult } from "../../packages/audit-log/src/index.js";
 import { TaskStore, appliedPatchIdentity, buildTaskReviewDraft, patchProposalDigest, summarizeTask } from "../../packages/task-store/src/index.js";
 import { MemoryStore } from "../../packages/memory-store/src/index.js";
-import { ModelProvider, publicModelConfig, sanitizeModelConfig, selectContextFiles } from "../../packages/model-provider/src/index.js";
+import { MODEL_OPERATIONS, ModelProvider, publicModelConfig, sanitizeModelConfig, selectContextFiles } from "../../packages/model-provider/src/index.js";
+import { buildOpenAICompatibleEndpoint } from "../../packages/model-provider/src/safe-transport.js";
+import { ModelOutboundPreviewStore } from "../../packages/model-outbound/src/preview-store.js";
+import { buildDataBoundaryManifest, manifestsHaveSameSource, readManifestFiles } from "../../packages/data-boundary/src/index.js";
 import { decidePreflightGate, pickSearchQuery, summarizeContextCoverage } from "../../packages/preflight/src/index.js";
 import { PatchTransactionStore, recoverPatchTransactions } from "../../packages/patch-transaction/src/index.js";
 import { PatchTransactionClaimStore, loadPatchStateOwnerId } from "../../packages/patch-transaction/src/claim-store.js";
@@ -20,6 +23,7 @@ import { CrossProcessLockManager, canonicalPathLockKey } from "../../packages/sh
 import { captureWorkspaceIdentity, captureWorkspaceParentIdentity } from "../../packages/shared/src/workspace-identity.js";
 import { isProtectedDirectory, isSensitiveFile } from "../../packages/shared/src/path-utils.js";
 import { WorkspaceCapabilityStore } from "../../packages/workspace-capability/src/index.js";
+import { atomicWriteFile } from "../../packages/shared/src/atomic-file.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -49,13 +53,18 @@ const workspaceCapabilityStore = new WorkspaceCapabilityStore({
   demoPath
 });
 const modelConfigPath = path.join(localStateDir, "model.json");
-const MAX_CONTEXT_CONTENT_CHARS = 50000;
+const MODEL_CONTEXT_MAX_FILE_BYTES = 1024 * 1024;
+const MODEL_CONTEXT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+const MODEL_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
 const UNTRUSTED_REQUEST_REJECTION_CODES = new Set(["LOCAL_ORIGIN_REQUIRED", "JSON_CONTENT_TYPE_REQUIRED", "JSON_BODY_INVALID"]);
 const port = DEFAULT_PORT;
 let lastRepoProfile = null;
 let toolRegistry = null;
 let modelConfig = sanitizeModelConfig({ type: "mock", name: "mock", model: "mock-codeclaw" });
 let modelProvider = new ModelProvider(modelConfig);
+let modelConfigGeneration = randomUUID();
+const modelOutboundPreviews = new ModelOutboundPreviewStore();
+let modelStateQueue = Promise.resolve();
 let patchRecoveryStatus = emptyPatchRecoveryStatus();
 let lastWorkspace = null;
 let lastWorkspaceBinding = null;
@@ -95,32 +104,33 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/workspaces/activate") return await activateWorkspace(request, response);
     if (request.method === "POST" && url.pathname === "/api/workspaces/cleanup") return await cleanupWorkspace(request, response);
     if (request.method === "POST" && url.pathname === "/api/model/config") return await setModelConfig(request, response);
-    if (request.method === "POST" && url.pathname === "/api/model/suggest") return await suggestWithModel(request, response);
-    if (request.method === "POST" && url.pathname === "/api/model/context-files") return await suggestContextFiles(request, response);
-    if (request.method === "POST" && url.pathname === "/api/model/patch-proposal") return await proposePatch(request, response);
-    if (request.method === "POST" && url.pathname === "/api/model/fix-from-failure") return await suggestFailureFix(request, response);
+    if (request.method === "POST" && url.pathname === "/api/model/preview") return await previewModelOperation(request, response);
+    if (request.method === "POST" && url.pathname === "/api/model/cancel") return await cancelModelOperation(request, response);
+    if (request.method === "POST" && url.pathname === "/api/model/send") return await sendModelOperation(request, response);
     if (request.method === "POST" && url.pathname === "/api/preflight/run") return await runPreflight(request, response);
     if (request.method === "GET" && url.pathname === "/api/tasks/latest") return await getLatestTask(url, response);
     if (request.method === "POST" && url.pathname === "/api/tasks/create") return await createTask(request, response);
     if (request.method === "POST" && url.pathname === "/api/tasks/complete") return await completeTask(request, response);
-    if (request.method === "POST" && url.pathname === "/api/tasks/context-file") return await addTaskContextFile(request, response);
     if (request.method === "POST" && url.pathname === "/api/tasks/apply-patch") return await applyPatch(request, response);
     if (request.method === "POST" && url.pathname === "/api/tasks/revert-patch") return await revertPatch(request, response);
     if (request.method === "POST" && url.pathname === "/api/repo/scan") return await scanRepo(request, response);
     if (request.method === "POST" && url.pathname === "/api/agent/plan") return await createPlan(request, response);
     if (request.method === "POST" && url.pathname === "/api/tools/call") return await callTool(request, response);
+    if (url.pathname.startsWith("/api/")) throw patchOperationError("API_NOT_FOUND", "The requested CodeClaw API endpoint does not exist.", 404);
     return await serveStatic(url.pathname, response);
   } catch (error) {
     if (!UNTRUSTED_REQUEST_REJECTION_CODES.has(error.code)) {
-      await recordAudit({ type: "server.error", status: "error", title: "Server error", detail: error.message, rootPath: lastRepoProfile?.rootPath });
+      await recordAudit({ type: "server.error", status: "error", title: "Server error", rootPath: lastRepoProfile?.rootPath, metadata: { code: error.code || "SERVER_ERROR" } });
     }
-    return json(response, { ok: false, code: error.code || "SERVER_ERROR", error: error.message }, error.status || 500);
+    return json(response, { ok: false, code: error.code || "SERVER_ERROR", error: error.message }, localErrorStatus(error));
   }
 });
 
 await startServer();
 
 async function startServer() {
+  await taskStore.initialize();
+  await auditLog.redactLegacyModelData();
   await loadModelConfig();
   patchRecoveryStatus = await recoverPatchTransactions({
     store: patchTransactionStore,
@@ -152,7 +162,6 @@ async function getMemory(url, response) {
 }
 
 async function getLastSession(response) {
-  await ensureModelConfigLoaded();
   const memory = await memoryStore.latest();
   let profile = memory ? profileFromMemory(memory) : null;
   if (profile) {
@@ -469,85 +478,472 @@ async function getLatestTask(url, response) {
 }
 
 async function getModelStatus(response) {
-  await ensureModelConfigLoaded();
   return json(response, { ok: true, config: publicModelConfig(modelConfig), status: modelProvider.status() });
 }
 
 async function setModelConfig(request, response) {
   const body = await readJson(request);
-  modelConfig = sanitizeModelConfig(body);
-  modelProvider = new ModelProvider(modelConfig);
-  await fs.mkdir(path.dirname(modelConfigPath), { recursive: true });
-  await fs.writeFile(modelConfigPath, JSON.stringify(modelConfig, null, 2), "utf8");
-  await recordAudit({ type: "model.config", title: "Model configured", detail: `${modelConfig.type}: ${modelConfig.model || modelConfig.name}`, rootPath: lastRepoProfile?.rootPath, metadata: { config: publicModelConfig(modelConfig) } });
-  return json(response, { ok: true, config: publicModelConfig(modelConfig), status: modelProvider.status() });
-}
-
-async function suggestWithModel(request, response) {
-  await ensureModelConfigLoaded();
-  const body = await readJson(request);
-  const task = body.taskId ? await taskStore.get(body.taskId) : await taskStore.latest({ rootPath: body.rootPath || lastRepoProfile?.rootPath });
-  const repoProfile = body.repoProfile || lastRepoProfile || {};
-  const suggestion = await modelProvider.suggestTask({ goal: body.goal || task?.goal, repoProfile, task });
-  let updatedTask = null;
-  if (task) updatedTask = await taskStore.appendSuggestion(task.id, suggestion);
-  await recordAudit({
-    type: "model.suggest",
-    title: "Model suggestion",
-    detail: `${suggestion.provider}: ${suggestion.content.slice(0, 120)}`,
-    rootPath: task?.rootPath || repoProfile.rootPath || lastRepoProfile?.rootPath,
-    metadata: { taskId: task?.id || null, provider: suggestion.provider, model: suggestion.model }
+  assertOnlyRequestFields(body, ["type", "name", "baseUrl", "model", "apiKey"], "MODEL_CONFIG_FIELDS_INVALID");
+  const requested = sanitizeModelConfig({
+    type: String(body.type || "mock").trim(),
+    name: String(body.name || body.type || "mock").trim(),
+    baseUrl: String(body.baseUrl || "").trim(),
+    model: String(body.model || (body.type === "openai-compatible" ? "" : "mock-codeclaw")).trim(),
+    apiKey: ""
   });
-  return json(response, { ok: true, suggestion, task: updatedTask });
-}
+  if (!["mock", "openai-compatible"].includes(requested.type)) {
+    throw patchOperationError("MODEL_CONFIG_TYPE_INVALID", "Model type must be mock or openai-compatible.", 400);
+  }
+  const suppliedKey = body.apiKey == null ? "" : String(body.apiKey);
+  if (suppliedKey === "configured" || /[\u0000-\u001f\u007f]/.test(suppliedKey)) {
+    throw patchOperationError("MODEL_CONFIG_KEY_INVALID", "The model API key is invalid.", 400);
+  }
+  const normalizedRequested = requested.type === "mock" ? { ...requested, baseUrl: "", apiKey: "" } : requested;
+  if (normalizedRequested.type === "openai-compatible" && normalizedRequested.baseUrl) {
+    try {
+      validateModelBaseUrl(normalizedRequested);
+    } catch (error) {
+      throw patchOperationError("MODEL_CONFIG_ENDPOINT_INVALID", error.message, 400);
+    }
+  }
 
-async function suggestContextFiles(request, response) {
-  await ensureModelConfigLoaded();
-  const body = await readJson(request);
-  const task = body.taskId ? await taskStore.get(body.taskId) : await taskStore.latest({ rootPath: body.rootPath || lastRepoProfile?.rootPath });
-  const repoProfile = body.repoProfile || lastRepoProfile || {};
-  const suggestion = await modelProvider.suggestContextFiles({ goal: body.goal || task?.goal, repoProfile, task });
-  await recordAudit({
-    type: "model.context",
-    title: "Context files suggested",
-    detail: `${suggestion.files.length} candidate file(s)`,
-    rootPath: task?.rootPath || repoProfile.rootPath || lastRepoProfile?.rootPath,
-    metadata: { taskId: task?.id || null, provider: suggestion.provider, files: suggestion.files.map((item) => item.path) }
+  const updated = await serializeModelState(async () => {
+    const sameEndpoint = modelConfig.type === normalizedRequested.type
+      && modelConfig.name === normalizedRequested.name
+      && modelConfig.baseUrl === normalizedRequested.baseUrl
+      && modelConfig.model === normalizedRequested.model;
+    const apiKey = normalizedRequested.type === "mock" ? "" : suppliedKey || (sameEndpoint ? modelConfig.apiKey : "");
+    const nextConfig = { ...normalizedRequested, apiKey };
+    const nextProvider = new ModelProvider(nextConfig);
+    await persistPublicModelConfig(nextConfig);
+    modelConfig = nextConfig;
+    modelProvider = nextProvider;
+    modelConfigGeneration = randomUUID();
+    modelOutboundPreviews.clear();
+    await recordAudit({
+      type: "model.config",
+      title: "Model configured",
+      rootPath: lastRepoProfile?.rootPath,
+      metadata: { operation: "config", provider: modelConfig.name, model: modelConfig.model, status: modelProvider.status().configured ? "configured" : "incomplete" }
+    });
+    return { config: publicModelConfig(modelConfig), status: modelProvider.status() };
   });
-  return json(response, { ok: true, suggestion, task });
+  return json(response, { ok: true, ...updated });
 }
 
-async function proposePatch(request, response) {
-  await ensureModelConfigLoaded();
+async function previewModelOperation(request, response) {
   const body = await readJson(request);
-  const task = body.taskId ? await taskStore.get(body.taskId) : await taskStore.latest({ rootPath: body.rootPath || lastRepoProfile?.rootPath });
-  if (!task) throw new Error("Create a task before requesting a patch proposal.");
-  await assertTaskWorkspaceCurrent(task, "generate a patch proposal");
-  const repoProfile = body.repoProfile || lastRepoProfile || {};
-  const modelProposal = await modelProvider.proposePatch({ goal: body.goal || task.goal, repoProfile, task });
-  await assertTaskWorkspaceCurrent(await taskStore.get(task.id), "bind patch proposal baselines");
-  const proposal = await attachPatchBaselines(modelProposal, task, getToolRegistry(task.rootPath, task.rootIdentity));
-  const updatedTask = await taskStore.setPatchProposal(task.id, proposal);
-  await assertTaskWorkspaceCurrent(updatedTask, "complete a patch proposal");
-  await recordAudit({
-    type: "model.patch",
-    title: "Patch proposed",
-    detail: proposal.path ? `${proposal.path}: ${proposal.summary}` : proposal.summary,
-    rootPath: task.rootPath,
-    metadata: { taskId: task.id, provider: proposal.provider, model: proposal.model, path: proposal.path }
+  assertOnlyRequestFields(body, ["operation", "taskId"], "MODEL_PREVIEW_FIELDS_INVALID");
+  const operation = String(body.operation || "");
+  if (!MODEL_OPERATIONS.includes(operation)) {
+    throw patchOperationError("MODEL_OPERATION_INVALID", "Choose a supported model operation before building a preview.", 400);
+  }
+  if (typeof body.taskId !== "string" || !body.taskId) {
+    throw patchOperationError("MODEL_TASK_REQUIRED", "Create a task before building a model request preview.", 409);
+  }
+
+  const task = await taskStore.get(body.taskId);
+  const binding = await assertTaskWorkspaceCurrent(task, `preview model operation ${operation}`);
+  const initialManifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
+  assertModelManifestEligible(initialManifest);
+  const repoProfile = filterProfileToManifest(
+    await scanRepositoryWithFriendlyErrors(task.rootPath),
+    initialManifest
+  );
+  const contextReads = await readModelContext(task, operation, initialManifest);
+  const finalManifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
+  if (!manifestsHaveSameSource(initialManifest, finalManifest)) {
+    throw patchOperationError("MODEL_SOURCE_CHANGED", "The workspace changed while CodeClaw was building the model request. Review a fresh preview.", 409);
+  }
+  const latestTask = await taskStore.get(task.id);
+  assertTaskRevision(latestTask, task.revision, "MODEL_TASK_CHANGED");
+  await assertTaskWorkspaceCurrent(latestTask, `finish model preview ${operation}`);
+
+  const taskSnapshot = buildModelTaskSnapshot(latestTask, operation, contextReads, finalManifest);
+  const prepared = modelProvider.prepare(operation, {
+    goal: latestTask.goal,
+    repoProfile,
+    task: taskSnapshot,
+    limit: 8
   });
-  return json(response, { ok: true, proposal: updatedTask.patchProposal, task: updatedTask });
+  if (prepared.byteLength > MODEL_REQUEST_MAX_BYTES) {
+    throw patchOperationError("MODEL_REQUEST_TOO_LARGE", `The exact model request exceeds the ${MODEL_REQUEST_MAX_BYTES}-byte limit. Select less context and preview again.`, 413);
+  }
+  const disclosure = buildServerModelDisclosure(prepared, finalManifest);
+  const preview = modelOutboundPreviews.create({
+    operation,
+    task: latestTask,
+    workspace: binding.workspace,
+    manifest: finalManifest,
+    configGeneration: modelConfigGeneration,
+    prepared,
+    disclosure
+  });
+  await recordAudit({
+    type: "model.preview",
+    title: "Model request previewed",
+    rootPath: latestTask.rootPath,
+    metadata: {
+      operation,
+      taskId: latestTask.id,
+      provider: prepared.provider.name,
+      model: prepared.provider.model,
+      requestSha256: preview.request.sha256,
+      requestBytes: preview.request.byteLength,
+      fileCount: preview.disclosure.files.length,
+      channel: preview.request.channel,
+      willLeaveDevice: preview.request.willLeaveDevice
+    }
+  });
+  return json(response, { ok: true, preview });
 }
 
-async function suggestFailureFix(request, response) {
-  await ensureModelConfigLoaded();
+async function sendModelOperation(request, response) {
   const body = await readJson(request);
-  const task = body.taskId ? await taskStore.get(body.taskId) : await taskStore.latest({ rootPath: body.rootPath || lastRepoProfile?.rootPath });
-  if (!task) throw new Error("No task available for failure repair.");
-  const suggestion = await modelProvider.suggestFailureFix({ task });
-  const updatedTask = await taskStore.appendSuggestion(task.id, { ...suggestion, kind: "failure-fix" });
-  await recordAudit({ type: "model.failure_fix", title: "Failure fix suggested", detail: suggestion.content.slice(0, 120), rootPath: task.rootPath, metadata: { taskId: task.id, provider: suggestion.provider } });
-  return json(response, { ok: true, suggestion, task: updatedTask });
+  assertOnlyRequestFields(body, ["previewId", "approvalDigest", "approved"], "MODEL_SEND_FIELDS_INVALID");
+  const record = modelOutboundPreviews.take(body);
+  let result;
+  try {
+    assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED");
+    let task = await taskStore.get(record.taskId);
+    assertTaskRevision(task, record.taskRevision, "MODEL_TASK_CHANGED");
+    const binding = await assertTaskWorkspaceCurrent(task, `send model operation ${record.operation}`);
+    if (binding.workspace.id !== record.workspaceId || task.rootIdentity !== record.rootIdentity) {
+      throw patchOperationError("MODEL_WORKSPACE_CHANGED", "The task workspace changed after preview. No model request was sent.", 409);
+    }
+    const manifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
+    if (manifest.manifestDigest !== record.manifestDigest || manifest.policyVersion !== record.manifestPolicyVersion) {
+      throw patchOperationError("MODEL_SOURCE_CHANGED", "The workspace changed after preview. No model request was sent.", 409);
+    }
+
+    assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_BEFORE_SEND");
+    result = await modelProvider.executePrepared(record.prepared);
+    assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_AFTER_SEND");
+
+    const committed = await serializeModelState(async () => {
+      assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_AFTER_SEND");
+      const commitTask = await taskStore.get(record.taskId);
+      await assertModelCommitStillCurrent(record, commitTask);
+      const responseSummary = summarizeModelResponse(result);
+      const modelEvent = modelEventForResult(record, result, responseSummary, "ok");
+      const beforeCommit = ({ currentTask }) => assertModelCommitStillCurrent(record, currentTask);
+      let updatedTask;
+      let publicResult = result;
+      if (record.operation === "patch-proposal") {
+        const proposal = await attachPatchBaselines(result, commitTask, getToolRegistry(commitTask.rootPath, commitTask.rootIdentity));
+        updatedTask = await taskStore.setPatchProposal(commitTask.id, proposal, {
+          expectedRevision: record.taskRevision,
+          modelEvent,
+          beforeCommit
+        });
+        publicResult = updatedTask.patchProposal;
+      } else {
+        updatedTask = await taskStore.recordModelEvent(commitTask.id, modelEvent, {
+          expectedRevision: record.taskRevision,
+          beforeCommit
+        });
+      }
+      return { task: commitTask, updatedTask, publicResult, responseSummary };
+    });
+    await recordAudit({
+      type: "model.send",
+      title: "Model request completed",
+      rootPath: committed.task.rootPath,
+      metadata: {
+        operation: record.operation,
+        taskId: committed.task.id,
+        provider: record.prepared.provider.name,
+        model: record.prepared.provider.model,
+        requestSha256: record.requestSha256,
+        requestBytes: record.byteLength,
+        responseSha256: committed.responseSummary.sha256,
+        responseBytes: committed.responseSummary.byteLength,
+        fileCount: record.disclosure.files.length,
+        channel: record.target.channel,
+        willLeaveDevice: record.target.willLeaveDevice
+      }
+    });
+    return json(response, { ok: true, operation: record.operation, result: committed.publicResult, task: committed.updatedTask });
+  } catch (error) {
+    await bestEffortRecordFailedModelEvent(record, result);
+    await recordAudit({
+      type: "model.send",
+      status: "error",
+      title: "Model request failed",
+      rootPath: record.rootPath,
+      metadata: {
+        operation: record.operation,
+        taskId: record.taskId,
+        provider: record.prepared.provider.name,
+        model: record.prepared.provider.model,
+        requestSha256: record.requestSha256,
+        requestBytes: record.byteLength,
+        fileCount: record.disclosure.files.length,
+        code: error.code || "MODEL_SEND_FAILED",
+        channel: record.target.channel,
+        willLeaveDevice: record.target.willLeaveDevice
+      }
+    });
+    throw error;
+  } finally {
+    modelOutboundPreviews.release(record);
+    result = null;
+  }
+}
+
+async function cancelModelOperation(request, response) {
+  const body = await readJson(request);
+  assertOnlyRequestFields(body, ["previewId", "approvalDigest"], "MODEL_CANCEL_FIELDS_INVALID");
+  const result = modelOutboundPreviews.discard(body);
+  return json(response, { ok: true, ...result });
+}
+
+async function buildModelBoundaryManifest(rootPath, workspace) {
+  return buildDataBoundaryManifest(rootPath, {
+    allowDisposableMarker: workspace?.kind === "disposable-copy"
+  });
+}
+
+function assertModelManifestEligible(manifest) {
+  if (!manifest?.eligible) {
+    throw patchOperationError(
+      "MODEL_DATA_BOUNDARY_BLOCKED",
+      `The Data Boundary Manifest found ${manifest?.blockers?.length || 0} unsafe or sensitive item(s). No model request was prepared.`,
+      409
+    );
+  }
+}
+
+function filterProfileToManifest(profile, manifest) {
+  const allowed = new Set((manifest.files || []).map((file) => file.path));
+  const files = (profile.files || []).filter((file) => allowed.has(file.path));
+  return {
+    name: profile.name || "",
+    fileCount: files.length,
+    skippedCount: profile.skippedCount || 0,
+    languages: profile.languages || [],
+    frameworks: profile.frameworks || [],
+    packageManagers: profile.packageManagers || [],
+    commands: (profile.commands || []).map((command) => ({ name: command.name, command: command.command })),
+    keyFiles: (profile.keyFiles || []).filter((file) => allowed.has(file)),
+    files
+  };
+}
+
+async function readModelContext(task, operation, manifest) {
+  if (!['patch-proposal', 'failure-fix'].includes(operation)) return [];
+  const all = Array.isArray(task.contextFiles) ? task.contextFiles : [];
+  const selected = operation === "failure-fix" ? all.slice(-8) : all;
+  if (operation === "patch-proposal" && selected.some((file) => file.contentComplete !== true)) {
+    throw patchOperationError("MODEL_CONTEXT_INCOMPLETE", "A selected context file was not fully read. Read it again before building a patch request.", 409);
+  }
+  if (!selected.length) return [];
+  const reads = await readManifestFiles(task.rootPath, manifest, selected.map((file) => file.path), {
+    maxFileBytes: MODEL_CONTEXT_MAX_FILE_BYTES,
+    maxTotalBytes: MODEL_CONTEXT_MAX_TOTAL_BYTES
+  });
+  for (const [index, read] of reads.entries()) {
+    const stored = selected[index];
+    if (!/^[a-f0-9]{64}$/i.test(stored.sha256 || "") || stored.sha256.toLowerCase() !== read.sha256) {
+      throw patchOperationError("MODEL_CONTEXT_CHANGED", `The selected context changed after it was read: ${read.path}. Read it again before previewing model data.`, 409);
+    }
+  }
+  return reads;
+}
+
+function buildModelTaskSnapshot(task, operation, contextReads, manifest) {
+  const contextByPath = new Map(contextReads.map((file) => [file.path, file]));
+  const contextFiles = (task.contextFiles || []).map((file) => {
+    const read = contextByPath.get(file.path);
+    return {
+      path: file.path,
+      summary: file.summary || "",
+      size: read?.byteLength ?? file.size ?? null,
+      sha256: read?.sha256 || file.sha256 || "",
+      contentComplete: file.contentComplete === true,
+      source: file.source || "",
+      ...(read ? { content: read.content } : {})
+    };
+  });
+  const verification = task.verification ? {
+    command: task.verification.command || "",
+    exitCode: Number.isInteger(task.verification.exitCode) ? task.verification.exitCode : null,
+    timedOut: Boolean(task.verification.timedOut),
+    durationMs: Number.isFinite(task.verification.durationMs) ? task.verification.durationMs : null
+  } : null;
+  const snapshot = {
+    id: task.id,
+    revision: task.revision,
+    goal: task.goal,
+    status: task.status,
+    verification,
+    contextFiles
+  };
+  if (operation === "task-suggest") {
+    snapshot.toolCalls = (task.toolCalls || []).map((call) => ({ tool: call.tool || "unknown" }));
+  }
+  if (operation === "failure-fix") {
+    const allowedPaths = new Set((manifest.files || []).map((file) => file.path));
+    snapshot.failureSummary = task.failureSummary || "";
+    snapshot.toolCalls = (task.toolCalls || []).slice(-8).map((call) => ({
+      tool: call.tool || "unknown",
+      args: sanitizeModelToolArgs(call.args, allowedPaths),
+      summary: call.summary || ""
+    }));
+    snapshot.appliedPatches = (task.appliedPatches || [])
+      .filter((patch) => !patch.revertedAt && allowedPaths.has(patch.path))
+      .slice(-4)
+      .map((patch) => ({
+        path: patch.path,
+        summary: patch.summary || "",
+        diff: patch.diff || "",
+        revertedAt: null
+      }));
+  }
+  return snapshot;
+}
+
+function sanitizeModelToolArgs(args, allowedPaths = new Set()) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return {};
+  const output = {};
+  if (typeof args.path === "string") {
+    const normalizedPath = normalizePatchPath(args.path);
+    if (allowedPaths.has(normalizedPath)) output.path = normalizedPath;
+  }
+  for (const key of ["query", "command"]) {
+    if (typeof args[key] === "string") output[key] = args[key].slice(0, 1000);
+  }
+  return output;
+}
+
+function buildServerModelDisclosure(prepared, manifest) {
+  assertPreparedDisclosureMatchesTarget(prepared);
+  const manifestFiles = new Map((manifest.files || []).map((file) => [file.path, file]));
+  const files = [];
+  for (const disclosed of prepared.disclosure.files || []) {
+    addDisclosureFile(disclosed.path, disclosed.mode, disclosed.transmittedUtf8Bytes);
+  }
+  const dataClasses = [...prepared.disclosure.dataKinds];
+  const containsSourceCode = files.some((file) => file.contentIncluded)
+    || dataClasses.some((item) => ["recent-patch-diffs", "failure-summary"].includes(item));
+  return {
+    policyVersion: manifest.policyVersion,
+    manifestDigest: manifest.manifestDigest,
+    containsSourceCode,
+    anonymized: false,
+    safeToShare: false,
+    excludedCount: manifest.excluded.length,
+    files,
+    dataClasses
+  };
+
+  function addDisclosureFile(filePath, mode, transmittedUtf8Bytes) {
+    const file = manifestFiles.get(filePath);
+    if (!file) {
+      throw patchOperationError("MODEL_DISCLOSURE_PATH_BLOCKED", `A model request referenced a file outside the current Data Boundary Manifest: ${filePath}.`, 409);
+    }
+    if (typeof mode !== "string" || !mode
+      || !Number.isSafeInteger(transmittedUtf8Bytes) || transmittedUtf8Bytes < 0) {
+      throw patchOperationError("MODEL_DISCLOSURE_INVALID", `The model disclosure for ${filePath} is incomplete.`, 500);
+    }
+    files.push({
+      path: filePath,
+      mode,
+      contentIncluded: ["full-content", "content-excerpt", "patch-diff"].includes(mode),
+      byteLength: file.size,
+      sha256: file.sha256,
+      transmittedUtf8Bytes
+    });
+  }
+}
+
+function assertPreparedDisclosureMatchesTarget(prepared) {
+  const disclosure = prepared?.disclosure;
+  const target = prepared?.target;
+  if (!disclosure || !target
+    || !Array.isArray(disclosure.dataKinds) || disclosure.dataKinds.some((item) => typeof item !== "string" || !item)
+    || !Array.isArray(disclosure.files)
+    || disclosure.sendsNetworkRequest !== prepared.networkRequired
+    || disclosure.sendsNetworkRequest !== (target.channel !== "local")
+    || disclosure.willLeaveDevice !== target.willLeaveDevice
+    || disclosure.endpoint !== target.endpoint) {
+    throw patchOperationError("MODEL_DISCLOSURE_INVALID", "The model disclosure does not match the prepared request target.", 500);
+  }
+}
+
+function assertTaskRevision(task, expectedRevision, code) {
+  if (!Number.isSafeInteger(task?.revision) || task.revision !== expectedRevision) {
+    throw patchOperationError(code, "The task changed after the model request was previewed. Build and approve a fresh preview.", 409);
+  }
+}
+
+function assertModelConfigGeneration(record, code) {
+  if (record.configGeneration !== modelConfigGeneration) {
+    throw patchOperationError(code, "The model configuration changed after preview. Build and approve a fresh request.", 409);
+  }
+}
+
+async function assertModelCommitStillCurrent(record, task) {
+  assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_BEFORE_COMMIT");
+  assertTaskRevision(task, record.taskRevision, "MODEL_TASK_CHANGED_AFTER_SEND");
+  const binding = await assertTaskWorkspaceCurrent(task, `commit model result ${record.operation}`);
+  if (binding.workspace.id !== record.workspaceId || task.rootIdentity !== record.rootIdentity) {
+    throw patchOperationError("MODEL_WORKSPACE_CHANGED_AFTER_SEND", "The task workspace changed while the model request was running. The response was not attached to the task.", 409);
+  }
+  const manifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
+  if (manifest.manifestDigest !== record.manifestDigest || manifest.policyVersion !== record.manifestPolicyVersion) {
+    throw patchOperationError("MODEL_SOURCE_CHANGED_AFTER_SEND", "The workspace changed while the model request was running. The response was not attached to the task.", 409);
+  }
+  assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_BEFORE_COMMIT");
+}
+
+function serializeModelState(operation) {
+  const result = modelStateQueue.then(operation, operation);
+  modelStateQueue = result.catch(() => {});
+  return result;
+}
+
+function modelEventForResult(record, result, responseSummary, status) {
+  return {
+    operation: record.operation,
+    provider: result?.provider || record.prepared.provider.name,
+    model: result?.model || record.prepared.provider.model,
+    requestSha256: record.requestSha256,
+    responseSha256: responseSummary?.sha256 || "",
+    status
+  };
+}
+
+async function bestEffortRecordFailedModelEvent(record, result) {
+  try {
+    const task = await taskStore.get(record.taskId);
+    if (task.revision !== record.taskRevision) return;
+    const responseSummary = result === undefined ? null : summarizeModelResponse(result);
+    await taskStore.recordModelEvent(
+      task.id,
+      modelEventForResult(record, result, responseSummary, "error"),
+      { expectedRevision: record.taskRevision }
+    );
+  } catch {}
+}
+
+function summarizeModelResponse(result) {
+  const content = Buffer.from(JSON.stringify(result ?? null), "utf8");
+  return {
+    byteLength: content.byteLength,
+    sha256: createHash("sha256").update(content).digest("hex")
+  };
+}
+
+function assertOnlyRequestFields(body, allowedFields, code) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw patchOperationError(code, "The request body must be a JSON object.", 400);
+  }
+  const allowed = new Set(allowedFields);
+  const unexpected = Object.keys(body).filter((key) => !allowed.has(key));
+  if (unexpected.length) {
+    throw patchOperationError(code, `The request contains unsupported authority fields: ${unexpected.join(", ")}.`, 400);
+  }
 }
 
 async function runPreflight(request, response) {
@@ -595,15 +991,10 @@ async function runPreflight(request, response) {
         summary: summarizeToolResult(read)
       });
       updatedTask = await taskStore.appendContextFile(task.id, {
-        path: file.path,
-        summary: summarizeContent(read.result),
-        content: read.result.slice(0, MAX_CONTEXT_CONTENT_CHARS),
-        contentComplete: read.result.length <= MAX_CONTEXT_CONTENT_CHARS,
-        size: read.result.length,
-        source: "preflight"
+        ...contextFileMetadata(file.path, read.result, "preflight")
       });
     }
-    readFiles.push({ path: file.path, ok: Boolean(read.ok), size: typeof read.result === "string" ? read.result.length : 0 });
+    readFiles.push({ path: file.path, ok: Boolean(read.ok), size: typeof read.result === "string" ? Buffer.byteLength(read.result, "utf8") : 0 });
   }
 
   const searchQuery = pickSearchQuery(goal, selected, repoProfile);
@@ -670,27 +1061,14 @@ async function createTask(request, response) {
 
 async function completeTask(request, response) {
   const body = await readJson(request);
+  assertOnlyRequestFields(body, ["taskId"], "TASK_COMPLETE_FIELDS_INVALID");
   const existing = await taskStore.get(body.taskId);
-  const summary = body.summary || summarizeTask(existing);
+  const summary = summarizeTask(existing);
   const reviewDraft = buildTaskReviewDraft(existing, summary);
   const task = await taskStore.complete(body.taskId, summary, reviewDraft);
   const memory = task.rootPath ? await memoryStore.appendTaskSummary(task.rootPath, task, summary) : null;
   await recordAudit({ type: "task.complete", title: "Task completed", detail: summary, rootPath: task.rootPath, metadata: { taskId: task.id } });
   return json(response, { ok: true, task, memory });
-}
-
-async function addTaskContextFile(request, response) {
-  const body = await readJson(request);
-  const task = await taskStore.appendContextFile(body.taskId, {
-    path: body.path,
-    summary: body.summary || "",
-    content: typeof body.content === "string" ? body.content.slice(0, MAX_CONTEXT_CONTENT_CHARS) : "",
-    contentComplete: typeof body.content === "string" ? body.content.length <= MAX_CONTEXT_CONTENT_CHARS : false,
-    size: body.size || null,
-    source: body.source || "manual"
-  });
-  await recordAudit({ type: "task.context", title: "Context file added", detail: body.path, rootPath: task.rootPath, metadata: { taskId: task.id, path: body.path } });
-  return json(response, { ok: true, task });
 }
 
 async function applyPatch(request, response) {
@@ -1064,8 +1442,8 @@ async function readRegistryFileState(registry, filePath) {
 
 function baselineFromTaskContext(task, filePath) {
   const context = (task?.contextFiles || []).find((item) => samePatchPath(item.path, filePath));
-  if (!context || typeof context.content !== "string" || context.contentComplete === false) return null;
-  return { exists: true, sha256: hashContent(context.content) };
+  if (!context || context.contentComplete !== true || !/^[a-f0-9]{64}$/i.test(context.sha256 || "")) return null;
+  return { exists: true, sha256: context.sha256.toLowerCase() };
 }
 
 function validPatchBaseline(baseline) {
@@ -1273,12 +1651,7 @@ async function callTool(request, response) {
     }
     if (body.tool === "read_file" && result.ok && typeof result.result === "string") {
       task = await taskStore.appendContextFile(body.taskId, {
-        path: body.args?.path,
-        summary: summarizeContent(result.result),
-        content: result.result.slice(0, MAX_CONTEXT_CONTENT_CHARS),
-        contentComplete: result.result.length <= MAX_CONTEXT_CONTENT_CHARS,
-        size: result.result.length,
-        source: "read_file"
+        ...contextFileMetadata(body.args?.path, result.result, "read_file")
       });
     }
   }
@@ -1540,17 +1913,85 @@ async function readJson(request) {
   }
 }
 
+function localErrorStatus(error) {
+  const status = Number(error?.status);
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
+}
+
 async function loadModelConfig() {
+  let parsed;
   try {
-    modelConfig = sanitizeModelConfig(JSON.parse(await fs.readFile(modelConfigPath, "utf8")));
-    modelProvider = new ModelProvider(modelConfig);
+    parsed = JSON.parse(await fs.readFile(modelConfigPath, "utf8"));
   } catch (error) {
-    if (error.code !== "ENOENT") console.warn(`Failed to load model config: ${error.message}`);
+    if (error.code !== "ENOENT") {
+      await replaceModelConfigWithSafeFallback();
+    }
+    return;
+  }
+  const persisted = sanitizeModelConfig({
+    type: String(parsed?.type || "mock").trim(),
+    name: String(parsed?.name || parsed?.type || "mock").trim(),
+    baseUrl: String(parsed?.baseUrl || "").trim(),
+    model: String(parsed?.model || (parsed?.type === "openai-compatible" ? "" : "mock-codeclaw")).trim(),
+    apiKey: ""
+  });
+  if (!["mock", "openai-compatible"].includes(persisted.type)) {
+    await replaceModelConfigWithSafeFallback();
+    return;
+  }
+  if (persisted.type === "mock") persisted.baseUrl = "";
+  try {
+    validateModelBaseUrl(persisted);
+  } catch {
+    await replaceModelConfigWithSafeFallback();
+    return;
+  }
+  if (!persistedModelConfigIsCanonical(parsed, persisted)) {
+    await persistPublicModelConfig(persisted);
+  }
+  modelConfig = persisted;
+  modelProvider = new ModelProvider(persisted);
+  modelConfigGeneration = randomUUID();
+  modelOutboundPreviews.clear();
+}
+
+async function replaceModelConfigWithSafeFallback() {
+  const fallback = sanitizeModelConfig({ type: "mock", name: "mock", model: "mock-codeclaw", apiKey: "" });
+  await persistPublicModelConfig(fallback);
+  modelConfig = fallback;
+  modelProvider = new ModelProvider(fallback);
+  modelConfigGeneration = randomUUID();
+  modelOutboundPreviews.clear();
+}
+
+function validateModelBaseUrl(config) {
+  if (config?.type === "openai-compatible" && config.baseUrl) {
+    buildOpenAICompatibleEndpoint(config.baseUrl);
   }
 }
 
-async function ensureModelConfigLoaded() {
-  if (modelConfig.type === "mock") await loadModelConfig();
+async function persistPublicModelConfig(config) {
+  const document = publicModelConfigDocument(config);
+  await atomicWriteFile(modelConfigPath, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+}
+
+function publicModelConfigDocument(config) {
+  return {
+    schemaVersion: 1,
+    type: config.type,
+    name: config.name,
+    baseUrl: config.baseUrl,
+    model: config.model
+  };
+}
+
+function persistedModelConfigIsCanonical(parsed, config) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  const expected = publicModelConfigDocument(config);
+  const parsedKeys = Object.keys(parsed).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return JSON.stringify(parsedKeys) === JSON.stringify(expectedKeys)
+    && expectedKeys.every((key) => parsed[key] === expected[key]);
 }
 
 async function recordAudit(event) {
@@ -1565,8 +2006,18 @@ function summarizeArgs(args) {
   return clone;
 }
 
-function summarizeContent(content) {
-  return String(content || "").split(/\r?\n/).filter(Boolean).slice(0, 12).join("\n").slice(0, 800);
+function contextFileMetadata(filePath, content, source) {
+  const text = String(content || "");
+  const byteLength = Buffer.byteLength(text, "utf8");
+  const lineCount = text ? text.split(/\r?\n/).length : 0;
+  return {
+    path: filePath,
+    summary: `UTF-8 text metadata: ${lineCount} line(s), ${byteLength} byte(s).`,
+    size: byteLength,
+    sha256: hashContent(text),
+    contentComplete: true,
+    source
+  };
 }
 
 function json(response, payload, status = 200) {

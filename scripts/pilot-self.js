@@ -1,44 +1,53 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
+import { findAvailablePort, withAutomationResources } from "./automation-resource-scope.js";
+import { previewAndApproveModelOperation } from "./model-operation-client.js";
 
 const rootPath = process.cwd();
 const packageJsonPath = path.join(rootPath, "package.json");
 const serverJsPath = path.join(rootPath, "apps", "web", "server.js");
-const packageBefore = await fs.readFile(packageJsonPath, "utf8");
-const serverBefore = await fs.readFile(serverJsPath, "utf8");
-const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-pilot-"));
-const port = await findFreePort();
-const baseUrl = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ["apps/web/server.js"], {
-  cwd: rootPath,
-  env: {
-    ...process.env,
-    CODECLAW_PORT: String(port),
-    CODECLAW_STATE_DIR: stateDir,
-    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true
-});
+let packageBefore = "";
+let serverBefore = "";
+let stateDir = "";
+let port = 0;
+let baseUrl = "";
+let server = null;
 let serverOutput = "";
 
-server.stdout.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
-server.stderr.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
+await withAutomationResources(async (scope) => {
+  stateDir = await scope.temporaryDirectory("codeclaw-pilot-");
+  packageBefore = await fs.readFile(packageJsonPath, "utf8");
+  serverBefore = await fs.readFile(serverJsPath, "utf8");
+  port = await findAvailablePort();
+  baseUrl = `http://127.0.0.1:${port}`;
+  server = scope.child(spawn(process.execPath, ["apps/web/server.js"], {
+    cwd: rootPath,
+    env: {
+      ...process.env,
+      CODECLAW_PORT: String(port),
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  }), "CodeClaw self-pilot server");
+  server.stdout.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
+  server.stderr.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
 
-try {
   await waitForHealth();
   const scan = await request("/api/repo/scan", { path: rootPath });
   const task = await request("/api/tasks/create", { goal: "explain CodeClaw memory and context selection flow", rootPath: scan.profile.rootPath });
   const plan = await request("/api/agent/plan", { goal: task.task.goal, repoProfile: scan.profile, taskId: task.task.id });
-  const context = await request("/api/model/context-files", { goal: task.task.goal, repoProfile: scan.profile, rootPath: scan.profile.rootPath, taskId: task.task.id });
-  const selected = context.suggestion.files.slice(0, 3);
+  const context = (await previewAndApproveModelOperation(request, {
+    operation: "context-files",
+    taskId: task.task.id
+  })).result;
+  const selected = context.files.slice(0, 3);
   if (!selected.length) throw new Error("Pilot did not produce context candidates.");
   for (const file of selected) {
     await request("/api/tools/call", { tool: "read_file", args: { path: file.path }, rootPath: scan.profile.rootPath, taskId: task.task.id });
@@ -46,7 +55,7 @@ try {
   const search = await request("/api/tools/call", { tool: "search_code", args: { query: "MemoryStore" }, rootPath: scan.profile.rootPath, taskId: task.task.id });
   if (!search.result.some((item) => item.path.includes("memory-store"))) throw new Error("Pilot search did not find MemoryStore.");
   const notes = await request("/api/memory/notes", { rootPath: scan.profile.rootPath, notes: "Pilot self-run verified scan, context selection, search, and memory notes." });
-  const completed = await request("/api/tasks/complete", { taskId: task.task.id, summary: "Pilot self-run completed without source changes." });
+  const completed = await request("/api/tasks/complete", { taskId: task.task.id });
 
   const packageAfter = await fs.readFile(packageJsonPath, "utf8");
   const serverAfter = await fs.readFile(serverJsPath, "utf8");
@@ -65,10 +74,7 @@ try {
     reviewDraft: completed.task.reviewDraft.split("\n")[0],
     sourceFilesUnchanged: true
   }, null, 2));
-} finally {
-  server.kill();
-  await fs.rm(stateDir, { recursive: true, force: true });
-}
+});
 
 async function request(url, body) {
   const response = await fetch(`${baseUrl}${url}`, {
@@ -93,16 +99,4 @@ async function waitForHealth() {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Server did not become ready.\n${serverOutput}`);
-}
-
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const selected = address.port;
-      probe.close(() => resolve(selected));
-    });
-  });
 }

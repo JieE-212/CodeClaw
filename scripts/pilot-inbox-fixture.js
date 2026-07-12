@@ -1,68 +1,64 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import http from "node:http";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
+import { findAvailablePort, listenOnLoopback, withAutomationResources } from "./automation-resource-scope.js";
+import { previewAndApproveModelOperation } from "./model-operation-client.js";
 
 const rootPath = process.cwd();
 const fixturePath = path.join(rootPath, "examples", "support-inbox-js");
 const apiPath = path.join(fixturePath, "src", "api.js");
 const inboxPath = path.join(fixturePath, "src", "inbox.js");
 const inboxTestPath = path.join(fixturePath, "test", "inbox.test.js");
-const originalApi = await fs.readFile(apiPath, "utf8");
-const originalInbox = await fs.readFile(inboxPath, "utf8");
-const originalInboxTest = await fs.readFile(inboxTestPath, "utf8");
-const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-inbox-fixture-"));
-const copyRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-inbox-copies-"));
-const appPort = await findFreePort();
-const modelPort = await findFreePort();
-const appBaseUrl = `http://127.0.0.1:${appPort}`;
-const modelBaseUrl = `http://127.0.0.1:${modelPort}/v1`;
+let originalApi = "";
+let originalInbox = "";
+let originalInboxTest = "";
+let stateDir = "";
+let copyRoot = "";
+let appPort = 0;
+let modelPort = 0;
+let appBaseUrl = "";
+let modelBaseUrl = "";
+let fakeModelServer = null;
+let appServer = null;
+let appOutput = "";
 const modelResponses = [];
 const modelRequests = [];
 
-const fakeModelServer = http.createServer(async (request, response) => {
-  if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
-    response.writeHead(404, { "content-type": "application/json" });
-    response.end(JSON.stringify({ error: { message: "not found" } }));
-    return;
-  }
-  const body = await readRequestJson(request);
-  modelRequests.push(body);
-  const content = modelResponses.shift();
-  if (typeof content !== "string") {
-    response.writeHead(500, { "content-type": "application/json" });
-    response.end(JSON.stringify({ error: { message: "no queued fake model response" } }));
-    return;
-  }
-  response.writeHead(200, { "content-type": "application/json" });
-  response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content } }] }));
-});
+await withAutomationResources(async (scope) => {
+  stateDir = await scope.temporaryDirectory("codeclaw-inbox-fixture-");
+  copyRoot = await scope.temporaryDirectory("codeclaw-inbox-copies-");
+  originalApi = await fs.readFile(apiPath, "utf8");
+  originalInbox = await fs.readFile(inboxPath, "utf8");
+  originalInboxTest = await fs.readFile(inboxTestPath, "utf8");
+  scope.defer("restore support-inbox test fixture", () => restoreFileIfChanged(inboxTestPath, originalInboxTest));
+  scope.defer("restore support-inbox state fixture", () => restoreFileIfChanged(inboxPath, originalInbox));
+  scope.defer("restore support-inbox API fixture", () => restoreFileIfChanged(apiPath, originalApi));
+  appPort = await findAvailablePort();
+  modelPort = await findAvailablePort();
+  appBaseUrl = `http://127.0.0.1:${appPort}`;
+  modelBaseUrl = `http://127.0.0.1:${modelPort}/v1`;
+  fakeModelServer = scope.server(createFakeModelServer(), "support-inbox fake model server");
+  await listenOnLoopback(fakeModelServer, modelPort);
+  appServer = scope.child(spawn(process.execPath, ["apps/web/server.js"], {
+    cwd: rootPath,
+    env: {
+      ...process.env,
+      CODECLAW_PORT: String(appPort),
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks"),
+      CODECLAW_DISPOSABLE_ROOT: copyRoot
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  }), "CodeClaw support-inbox pilot server");
+  appServer.stdout.on("data", (chunk) => {
+    appOutput += String(chunk);
+  });
+  appServer.stderr.on("data", (chunk) => {
+    appOutput += String(chunk);
+  });
 
-await listen(fakeModelServer, modelPort);
-
-const appServer = spawn(process.execPath, ["apps/web/server.js"], {
-  cwd: rootPath,
-  env: {
-    ...process.env,
-    CODECLAW_PORT: String(appPort),
-    CODECLAW_STATE_DIR: stateDir,
-    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks"),
-    CODECLAW_DISPOSABLE_ROOT: copyRoot
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true
-});
-let appOutput = "";
-appServer.stdout.on("data", (chunk) => {
-  appOutput += String(chunk);
-});
-appServer.stderr.on("data", (chunk) => {
-  appOutput += String(chunk);
-});
-
-try {
   await waitForAppHealth();
   await appRequest("/api/model/config", {
     type: "openai-compatible",
@@ -85,13 +81,11 @@ try {
   });
 
   modelResponses.push("Read src/api.js, src/inbox.js, test/inbox.test.js, and src/tickets.js before adding channel filtering.");
-  const context = await appRequest("/api/model/context-files", {
-    goal: task.task.goal,
-    repoProfile: scan.profile,
-    rootPath: scan.profile.rootPath,
+  const context = (await previewAndApproveModelOperation(appRequest, {
+    operation: "context-files",
     taskId: task.task.id
-  });
-  const selectedPaths = ensureContextPaths(context.suggestion.files);
+  })).result;
+  const selectedPaths = ensureContextPaths(context.files);
   for (const filePath of selectedPaths) {
     await appRequest("/api/tools/call", {
       tool: "read_file",
@@ -122,16 +116,14 @@ try {
     ]
   }));
 
-  const proposal = await appRequest("/api/model/patch-proposal", {
-    goal: task.task.goal,
-    repoProfile: scan.profile,
-    rootPath: scan.profile.rootPath,
+  const proposal = (await previewAndApproveModelOperation(appRequest, {
+    operation: "patch-proposal",
     taskId: task.task.id
-  });
-  if (!proposal.proposal.applicable) throw new Error(`Inbox fixture proposal was not applicable: ${proposal.proposal.reason}`);
-  if (proposal.proposal.files.length !== 3) throw new Error("Inbox fixture proposal should update three files.");
+  })).result;
+  if (!proposal.applicable) throw new Error(`Inbox fixture proposal was not applicable: ${proposal.reason}`);
+  if (proposal.files.length !== 3) throw new Error("Inbox fixture proposal should update three files.");
 
-  const applied = await appRequest("/api/tasks/apply-patch", { taskId: task.task.id, proposalId: proposal.proposal.proposalId, proposalDigest: proposal.proposal.proposalDigest, approved: true });
+  const applied = await appRequest("/api/tasks/apply-patch", { taskId: task.task.id, proposalId: proposal.proposalId, proposalDigest: proposal.proposalDigest, approved: true });
   const verification = await appRequest("/api/tools/call", {
     tool: "run_command",
     args: { command: "npm run test" },
@@ -141,12 +133,9 @@ try {
   });
   if (verification.result.exitCode !== 0) throw new Error("Inbox fixture verification failed.");
 
-  const completed = await appRequest("/api/tasks/complete", {
-    taskId: task.task.id,
-    summary: "Channel filtering was added to the support inbox fixture and verified."
-  });
+  const completed = await appRequest("/api/tasks/complete", { taskId: task.task.id });
 
-  for (let index = proposal.proposal.files.length - 1; index >= 0; index -= 1) {
+  for (let index = proposal.files.length - 1; index >= 0; index -= 1) {
     await appRequest("/api/tasks/revert-patch", { taskId: task.task.id, patchIndex: index, patchIdentity: applied.task.appliedPatches[index].patchIdentity, workspaceIdentity: applied.task.rootIdentity, approved: true });
   }
 
@@ -173,21 +162,33 @@ try {
     planSteps: plan.plan.steps.length,
     contextFiles: selectedPaths,
     modelRequests: modelRequests.length,
-    patchFiles: proposal.proposal.files.map((file) => file.path),
+    patchFiles: proposal.files.map((file) => file.path),
     verificationExitCode: verification.result.exitCode,
     reviewDraft: completed.task.reviewDraft.split("\n")[0],
     workspaceKind: disposableWorkspace.kind,
     disposableCopyRestored: true,
     sourceFixtureUnchanged: true
   }, null, 2));
-} finally {
-  await stopChild(appServer);
-  await closeServer(fakeModelServer);
-  await restoreFileIfChanged(apiPath, originalApi);
-  await restoreFileIfChanged(inboxPath, originalInbox);
-  await restoreFileIfChanged(inboxTestPath, originalInboxTest);
-  await fs.rm(stateDir, { recursive: true, force: true });
-  await fs.rm(copyRoot, { recursive: true, force: true });
+});
+
+function createFakeModelServer() {
+  return http.createServer(async (request, response) => {
+    if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "not found" } }));
+      return;
+    }
+    const body = await readRequestJson(request);
+    modelRequests.push(body);
+    const content = modelResponses.shift();
+    if (typeof content !== "string") {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "no queued fake model response" } }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content } }] }));
+  });
 }
 
 async function createActivatedDisposableCopy(sourcePath) {
@@ -297,56 +298,7 @@ function readRequestJson(request) {
   });
 }
 
-function listen(server, port) {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-}
-
-async function stopChild(child) {
-  if (!child || child.exitCode !== null) return;
-  child.kill();
-  if (await waitForChildExit(child, 5000)) return;
-  child.kill("SIGKILL");
-  if (!(await waitForChildExit(child, 5000))) throw new Error("CodeClaw server did not stop during pilot cleanup.");
-}
-
-function waitForChildExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const onExit = () => finish(true);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    const finish = (exited) => {
-      clearTimeout(timer);
-      child.off("exit", onExit);
-      resolve(exited);
-    };
-    child.once("exit", onExit);
-  });
-}
-
-function closeServer(server) {
-  if (!server?.listening) return Promise.resolve();
-  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-}
-
 async function restoreFileIfChanged(filePath, expected) {
   const current = await fs.readFile(filePath, "utf8").catch(() => null);
   if (current !== expected) await fs.writeFile(filePath, expected, "utf8");
-}
-
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const selected = address.port;
-      probe.close(() => resolve(selected));
-    });
-  });
 }

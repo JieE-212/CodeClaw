@@ -5,6 +5,8 @@ import { atomicWriteFile } from "../../shared/src/atomic-file.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../../shared/src/cross-process-lock.js";
 import { captureWorkspaceIdentity, captureWorkspaceParentIdentity, workspaceIdentityMatches } from "../../shared/src/workspace-identity.js";
 
+const CONTEXT_FILE_SOURCES = new Set(["preflight", "read_file"]);
+
 export class TaskStore {
   constructor({ storagePath, lockManager = null }) {
     if (!storagePath) throw new Error("Missing task storage path.");
@@ -25,6 +27,7 @@ export class TaskStore {
       const now = new Date().toISOString();
       const task = {
         id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        revision: 1,
         goal: goal.trim(),
         rootPath: workspace?.rootPath || (rootPath ? path.resolve(rootPath) : null),
         rootIdentity: workspace?.digest || null,
@@ -36,7 +39,7 @@ export class TaskStore {
         verification: null,
         verificationHistory: [],
         failureSummary: "",
-        suggestions: [],
+        modelEvents: [],
         patchProposal: null,
         appliedPatches: [],
         summary: "",
@@ -84,34 +87,40 @@ export class TaskStore {
     }));
   }
 
-  async appendSuggestion(id, suggestion) {
+  async recordModelEvent(id, event, options = {}) {
     return this.update(id, (task) => ({
-      suggestions: [...(task.suggestions || []), { ...suggestion, time: suggestion.time || new Date().toISOString() }]
-    }));
+      modelEvents: [...(task.modelEvents || []), sanitizeModelEvent(event)]
+    }), options);
   }
 
   async appendContextFile(id, contextFile) {
     return this.update(id, (task) => {
       const existing = task.contextFiles || [];
-      const nextFile = { ...contextFile, time: contextFile.time || new Date().toISOString() };
+      const nextFile = sanitizeContextFile(contextFile);
       const index = existing.findIndex((item) => item.path === nextFile.path);
       const contextFiles = index === -1 ? [...existing, nextFile] : existing.map((item, itemIndex) => itemIndex === index ? { ...item, ...nextFile } : item);
       return { contextFiles };
     });
   }
 
-  async setPatchProposal(id, patchProposal) {
+  async setPatchProposal(id, patchProposal, options = {}) {
     return this.update(id, async (task) => {
       const boundPatchProposal = await bindProposalParentIdentities(patchProposal, task);
       const proposal = {
-        ...boundPatchProposal,
+        ...minimizeInapplicablePatchProposal(boundPatchProposal),
         workspaceIdentity: task.rootIdentity || "",
         proposalId: `proposal-${Date.now()}-${randomUUID()}`,
         time: patchProposal.time || new Date().toISOString()
       };
       proposal.proposalDigest = patchProposalDigest(proposal);
-      return { patchProposal: proposal, status: "patch_ready" };
-    });
+      return {
+        patchProposal: proposal,
+        status: "patch_ready",
+        ...(options?.modelEvent ? {
+          modelEvents: [...(task.modelEvents || []), sanitizeModelEvent(options.modelEvent)]
+        } : {})
+      };
+    }, options);
   }
 
   async recordAppliedPatch(id, patch) {
@@ -178,15 +187,48 @@ export class TaskStore {
     return this.update(id, (task) => ({ status: "completed", summary, reviewDraft: reviewDraft || buildTaskReviewDraft(task, summary) }));
   }
 
-  async update(id, patch) {
+  async update(id, patch, options = {}) {
     return this.serializeMutation(async () => {
       const tasks = await this.readAllUnqueued();
       const index = tasks.findIndex((task) => task.id === id);
       if (index === -1) throw new Error(`Unknown task: ${id}`);
+      const expectedRevision = mutationExpectedRevision(options);
+      const currentRevision = normalizeRevision(tasks[index].revision);
+      if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+        throw taskRevisionConflict(id, expectedRevision, currentRevision);
+      }
       const nextPatch = typeof patch === "function" ? await patch(tasks[index]) : patch;
-      tasks[index] = { ...tasks[index], ...nextPatch, updatedAt: new Date().toISOString() };
+      if (typeof options?.beforeCommit === "function") {
+        await options.beforeCommit({ currentTask: tasks[index], nextPatch });
+      }
+      tasks[index] = normalizeTaskForStorage({
+        ...tasks[index],
+        ...nextPatch,
+        revision: currentRevision + 1,
+        updatedAt: new Date().toISOString()
+      });
       await this.writeAll(tasks);
       return tasks[index];
+    });
+  }
+
+  async initialize() {
+    return this.serializeMutation(async () => {
+      const tasks = await this.readRawUnqueued();
+      const now = new Date().toISOString();
+      let migrated = 0;
+      const nextTasks = tasks.map((task) => {
+        const normalized = hydrateTask(task);
+        if (sameJson(task, normalized)) return normalized;
+        migrated += 1;
+        return normalizeTaskForStorage({
+          ...normalized,
+          revision: normalizeRevision(task.revision) + 1,
+          updatedAt: now
+        });
+      });
+      if (migrated) await this.writeAll(nextTasks);
+      return { migrated, taskCount: nextTasks.length };
     });
   }
 
@@ -196,18 +238,14 @@ export class TaskStore {
   }
 
   async readAllUnqueued() {
+    return (await this.readRawUnqueued()).map(hydrateTask);
+  }
+
+  async readRawUnqueued() {
     try {
       const tasks = JSON.parse(await fs.readFile(this.storagePath, "utf8"));
-      return tasks.map((task) => ({
-        ...task,
-        appliedPatches: (task.appliedPatches || []).map((patch) => {
-          if (typeof patch.nextContent !== "string") return patch;
-          const workspaceIdentity = patch.workspaceIdentity || task.rootIdentity || "";
-          const hydrated = { ...patch, workspaceIdentity };
-          const identity = appliedPatchIdentity(hydrated);
-          return patch.patchIdentity === identity ? hydrated : { ...hydrated, patchIdentity: identity };
-        })
-      }));
+      if (!Array.isArray(tasks)) throw new Error("Task state must contain an array.");
+      return tasks;
     } catch (error) {
       if (error.code === "ENOENT") return [];
       throw error;
@@ -215,7 +253,7 @@ export class TaskStore {
   }
 
   async writeAll(tasks) {
-    await atomicWriteFile(this.storagePath, `${JSON.stringify(tasks, null, 2)}\n`);
+    await atomicWriteFile(this.storagePath, `${JSON.stringify(tasks.map(normalizeTaskForStorage), null, 2)}\n`);
   }
 
   serializeMutation(mutation) {
@@ -224,6 +262,169 @@ export class TaskStore {
     this.mutationQueue = result.catch(() => {});
     return result;
   }
+}
+
+function hydrateTask(task = {}) {
+  return normalizeTaskForStorage(task);
+}
+
+function normalizeTaskForStorage(task = {}) {
+  const fallbackTime = stableTimestamp(task.updatedAt, task.createdAt);
+  const legacyEvents = Array.isArray(task.suggestions)
+    ? task.suggestions.map((suggestion) => legacySuggestionEvent(suggestion, fallbackTime))
+    : [];
+  const modelEvents = [
+    ...(Array.isArray(task.modelEvents) ? task.modelEvents.map((event) => sanitizeModelEvent(event, fallbackTime)) : []),
+    ...legacyEvents
+  ];
+  const normalized = {
+    ...task,
+    revision: normalizeRevision(task.revision),
+    modelEvents,
+    contextFiles: Array.isArray(task.contextFiles)
+      ? task.contextFiles.map((contextFile) => sanitizeContextFile(contextFile, fallbackTime))
+      : [],
+    appliedPatches: hydrateAppliedPatches(task)
+  };
+  delete normalized.suggestions;
+  if (normalized.patchProposal?.applicable === false) {
+    normalized.patchProposal = minimizeInapplicablePatchProposal(normalized.patchProposal);
+    if (normalized.patchProposal.proposalId) {
+      normalized.patchProposal.proposalDigest = patchProposalDigest(normalized.patchProposal);
+    }
+  }
+  return normalized;
+}
+
+function hydrateAppliedPatches(task) {
+  return (task.appliedPatches || []).map((patch) => {
+    if (typeof patch.nextContent !== "string") return patch;
+    const workspaceIdentity = patch.workspaceIdentity || task.rootIdentity || "";
+    const hydrated = { ...patch, workspaceIdentity };
+    const identity = appliedPatchIdentity(hydrated);
+    return patch.patchIdentity === identity ? hydrated : { ...hydrated, patchIdentity: identity };
+  });
+}
+
+function sanitizeContextFile(contextFile = {}, fallbackTime = "") {
+  const content = typeof contextFile.content === "string" ? contextFile.content : null;
+  const size = content === null
+    ? Number.isSafeInteger(contextFile.size) && contextFile.size >= 0
+      ? contextFile.size
+      : null
+    : Buffer.byteLength(content, "utf8");
+  return {
+    path: String(contextFile.path || ""),
+    summary: content === null ? safeContextMetadataSummary(contextFile.summary, size) : "",
+    size,
+    sha256: content === null ? validSha256(contextFile.sha256) : sha256(content),
+    contentComplete: typeof contextFile.contentComplete === "boolean"
+      ? contextFile.contentComplete
+      : content !== null,
+    source: CONTEXT_FILE_SOURCES.has(String(contextFile.source || "")) ? String(contextFile.source) : "",
+    time: stableTimestamp(contextFile.time, fallbackTime, new Date().toISOString())
+  };
+}
+
+function safeContextMetadataSummary(value, size) {
+  const summary = String(value || "");
+  const match = summary.match(/^UTF-8 text metadata: (\d+) line\(s\), (\d+) byte\(s\)\.$/);
+  if (!match || size === null) return "";
+  const lineCount = Number(match[1]);
+  const statedBytes = Number(match[2]);
+  return Number.isSafeInteger(lineCount) && lineCount >= 0 && statedBytes === size ? summary : "";
+}
+
+function sanitizeModelEvent(event = {}, fallbackTime = "") {
+  return {
+    operation: safeSlug(event.operation, "unknown"),
+    provider: safeIdentifier(event.provider),
+    model: safeIdentifier(event.model),
+    requestSha256: validSha256(event.requestSha256),
+    responseSha256: validSha256(event.responseSha256),
+    status: safeSlug(event.status, "unknown"),
+    time: stableTimestamp(event.time, fallbackTime, new Date().toISOString())
+  };
+}
+
+function legacySuggestionEvent(suggestion = {}, fallbackTime = "") {
+  const response = typeof suggestion.content === "string"
+    ? suggestion.content
+    : typeof suggestion.note === "string"
+      ? suggestion.note
+      : "";
+  return sanitizeModelEvent({
+    operation: suggestion.kind === "failure-fix" ? "failure-fix" : "suggestion",
+    provider: suggestion.provider,
+    model: suggestion.model,
+    requestSha256: suggestion.requestSha256,
+    responseSha256: validSha256(suggestion.responseSha256) || (response ? sha256(response) : ""),
+    status: "migrated",
+    time: suggestion.time
+  }, fallbackTime);
+}
+
+function minimizeInapplicablePatchProposal(proposal = {}) {
+  if (proposal?.applicable !== false) return proposal;
+  const minimized = {
+    applicable: false,
+    path: null,
+    files: []
+  };
+  for (const key of ["provider", "model", "reason", "summary", "createdAt", "workspaceIdentity", "proposalId", "time"]) {
+    if (typeof proposal[key] === "string") minimized[key] = proposal[key];
+  }
+  return minimized;
+}
+
+function mutationExpectedRevision(options) {
+  const expected = typeof options === "number" ? options : options?.expectedRevision;
+  if (expected === undefined) return undefined;
+  return Number.isSafeInteger(expected) && expected >= 0 ? expected : Number.NaN;
+}
+
+function normalizeRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function taskRevisionConflict(taskId, expectedRevision, currentRevision) {
+  const error = new Error(`Task ${taskId} changed after it was read. Refresh it and retry with revision ${currentRevision}.`);
+  error.code = "TASK_REVISION_CONFLICT";
+  error.status = 409;
+  error.expectedRevision = expectedRevision;
+  error.currentRevision = currentRevision;
+  return error;
+}
+
+function validSha256(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value) ? value.toLowerCase() : "";
+}
+
+function sha256(value) {
+  return createHash("sha256").update(String(value), "utf8").digest("hex");
+}
+
+function safeSlug(value, fallback) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(normalized) ? normalized : fallback;
+}
+
+function safeIdentifier(value) {
+  const normalized = String(value || "").trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,159}$/.test(normalized) ? normalized : "";
+}
+
+function stableTimestamp(...values) {
+  for (const value of values) {
+    if (typeof value !== "string" || !value) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+  return new Date(0).toISOString();
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(sortJson(left)) === JSON.stringify(sortJson(right));
 }
 
 async function bindProposalParentIdentities(proposal, task) {
@@ -263,18 +464,19 @@ function transactionStateError(message) {
 
 export function summarizeTask(task) {
   if (!task) return "No active task.";
-  const calls = task.toolCalls.length;
-  const suggestions = task.suggestions?.length || 0;
+  const calls = task.toolCalls?.length || 0;
+  const modelEvents = task.modelEvents?.length || 0;
   const contextFiles = task.contextFiles?.length || 0;
   const appliedPatches = task.appliedPatches?.filter((patch) => !patch.revertedAt).length || 0;
   const verification = task.verification ? `Verification exitCode=${task.verification.exitCode}` : "No verification yet";
-  return `${task.status}: ${calls} tool call(s), ${suggestions} suggestion(s), ${contextFiles} context file(s), ${appliedPatches} active patch(es). ${verification}.`;
+  return `${task.status}: ${calls} tool call(s), ${modelEvents} minimized model event(s), ${contextFiles} context file(s), ${appliedPatches} active patch(es). ${verification}.`;
 }
 
 export function buildTaskReviewDraft(task, summary = "") {
   if (!task) return "No task available.";
   const activePatches = (task.appliedPatches || []).filter((patch) => !patch.revertedAt);
   const changedFiles = activePatches.map((patch) => patch.path);
+  const modelEvents = task.modelEvents?.length || 0;
   const verification = task.verification
     ? task.verification.timedOut
       ? `Timed out after ${task.verification.durationMs || "unknown"}ms`
@@ -293,6 +495,9 @@ export function buildTaskReviewDraft(task, summary = "") {
     "",
     "Verification:",
     `- ${verification}`,
+    "",
+    "Model activity:",
+    `- ${modelEvents} minimized event(s) recorded; no prompt or response body is included.`,
     "",
     "Review notes:",
     riskNotes.map((item) => `- ${item}`).join("\n")

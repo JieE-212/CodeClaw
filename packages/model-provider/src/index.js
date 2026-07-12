@@ -1,10 +1,40 @@
+import { createHash } from "node:crypto";
+import {
+  ModelTransportError,
+  buildOpenAICompatibleEndpoint,
+  requestJsonSafely
+} from "./safe-transport.js";
+
+export const MODEL_OPERATIONS = Object.freeze([
+  "task-suggest",
+  "context-files",
+  "patch-proposal",
+  "failure-fix"
+]);
+
+const PREPARED_REQUESTS = new WeakMap();
+
+export function releasePreparedModelRequest(prepared) {
+  const record = PREPARED_REQUESTS.get(prepared);
+  if (!record) return false;
+  if (Buffer.isBuffer(record.bodyBuffer)) record.bodyBuffer.fill(0);
+  record.apiKey = "";
+  record.task = null;
+  record.goal = "";
+  record.messages = null;
+  record.candidates = null;
+  PREPARED_REQUESTS.delete(prepared);
+  return true;
+}
+
 export class ModelProvider {
-  constructor({ type = "mock", name = "mock", baseUrl = "", apiKey = "", model = "mock-codeclaw" } = {}) {
+  constructor({ type = "mock", name = "mock", baseUrl = "", apiKey = "", model = "mock-codeclaw", transport = {} } = {}) {
     this.type = type || "mock";
     this.name = name || this.type;
     this.baseUrl = baseUrl || "";
     this.apiKey = apiKey || "";
     this.model = model || "mock-codeclaw";
+    this.transport = normalizeTransportOptions(transport);
   }
 
   status() {
@@ -16,91 +46,30 @@ export class ModelProvider {
     };
   }
 
-  async chat(messages) {
-    if (this.type === "mock") return mockChat(this, messages);
-    if (this.type === "openai-compatible") return chatOpenAICompatible(this, messages);
-    throw new Error(`Unsupported model provider: ${this.type}`);
+  prepare(operation, input = {}) {
+    return prepareModelOperation(this, operation, input);
   }
 
-  async suggestTask({ goal, repoProfile = {}, task = null } = {}) {
-    const messages = buildSuggestionMessages({ goal, repoProfile, task });
-    const response = await this.chat(messages);
-    return {
-      provider: response.provider,
-      model: response.model,
-      content: response.content,
-      createdAt: new Date().toISOString()
-    };
-  }
-
-  async suggestContextFiles({ goal, repoProfile = {}, task = null, limit = 8 } = {}) {
-    const candidates = selectContextFiles({ goal: goal || task?.goal, repoProfile, task, limit });
-    if (this.type === "mock") {
-      return {
-        provider: this.name,
-        model: this.model,
-        files: candidates,
-        createdAt: new Date().toISOString()
-      };
+  async executePrepared(prepared) {
+    const record = PREPARED_REQUESTS.get(prepared);
+    if (!record || record.provider !== this) {
+      throw new ModelTransportError("invalid_prepared_request", "Prepared model request is invalid or belongs to another provider.");
     }
-
-    const messages = buildContextFileMessages({ goal, repoProfile, task, candidates });
-    const response = await this.chat(messages);
-    return {
-      provider: response.provider,
-      model: response.model,
-      files: candidates,
-      note: response.content,
-      createdAt: new Date().toISOString()
-    };
-  }
-
-  async proposePatch({ goal, repoProfile = {}, task = null } = {}) {
-    if (this.type === "mock") return mockPatchProposal(this, { goal, repoProfile, task });
-    if (!hasReadableContext(task)) {
-      return invalidPatchProposal({
-        provider: this.name,
-        model: this.model,
-        reason: "missing_context",
-        summary: "Read at least one relevant context file before asking the model for a patch.",
-        note: "Patch generation is limited to files whose full content has already been read into the current task."
-      });
+    if (record.consumed) {
+      throw new ModelTransportError("prepared_request_consumed", "Prepared model request has already been consumed.");
     }
+    record.consumed = true;
 
-    const messages = buildPatchMessages({ goal, repoProfile, task });
-    const response = await this.chat(messages);
-    const parsed = parsePatchProposalResult(response.content, { provider: response.provider, model: response.model, task });
-    if (parsed.ok) return parsed.proposal;
-    return invalidPatchProposal({
-      provider: response.provider,
-      model: response.model,
-      reason: parsed.reason,
-      summary: parsed.summary,
-      note: parsed.note || response.content
+    if (!record.networkRequired) return executeLocalPrepared(record);
+    const payload = await requestJsonSafely({
+      endpoint: record.endpoint,
+      apiKey: record.apiKey,
+      bodyBuffer: record.bodyBuffer,
+      ...record.transport
     });
-  }
-
-  async suggestFailureFix({ task = null } = {}) {
-    const failure = task?.failureSummary || "No failure summary available.";
-    const messages = buildFailureFixMessages({ task, failure });
-    if (this.type === "mock") {
-      return {
-        provider: this.name,
-        model: this.model,
-        content: [
-          "Mock failure fix suggestion:",
-          "- Read the file mentioned nearest to the failure output.",
-          "- Compare the failure with recent applied patch diffs before blaming implementation.",
-          "- Compare the failed assertion with the intended behavior.",
-          "- Generate a smaller patch and rerun the verification command.",
-          "",
-          messages.at(-1)?.content.slice(0, 900)
-        ].join("\n"),
-        createdAt: new Date().toISOString()
-      };
-    }
-    const response = await this.chat(messages);
-    return { provider: response.provider, model: response.model, content: response.content, createdAt: new Date().toISOString() };
+    const content = extractAssistantContent(payload);
+    assertCredentialNotReflected(content, record.apiKey);
+    return resultForPreparedResponse(record, content);
   }
 
   async embedding(input) {
@@ -109,6 +78,310 @@ export class ModelProvider {
       vector: simpleEmbedding(input)
     };
   }
+}
+
+function prepareModelOperation(provider, operation, input) {
+  if (!MODEL_OPERATIONS.includes(operation)) throw new TypeError(`Unsupported model operation: ${operation}`);
+  if (provider.type !== "mock" && provider.type !== "openai-compatible") {
+    throw new TypeError(`Unsupported model provider: ${provider.type}`);
+  }
+  if (provider.type === "openai-compatible" && (!provider.baseUrl || !provider.apiKey || !provider.model)) {
+    throw new ModelTransportError("provider_not_configured", "Model provider is not fully configured.");
+  }
+
+  const requestInput = input && typeof input === "object" ? input : {};
+  const task = snapshotPlainData(requestInput.task || null);
+  const repoProfile = snapshotPlainData(requestInput.repoProfile || {});
+  const goal = requestInput.goal == null ? undefined : String(requestInput.goal);
+  let candidates = [];
+  let messages;
+
+  if (operation === "task-suggest") {
+    messages = buildSuggestionMessages({ goal, repoProfile, task });
+  } else if (operation === "context-files") {
+    const limit = normalizeContextLimit(requestInput.limit);
+    candidates = selectContextFiles({ goal: goal || task?.goal, repoProfile, task, limit });
+    messages = buildContextFileMessages({ goal, repoProfile, task, candidates });
+  } else if (operation === "patch-proposal") {
+    messages = buildPatchMessages({ goal, repoProfile, task });
+  } else {
+    messages = buildFailureFixMessages({ task, failure: task?.failureSummary || "No failure summary available." });
+  }
+
+  const frozenMessages = freezeMessages(messages);
+  const bodyText = JSON.stringify({
+    model: String(provider.model),
+    messages: frozenMessages,
+    temperature: 0.2
+  });
+  const bodyBuffer = Buffer.from(bodyText, "utf8");
+  const endpoint = provider.type === "openai-compatible" ? buildOpenAICompatibleEndpoint(provider.baseUrl) : null;
+  const localReason = provider.type === "mock"
+    ? "mock"
+    : operation === "patch-proposal" && !hasReadableContext(task)
+      ? "missing_context"
+      : "";
+  const networkRequired = !localReason;
+  const willLeaveDevice = networkRequired && endpoint.startsWith("https:");
+  const target = deepFreeze({
+    channel: networkRequired ? (willLeaveDevice ? "network" : "loopback") : "local",
+    willLeaveDevice,
+    endpoint: networkRequired ? endpoint : null
+  });
+  const disclosure = deepFreeze(buildDisclosure(operation, { task, candidates, messages: frozenMessages, target }));
+  const providerSummary = deepFreeze({
+    type: String(provider.type),
+    name: String(provider.name),
+    model: String(provider.model)
+  });
+  const prepared = {
+    version: 1,
+    operation,
+    provider: providerSummary,
+    messages: frozenMessages,
+    bodyText,
+    exactBody: bodyText,
+    byteLength: bodyBuffer.byteLength,
+    sha256: createHash("sha256").update(bodyBuffer).digest("hex"),
+    endpoint,
+    networkRequired,
+    target,
+    disclosure
+  };
+  Object.defineProperty(prepared, "bodyBuffer", {
+    enumerable: false,
+    configurable: false,
+    get() {
+      return Buffer.from(bodyBuffer);
+    }
+  });
+  Object.freeze(prepared);
+
+  PREPARED_REQUESTS.set(prepared, {
+    provider,
+    operation,
+    providerName: providerSummary.name,
+    providerType: providerSummary.type,
+    model: providerSummary.model,
+    endpoint,
+    apiKey: String(provider.apiKey),
+    bodyBuffer,
+    messages: frozenMessages,
+    task,
+    goal,
+    candidates: deepFreeze(snapshotPlainData(candidates)),
+    localReason,
+    networkRequired,
+    transport: provider.transport,
+    consumed: false
+  });
+  return prepared;
+}
+
+async function executeLocalPrepared(record) {
+  const descriptor = { name: record.providerName, model: record.model };
+  if (record.localReason === "missing_context") {
+    return invalidPatchProposal({
+      provider: record.providerName,
+      model: record.model,
+      reason: "missing_context",
+      summary: "Read at least one relevant context file before asking the model for a patch.",
+      note: "Patch generation is limited to files whose full content has already been read into the current task."
+    });
+  }
+  if (record.providerType !== "mock") throw new ModelTransportError("invalid_prepared_request", "Prepared model request has no executable transport.");
+
+  if (record.operation === "task-suggest") {
+    const response = await mockChat(descriptor, record.messages);
+    return timedContentResult(record, response.content);
+  }
+  if (record.operation === "context-files") {
+    return {
+      provider: record.providerName,
+      model: record.model,
+      files: record.candidates,
+      createdAt: new Date().toISOString()
+    };
+  }
+  if (record.operation === "patch-proposal") {
+    return mockPatchProposal(descriptor, { goal: record.goal, task: record.task });
+  }
+  const response = await mockFailureFix(descriptor, record.messages);
+  return timedContentResult(record, response.content);
+}
+
+function resultForPreparedResponse(record, content) {
+  if (record.operation === "task-suggest") return timedContentResult(record, content);
+  if (record.operation === "context-files") {
+    return {
+      provider: record.providerName,
+      model: record.model,
+      files: record.candidates,
+      note: content,
+      createdAt: new Date().toISOString()
+    };
+  }
+  if (record.operation === "failure-fix") return timedContentResult(record, content);
+
+  const parsed = parsePatchProposalResult(content, {
+    provider: record.providerName,
+    model: record.model,
+    task: record.task
+  });
+  if (parsed.ok) return parsed.proposal;
+  return invalidPatchProposal({
+    provider: record.providerName,
+    model: record.model,
+    reason: parsed.reason,
+    summary: parsed.summary,
+    note: patchFailureGuidance(parsed.reason)
+  });
+}
+
+function patchFailureGuidance(reason) {
+  const guidance = {
+    invalid_json: "The model response was rejected because it was not a valid patch JSON object.",
+    missing_fields: "The model response was rejected because required patch fields were missing.",
+    missing_context: "The model response targeted a file whose full content was not in the approved context.",
+    unsafe_path: "The model response was rejected because a patch path was unsafe.",
+    diff_instead_of_full_content: "The model response was rejected because it returned a diff instead of complete replacement content.",
+    unchanged_content: "The model response was rejected because it did not change the target file."
+  };
+  return guidance[reason] || "The model response was rejected by patch validation.";
+}
+
+function timedContentResult(record, content) {
+  return {
+    provider: record.providerName,
+    model: record.model,
+    content,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function buildDisclosure(operation, { task, candidates, messages, target }) {
+  let files = [];
+  let dataKinds;
+  if (operation === "task-suggest") {
+    dataKinds = ["goal", "repository-summary", "task-status", "verification-summary"];
+  } else if (operation === "context-files") {
+    dataKinds = ["goal", "repository-name", "candidate-file-paths", "ranking-reasons"];
+    files = candidates.map((candidate) => ({
+      path: String(candidate.path || ""),
+      mode: "path-and-ranking-metadata",
+      transmittedUtf8Bytes: Buffer.byteLength(`${candidate.path || ""}: ${candidate.reason || ""}`, "utf8")
+    }));
+  } else if (operation === "patch-proposal") {
+    dataKinds = ["goal", "repository-name", "context-file-paths", "context-file-content"];
+    files = (task?.contextFiles || []).map((file) => {
+      const hasFullContent = typeof file?.content === "string" && file.content.length > 0;
+      const transmitted = hasFullContent ? file.content : String(file?.summary || "");
+      return {
+        path: String(file?.path || ""),
+        mode: hasFullContent ? "full-content" : "summary",
+        transmittedUtf8Bytes: Buffer.byteLength(transmitted, "utf8")
+      };
+    });
+  } else {
+    dataKinds = ["goal", "task-status", "failure-summary", "verification-result", "recent-patch-diffs", "recent-tool-calls", "context-file-excerpts"];
+    const contextFiles = (task?.contextFiles || []).slice(-8).map((file) => {
+      const original = typeof file?.content === "string" ? file.content : "";
+      const transmitted = original ? clipText(original, 1200) : String(file?.summary || "");
+      return {
+        path: String(file?.path || ""),
+        mode: original ? (transmitted === original ? "full-content" : "content-excerpt") : "summary",
+        transmittedUtf8Bytes: Buffer.byteLength(transmitted, "utf8")
+      };
+    });
+    const patchFiles = (task?.appliedPatches || []).slice(-4).map((patch) => {
+      const diff = patch?.diff || createSimpleDiff(patch?.path || "unknown", patch?.previousContent || "", patch?.nextContent || "");
+      return {
+        path: String(patch?.path || ""),
+        mode: "patch-diff",
+        transmittedUtf8Bytes: Buffer.byteLength(clipText(diff, 1600), "utf8")
+      };
+    });
+    files = [...contextFiles, ...patchFiles];
+  }
+  return {
+    sendsNetworkRequest: target.channel !== "local",
+    willLeaveDevice: target.willLeaveDevice,
+    endpoint: target.endpoint,
+    dataKinds,
+    files,
+    messageCount: messages.length
+  };
+}
+
+function extractAssistantContent(payload) {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") {
+    throw new ModelTransportError("invalid_response", "Model response did not contain assistant text.");
+  }
+  return content;
+}
+
+function assertCredentialNotReflected(content, credential) {
+  if (Buffer.byteLength(String(credential || ""), "utf8") >= 12 && String(content).includes(credential)) {
+    throw new ModelTransportError(
+      "MODEL_RESPONSE_CREDENTIAL_REFLECTION",
+      "The model response repeated the configured credential and was rejected."
+    );
+  }
+}
+
+function mockFailureFix(provider, messages) {
+  return {
+    provider: provider.name,
+    model: provider.model,
+    content: [
+      "Mock failure fix suggestion:",
+      "- Read the file mentioned nearest to the failure output.",
+      "- Compare the failure with recent applied patch diffs before blaming implementation.",
+      "- Compare the failed assertion with the intended behavior.",
+      "- Generate a smaller patch and rerun the verification command.",
+      "",
+      messages.at(-1)?.content.slice(0, 900)
+    ].join("\n")
+  };
+}
+
+function freezeMessages(messages) {
+  if (!Array.isArray(messages)) throw new TypeError("Model messages must be an array.");
+  return deepFreeze(messages.map((message) => snapshotPlainData(message)));
+}
+
+function snapshotPlainData(value) {
+  if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return String(value);
+  if (Array.isArray(value)) return value.map((item) => snapshotPlainData(item));
+  if (typeof value !== "object") return String(value);
+  const result = {};
+  for (const [key, item] of Object.entries(value)) result[key] = snapshotPlainData(item);
+  return result;
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const nested of Object.values(value)) deepFreeze(nested);
+  return Object.freeze(value);
+}
+
+function normalizeContextLimit(value) {
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit <= 0) return 8;
+  return Math.min(limit, 100);
+}
+
+function normalizeTransportOptions(value) {
+  const input = value && typeof value === "object" ? value : {};
+  const options = {};
+  if (typeof input.lookup === "function") options.lookup = input.lookup;
+  for (const key of ["timeoutMs", "maxRequestBytes", "maxResponseBytes"]) {
+    if (Number.isSafeInteger(input[key]) && input[key] > 0) options[key] = input[key];
+  }
+  return Object.freeze(options);
 }
 
 export function sanitizeModelConfig(config = {}) {
@@ -125,7 +398,8 @@ export function publicModelConfig(config = {}) {
   const sanitized = sanitizeModelConfig(config);
   return {
     ...sanitized,
-    apiKey: sanitized.apiKey ? "configured" : ""
+    apiKey: sanitized.apiKey ? "configured" : "",
+    apiKeyConfigured: Boolean(sanitized.apiKey)
   };
 }
 
@@ -214,7 +488,15 @@ function normalizePatchFiles(parsed) {
 function buildSuggestionMessages({ goal, repoProfile, task }) {
   const languages = repoProfile.languages?.map((item) => item.name).join(", ") || "unknown";
   const commands = repoProfile.commands?.map((item) => `${item.name}: ${item.command}`).join("\n") || "none";
-  const taskContext = task ? `Task status: ${task.status}\nTool calls: ${task.toolCalls?.length || 0}\nVerification: ${task.verification ? JSON.stringify(task.verification) : "not run"}` : "No task yet.";
+  const verification = task?.verification
+    ? [
+        `command=${task.verification.command || "unknown"}`,
+        `exitCode=${Number.isInteger(task.verification.exitCode) ? task.verification.exitCode : "unknown"}`,
+        `timedOut=${Boolean(task.verification.timedOut)}`,
+        `durationMs=${Number.isFinite(task.verification.durationMs) ? task.verification.durationMs : "unknown"}`
+      ].join(", ")
+    : "not run";
+  const taskContext = task ? `Task status: ${task.status}\nTool calls: ${task.toolCalls?.length || 0}\nVerification: ${verification}` : "No task yet.";
   return [
     {
       role: "system",
@@ -620,31 +902,6 @@ async function mockChat(provider, messages) {
       prompt.slice(0, 400)
     ].join("\n"),
     messages
-  };
-}
-
-async function chatOpenAICompatible(provider, messages) {
-  if (!provider.baseUrl || !provider.apiKey || !provider.model) throw new Error("Model provider is not fully configured.");
-  const url = `${provider.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${provider.apiKey}`
-    },
-    body: JSON.stringify({
-      model: provider.model,
-      messages,
-      temperature: 0.2
-    })
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error?.message || `Model request failed with ${response.status}`);
-  return {
-    provider: provider.name,
-    model: provider.model,
-    content: payload.choices?.[0]?.message?.content || "",
-    raw: payload
   };
 }
 

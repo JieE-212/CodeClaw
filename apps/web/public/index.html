@@ -225,7 +225,7 @@
               </select>
               <input id="modelBaseUrl" type="text" placeholder="Base URL, e.g. http://localhost:11434/v1" />
               <input id="modelName" type="text" placeholder="模型名称" data-i18n-placeholder="model.name.placeholder" />
-              <input id="modelApiKey" type="password" placeholder="API key" />
+              <input id="modelApiKey" type="password" placeholder="API key" autocomplete="off" spellcheck="false" autocapitalize="none" />
               <button id="saveModelButton" data-i18n="button.save" type="button">保存</button>
               <button id="suggestButton" data-i18n="button.suggest" type="button">建议</button>
               <button id="contextButton" data-i18n="button.chooseContext" type="button">选上下文</button>
@@ -297,6 +297,56 @@
         </section>
       </main>
     </div>
+    <dialog class="model-review-dialog" id="modelOutboundReview" aria-labelledby="modelReviewTitle" aria-describedby="modelReviewWarning" data-ui-marker="model-outbound-review">
+      <div class="model-review-shell">
+        <header class="model-review-header">
+          <div>
+            <p data-i18n="model.review.eyebrow">Outbound model request</p>
+            <h2 id="modelReviewTitle" data-i18n="model.review.title">Review before sending</h2>
+          </div>
+          <button class="secondary model-review-close" id="modelReviewClose" type="button" data-i18n-aria-label="model.review.close" aria-label="Close review">×</button>
+        </header>
+        <div class="model-review-scroll">
+          <div class="model-review-warning" id="modelReviewWarning" role="note">
+            <strong data-i18n="model.review.warning.title">Source-code disclosure</strong>
+            <span data-i18n="model.review.warning.body">This request may still contain source code. It has not been anonymized, and this review does not mean it is suitable to upload or share.</span>
+          </div>
+          <section class="model-review-section" aria-labelledby="modelReviewTargetTitle">
+            <h3 id="modelReviewTargetTitle" data-i18n="model.review.target.title">Where this request goes</h3>
+            <dl class="model-review-target">
+              <div><dt data-i18n="model.review.operation">Operation</dt><dd id="modelReviewOperation"></dd></div>
+              <div><dt data-i18n="model.review.provider">Provider / model</dt><dd id="modelReviewProvider"></dd></div>
+              <div><dt data-i18n="model.review.channel">Channel</dt><dd id="modelReviewChannel"></dd></div>
+              <div><dt data-i18n="model.review.leavesDevice">Leaves this device</dt><dd id="modelReviewLeavesDevice"></dd></div>
+              <div class="model-review-wide"><dt data-i18n="model.review.endpoint">Endpoint</dt><dd><code id="modelReviewEndpoint"></code></dd></div>
+              <div class="model-review-wide"><dt data-i18n="model.review.expires">Approval expires</dt><dd id="modelReviewExpires"></dd></div>
+            </dl>
+          </section>
+          <section class="model-review-section" aria-labelledby="modelReviewRequestTitle">
+            <h3 id="modelReviewRequestTitle" data-i18n="model.review.request.title">Exact request</h3>
+            <div class="model-review-metrics">
+              <div><span data-i18n="model.review.bytes">UTF-8 bytes</span><strong id="modelReviewBytes"></strong></div>
+              <div><span data-i18n="model.review.sha">SHA-256</span><code id="modelReviewSha"></code></div>
+            </div>
+            <p class="model-review-explanation" data-i18n="model.review.body.explanation">The body below is the exact UTF-8 request prepared by the server. Approving sends these reviewed bytes without rebuilding the request.</p>
+            <p class="model-review-control-warning" id="modelReviewControlWarning" role="note" hidden></p>
+            <pre class="model-review-body" id="modelReviewBody" tabindex="0" data-i18n-aria-label="model.review.body.label" aria-label="Exact UTF-8 request body"></pre>
+          </section>
+          <section class="model-review-section" aria-labelledby="modelReviewFilesTitle">
+            <h3 id="modelReviewFilesTitle" data-i18n="model.review.files.title">Files represented in this request</h3>
+            <p class="model-review-explanation" id="modelReviewDataClasses"></p>
+            <div class="model-review-files" id="modelReviewFiles"></div>
+          </section>
+        </div>
+        <footer class="model-review-footer">
+          <p id="modelReviewStatus" role="status" aria-live="polite"></p>
+          <div>
+            <button class="secondary" id="modelReviewCancel" type="button" data-i18n="model.review.cancel">Cancel — do not send</button>
+            <button id="modelReviewApprove" type="button" data-i18n="model.review.approve">Approve and send</button>
+          </div>
+        </footer>
+      </div>
+    </dialog>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

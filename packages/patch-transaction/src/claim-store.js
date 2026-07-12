@@ -164,15 +164,29 @@ export async function loadPatchStateOwnerId(statePath) {
   const directory = path.resolve(statePath);
   const ownerPath = path.join(directory, "patch-state-owner.json");
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const maxAttempts = 40;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       const record = JSON.parse(await fs.readFile(ownerPath, "utf8"));
       if (record?.schemaVersion !== 1 || typeof record.ownerId !== "string" || !/^[0-9a-f-]{36}$/i.test(record.ownerId)) {
-        throw claimError("PATCH_STATE_OWNER_INVALID", "The local patch transaction owner identity is invalid.");
+        if (attempt === maxAttempts - 1) {
+          throw claimError("PATCH_STATE_OWNER_INVALID", "The local patch transaction owner identity is invalid.");
+        }
+        await waitForOwnerIdentityWrite();
+        continue;
       }
       return record.ownerId;
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== "ENOENT") {
+        if (error instanceof SyntaxError) {
+          if (attempt === maxAttempts - 1) {
+            throw claimError("PATCH_STATE_OWNER_INVALID", "The local patch transaction owner identity is invalid.");
+          }
+          await waitForOwnerIdentityWrite();
+          continue;
+        }
+        throw error;
+      }
     }
     const record = { schemaVersion: 1, ownerId: randomUUID(), createdAt: new Date().toISOString() };
     let handle;
@@ -187,9 +201,14 @@ export async function loadPatchStateOwnerId(statePath) {
     } catch (error) {
       await handle?.close().catch(() => {});
       if (error.code !== "EEXIST") throw error;
+      if (attempt < maxAttempts - 1) await waitForOwnerIdentityWrite();
     }
   }
   throw claimError("PATCH_STATE_OWNER_INVALID", "The local patch transaction owner identity could not be loaded.");
+}
+
+function waitForOwnerIdentityWrite() {
+  return new Promise((resolve) => setTimeout(resolve, 10));
 }
 
 function claimError(code, message) {

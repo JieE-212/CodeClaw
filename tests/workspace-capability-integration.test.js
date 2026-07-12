@@ -5,6 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { previewAndApproveModelOperation } from "../scripts/model-operation-client.js";
 
 test("server-authoritative capabilities block originals and allow only an activated disposable copy", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-workspace-api-"));
@@ -118,18 +119,16 @@ test("server-authoritative capabilities block originals and allow only an activa
   const goal = "Add a divide-by-zero test and verify the project";
   const preflight = await request(baseUrl, "/api/preflight/run", { path: copy.rootPath, goal });
   assert.equal(preflight.payload.workspace.id, copy.id);
-  const proposal = await request(baseUrl, "/api/model/patch-proposal", {
-    goal,
-    rootPath: copy.rootPath,
-    repoProfile: preflight.payload.profile,
-    taskId: preflight.payload.task.id
-  });
-  assert.equal(proposal.payload.proposal.applicable, true);
+  const proposal = await previewAndApproveModelOperation(
+    (pathname, body) => request(baseUrl, pathname, body),
+    { operation: "patch-proposal", taskId: preflight.payload.task.id }
+  );
+  assert.equal(proposal.result.applicable, true);
 
   const applied = await request(baseUrl, "/api/tasks/apply-patch", {
     taskId: preflight.payload.task.id,
-    proposalId: proposal.payload.proposal.proposalId,
-    proposalDigest: proposal.payload.proposal.proposalDigest,
+    proposalId: proposal.result.proposalId,
+    proposalDigest: proposal.result.proposalDigest,
     approved: true,
     mode: "original-readonly"
   });

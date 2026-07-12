@@ -4,7 +4,7 @@
 
 ## 1. 当前决策
 
-CodeClaw 已完成第一轮真人测试、第一批问题修复和 `Stage 3.0.9` remediation 工程闭环。真人复测继续暂停；当前按用户授权进入无需逐项确认的工程加固循环，依次推进 `Stage 3.0.10 -> 3.0.11 -> 3.0.12 -> 3.0.13 -> 3.0.14 -> 4B`。
+CodeClaw 已完成第一轮真人测试、第一批问题修复和 `Stage 3.0.9` remediation 工程闭环。真人复测继续暂停；当前按用户授权进入无需逐项确认的工程加固循环。`Stage 3.0.10`、`3.0.11`、`3.0.12` 已完成机器验证，当前下一阶段是 `3.0.13`，之后依次推进 `3.0.14 -> 4B`。
 
 这里的“工程闭环”不等于复测准入已经通过：host-1 的七项人工验收尚未完成，真实 remediation 状态继续是 `REMEDIATION_HOLD`。后续阶段的机器通过不会改写 tester-2 的 `AFTER_LIVE_BLOCKED`，也不会自动开放真实原项目写入。
 
@@ -341,7 +341,7 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 | --- | --- | --- | --- |
 | 3.0.10 崩溃安全 Apply/Revert | machine verified；host acceptance pending | 写前 WAL、原子替换、跨进程项目锁、启动恢复、冲突停写、事务绕行关闭、故障矩阵通过 | 断电绝对持久性、跨操作系统用户/不同锁目录互斥、Windows 自定义 ACL 完整保留、真实项目写入已开放 |
 | 3.0.11 可丢弃项目副本 | machine verified；host acceptance pending | 统一数据边界策略、预览/创建/激活/清理、哈希 Manifest、原项目服务端只读能力 | “副本可安全分享”或“副本不含普通源码” |
-| 3.0.12 隐私与模型出站透明度 | next | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化 | 在线模型零出站；本机模型零本地 HTTP 数据传输 |
+| 3.0.12 隐私与模型出站透明度 | machine verified；final Git audit/commit pending | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化；全量门禁通过 | 在线模型零出站；本机模型零本地 HTTP 数据传输；所有外部 TOCTOU 已完全关闭 |
 | 3.0.13 新手界面与无障碍 | planned | 单一权威流程、新手/高级模式、语义标签、焦点/键盘/响应式静态契约、三语门禁 | 新手主观清晰度、NVDA/高对比度/真实像素验收 |
 | 3.0.14 稳定性与性能 | planned | 测试 fixture 全隔离、请求/扫描/模型预算、取消与超时、进程/端口/状态清理、增长上限 | 真实大型项目的主观等待感和真实断电体验 |
 | 4B Windows 启动器与候选包 | planned | 候选身份校验、回环监听、就绪后开页、端口冲突分流、哈希 Manifest/篡改检测、无孤儿进程 | 干净 Windows 10/11、Defender/SmartScreen、双击体验等人工验收 |
@@ -366,10 +366,10 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 
 ### 15.2 继续推进规则
 
-1. Stage 3.0.11 先建立统一 Data Boundary Policy，再实现副本创建，不能直接把当前最多 800 个文件的扫描结果当作完整复制清单。
+1. Stage 3.0.11 已建立统一 Data Boundary Policy；后续出站、复制和扫描边界继续复用它，不能把最多 800 个文件的 UI 扫描结果当作完整复制或出站清单。
 2. 原项目默认 `original-readonly`；只有服务端登记并验证的 `disposable-copy` 才能获得写入/命令能力，客户端提交 `mode`、路径或 `approved:true` 不能提权。
 3. 副本保护原项目不被修改，但副本仍含源码，不等于匿名化，也不等于适合分享。
-4. 3.0.12 的模型出站门禁必须复用同一数据边界策略，禁止另建一套互相矛盾的敏感文件规则。
+4. 3.0.12 的模型出站门禁已复用同一数据边界策略；后续改动不得另建一套互相矛盾的敏感文件规则，也不得让 ignored 内容参与派生元数据。
 5. 每阶段提交前运行聚焦测试、全量 `test/check`、health/smoke 和相关 pilot；随后检查 Git 暂存清单并删除临时 fixture、状态目录和测试开关。
 6. 不运行 tester-2 after-live，不创建 tester-3，不生成或提交真人记录、截图、日志、`dist/`、`.codeclaw/` 或 evidence packet。
 
@@ -387,4 +387,27 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 
 诚实边界：Node 路径 API 仍有极小 TOCTOU 窗口；未验证真实断电、异常文件系统、ACL/杀毒软件干预和真人副本使用。若 `.gitignore` 忽略其自身，该规则文件不会进入副本，因此不宣称原 ignore 规则快照会约束副本未来新建路径。浏览器插件缺少自动化 helper，像素、键盘、NVDA、高对比度和干净 Windows 验收仍为人工项。
 
-当前正式状态：`Stage 3.0.11 machine verified; Stage 3.0.12 next; remediation REMEDIATION_HOLD`。host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
+当前正式状态：`Stage 3.0.12 machine verified; Stage 3.0.13 next; remediation REMEDIATION_HOLD`。Stage 3.0.12 仅待最终 Git 审计与独立提交；host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
+
+### 15.4 Stage 3.0.12 已完成的机器证据
+
+当前状态是 `machine verified; final Git audit/commit pending`。已完成的实现包括：
+
+- 所有模型操作统一为 `POST /api/model/preview -> 明确审核 -> POST /api/model/send`；放弃审核使用 `POST /api/model/cancel`。客户端 Preview 只提交 `operation` 与 `taskId`，目标、根目录、repo profile、上下文和配置由服务端权威状态推导。
+- Preview 精确披露完整 UTF-8 请求正文、字节数、SHA-256、endpoint/channel/是否离开设备、数据类别，以及每个传输文件组件和传输字节；approval 同时绑定 task revision、workspace ID/root identity、Data Boundary Manifest digest/policy version、模型配置代次和 prepared request。
+- approval 在网络调用前同步单次消费；并发双 Send 只有一个能执行，失败后不可重放。Cancel、TTL 到期和配置变化会释放 Preview，并 best-effort 覆写保留的请求缓冲；Send 前后复验 task、workspace、Manifest 和配置，阻断 TOCTOU 结果落盘。
+- 在线 transport 仅允许 loopback 明文 HTTP；HTTPS 必须解析为公共地址，检查全部 DNS 结果、pin 并复验实际 remote address，禁止 redirect，限制超时与请求/响应大小并要求 JSON Content-Type。endpoint 不能嵌入凭据、query 或 fragment；响应回显 API key 时拒绝结果。
+- API key 仅驻留进程内存，`model.json` 不再持久化凭据；损坏、未知、旧式带凭据配置启动时原子替换或改写为无凭据安全配置。TaskStore 使用 revision/CAS；context、model event 和 audit 只持久化最小元数据与 hash，patch proposal 与 model event 在同一次 CAS 中提交；旧 context/suggestion/model body 和旧 model/server-error audit detail 启动迁移清理。
+- ignored Manifest 内容不会进入请求，也不再参与命令、框架、包管理器等派生仓库元数据。八个自动化脚本统一使用资源作用域，等待/强杀子进程、关闭 listener、恢复 fixture、验证临时目录身份后清理，并聚合工作错误与清理错误。
+
+聚焦证据：Preview/UI/provider 测试 46/46，server model-outbound integration 8/8，automation finalizer 故障注入 8/8；八个受影响自动化脚本均已实跑通过，`pilot:model` 保持 9 次 fake-model 请求且 9 次 exact-body 检查通过。
+
+最终全量门禁结果：
+
+1. 单并发完整 `npm.cmd test` 为 319 total、318 pass、0 fail、1 个环境性 file-symlink skip；默认并发曾出现一次共享状态串扰，失败用例独立运行通过，最终权威结果采用隔离后的单并发全量回归。
+2. `npm.cmd run check` 通过，三语各 714 个 key；health、smoke、`pilot:self`、`pilot:fixture`、`pilot:inbox`、`pilot:model`、real-repo preflight 和 first-trial simulation 全部通过，`pilot:model` 为 9 次 exact send。
+3. 默认 `.codeclaw` 已完成启动迁移：26 个 task、59 个 context record，正文 0，当前 59 个 source 均为白名单内的 `read_file`；legacy suggestion entry 0；`model.json` 无凭据字段；model/server-error audit detail 均为空。`.codeclaw` 仍是本地状态，不进入 Git。
+4. 14 个自动化 `%TEMP%` 前缀剩余数为 0，已知历史临时目录和 `server-bg.log` 已删除；4173 无监听，三个 example 无 diff，未保留一次性调试代码、测试开关或墓碑分支。
+5. 最终 Git 审计与独立提交仍待主线程执行：检查完整 diff、`git diff --check`、明确暂存清单和禁入项；不得把 `dist/`、`.codeclaw/`、日志、截图、evidence 或真人记录加入提交，不直接 push。
+
+诚实边界：在线 provider 会收到用户审核过的请求正文，CodeClaw 无法控制其后续保留；本机 provider 仍通过 loopback HTTP 传输；JavaScript 缓冲覆写只是 best effort；本阶段未重新运行任何真实云模型，也未完成真人、像素、NVDA、高对比度或干净 Windows 验收。Manifest 最终复验与随后 TaskStore 原子 rename 不是一个文件系统原子快照，极端外部并发编辑仍可能留下过时补丁草案；Apply 的 baseline hash 复验会阻止它覆盖已变化文件，因此不得宣称完全关闭所有外部 TOCTOU。

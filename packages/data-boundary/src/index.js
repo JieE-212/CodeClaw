@@ -11,7 +11,10 @@ export const DISPOSABLE_COPY_MARKER = ".codeclaw-disposable-copy.json";
 
 const DEFAULT_MAX_FILES = 100_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024 * 1024;
+const DEFAULT_READ_MAX_FILE_BYTES = 1024 * 1024;
+const DEFAULT_READ_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const VCS_DIRECTORIES = new Set([".git", ".hg", ".svn"]);
+const NORMALIZED_SKIPPED_DIRECTORIES = new Set([...SKIPPED_DIRECTORIES].map((item) => item.toLocaleLowerCase("en-US")));
 
 export async function buildDataBoundaryManifest(rootPath, options = {}) {
   const requestedRoot = path.resolve(rootPath || ".");
@@ -174,6 +177,91 @@ export async function buildDataBoundaryManifest(rootPath, options = {}) {
   }
 }
 
+export async function readManifestFiles(rootPath, manifest, relativePaths, options = {}) {
+  const maxFileBytes = readByteLimit(options.maxFileBytes, DEFAULT_READ_MAX_FILE_BYTES, "maxFileBytes");
+  const maxTotalBytes = readByteLimit(options.maxTotalBytes, DEFAULT_READ_MAX_TOTAL_BYTES, "maxTotalBytes");
+  if (!Array.isArray(relativePaths)) {
+    throw boundaryError("DATA_BOUNDARY_READ_PATHS_INVALID", "Data-boundary file reads require an explicit array of manifest paths.", 400);
+  }
+
+  const workspace = await captureWorkspaceIdentity(rootPath);
+  const operationRootStat = await safeLstat(workspace.rootPath);
+  const { filesByPath, directoryIdentities, deniedPaths } = validateReadableManifest(workspace, manifest);
+  const selected = [];
+  const seen = new Set();
+  let totalBytes = 0;
+
+  for (const relative of relativePaths) {
+    if (!isCanonicalReadPath(workspace.rootPath, relative)) {
+      throw boundaryError("DATA_BOUNDARY_READ_PATH_REFUSED", "A requested file path is not a safe data-boundary manifest path.");
+    }
+    if (seen.has(relative)) {
+      throw boundaryError("DATA_BOUNDARY_READ_PATH_DUPLICATE", `A data-boundary file was requested more than once: ${relative}.`);
+    }
+    seen.add(relative);
+
+    const manifestFile = filesByPath.get(relative);
+    if (!manifestFile
+      || pathIsCoveredByBoundaryRecord(relative, deniedPaths)
+      || isProtectedManifestReadPath(relative)) {
+      throw boundaryError("DATA_BOUNDARY_READ_PATH_REFUSED", `The requested path is not an approved data-boundary file: ${relative}.`);
+    }
+    if (manifestFile.size > maxFileBytes) {
+      throw boundaryError("DATA_BOUNDARY_READ_FILE_LIMIT", `The requested file exceeds the ${maxFileBytes}-byte data-boundary read limit: ${relative}.`, 413);
+    }
+    if (totalBytes > maxTotalBytes - manifestFile.size) {
+      throw boundaryError("DATA_BOUNDARY_READ_TOTAL_LIMIT", `The requested files exceed the ${maxTotalBytes}-byte total data-boundary read limit.`, 413);
+    }
+    totalBytes += manifestFile.size;
+    selected.push(manifestFile);
+  }
+
+  const results = [];
+  for (const manifestFile of selected) {
+    const before = await assertWorkspaceAndParents(
+      workspace.rootPath,
+      manifest.rootIdentity,
+      manifestFile.path,
+      manifestFile.sourceIdentity,
+      false,
+      directoryIdentities,
+      { requireRecordedParents: true, requireStableParentIdentity: true }
+    );
+    const read = await readStableManifestTextFile(
+      resolveManifestPath(workspace.rootPath, manifestFile.path),
+      before.target,
+      manifestFile,
+      maxFileBytes
+    );
+    const after = await assertWorkspaceAndParents(
+      workspace.rootPath,
+      manifest.rootIdentity,
+      manifestFile.path,
+      manifestFile.sourceIdentity,
+      false,
+      directoryIdentities,
+      { requireRecordedParents: true, requireStableParentIdentity: true }
+    );
+    assertReadPathSnapshotStable(before, after, manifestFile.path);
+    results.push({
+      path: manifestFile.path,
+      content: read.content,
+      byteLength: read.byteLength,
+      sha256: read.sha256
+    });
+  }
+
+  const finalWorkspace = await captureWorkspaceIdentity(workspace.rootPath);
+  const finalRootStat = await safeLstat(workspace.rootPath);
+  if (finalWorkspace.digest !== manifest.rootIdentity
+    || !sameStableStat(operationRootStat, finalRootStat)
+    || !finalRootStat.isDirectory()
+    || finalRootStat.isSymbolicLink()) {
+    throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", "The data-boundary workspace changed while files were being read.");
+  }
+  return results;
+}
+
 export async function copyManifestPayload(sourceRoot, targetRoot, manifest) {
   if (!manifest?.eligible || !Array.isArray(manifest.files) || !Array.isArray(manifest.directories)) {
     throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", "A complete eligible data-boundary manifest is required before copying.");
@@ -253,6 +341,177 @@ export function isExactCopyTargetManifest(source, target, { requireDisposableMar
     && target.excluded[0]?.reason === "codeclaw-marker";
 }
 
+function validateReadableManifest(workspace, manifest) {
+  if (manifest?.schemaVersion !== 1
+    || manifest.policyVersion !== DATA_BOUNDARY_POLICY_VERSION
+    || typeof manifest.rootPath !== "string"
+    || canonicalFilesystemPath(manifest.rootPath) !== canonicalFilesystemPath(workspace.rootPath)
+    || typeof manifest.rootIdentity !== "string"
+    || manifest.rootIdentity !== workspace.digest
+    || !Array.isArray(manifest.files)
+    || !Array.isArray(manifest.directories)
+    || !Array.isArray(manifest.excluded)
+    || !Array.isArray(manifest.blockers)) {
+    throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", "A complete current data-boundary manifest is required before reading files.");
+  }
+
+  const portablePaths = new Map();
+  const directoryIdentities = new Map();
+  for (const directory of manifest.directories) {
+    if (!validManifestEntryPath(workspace.rootPath, directory?.path, portablePaths)
+      || !validRecordedIdentity(directory.sourceIdentity)
+      || directoryIdentities.has(directory.path)) {
+      throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", "The data-boundary manifest contains an invalid or duplicate directory entry.");
+    }
+    directoryIdentities.set(directory.path, directory.sourceIdentity);
+  }
+
+  const filesByPath = new Map();
+  for (const file of manifest.files) {
+    if (!validManifestEntryPath(workspace.rootPath, file?.path, portablePaths)
+      || !Number.isSafeInteger(file.size)
+      || file.size < 0
+      || !/^[a-f0-9]{64}$/.test(file.sha256 || "")
+      || !validRecordedIdentity(file.sourceIdentity)
+      || filesByPath.has(file.path)
+      || isProtectedManifestReadPath(file.path)) {
+      throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", "The data-boundary manifest contains an invalid, duplicate, or protected file entry.");
+    }
+    const parentSegments = file.path.split("/").slice(0, -1);
+    for (let index = 0; index < parentSegments.length; index += 1) {
+      const parentPath = parentSegments.slice(0, index + 1).join("/");
+      if (!directoryIdentities.has(parentPath)) {
+        throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", `The data-boundary manifest is missing a parent directory identity for ${file.path}.`);
+      }
+    }
+    filesByPath.set(file.path, file);
+  }
+
+  const deniedPaths = [];
+  for (const record of [...manifest.excluded, ...manifest.blockers]) {
+    if (!record || typeof record.path !== "string" || !isCanonicalReadPath(workspace.rootPath, record.path)) {
+      throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", "The data-boundary manifest contains an invalid exclusion or blocker path.");
+    }
+    deniedPaths.push(record.path);
+  }
+  return { filesByPath, directoryIdentities, deniedPaths };
+}
+
+async function readStableManifestTextFile(filePath, expectedStat, manifestFile, maxFileBytes) {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile()
+      || before.isSymbolicLink()
+      || before.nlink !== 1n
+      || !sameStableStat(before, expectedStat)
+      || !matchesRecordedIdentity(before, manifestFile.sourceIdentity)
+      || before.size > BigInt(maxFileBytes)) {
+      throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A manifest file changed before it could be read: ${manifestFile.path}.`);
+    }
+
+    const buffer = manifestFile.size ? Buffer.allocUnsafe(manifestFile.size) : Buffer.alloc(0);
+    const hash = createHash("sha256");
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, null);
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(offset, offset + bytesRead));
+      offset += bytesRead;
+    }
+    const overflowProbe = Buffer.allocUnsafe(1);
+    const { bytesRead: overflowBytes } = await handle.read(overflowProbe, 0, 1, null);
+    const after = await handle.stat({ bigint: true });
+    const pathAfter = await safeLstat(filePath);
+    const sha256 = hash.digest("hex");
+    if (offset !== buffer.length
+      || overflowBytes !== 0
+      || !after.isFile()
+      || after.isSymbolicLink()
+      || after.nlink !== 1n
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || pathAfter.nlink !== 1n
+      || !sameStableStat(before, after)
+      || !sameStableStat(after, pathAfter)
+      || !matchesRecordedIdentity(after, manifestFile.sourceIdentity)
+      || buffer.length !== manifestFile.size
+      || sha256 !== manifestFile.sha256) {
+      throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A manifest file changed while it was being read: ${manifestFile.path}.`);
+    }
+
+    let content;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
+    } catch {
+      throw boundaryError("DATA_BOUNDARY_TEXT_UNREADABLE", `The manifest file is not valid UTF-8 and cannot be disclosed as model text: ${manifestFile.path}.`);
+    }
+    return { content, byteLength: buffer.length, sha256 };
+  } finally {
+    await handle.close();
+  }
+}
+
+function assertReadPathSnapshotStable(before, after, relative) {
+  const sameParents = before.parents.length === after.parents.length
+    && before.parents.every((item, index) => item.path === after.parents[index].path
+      && sameStableStat(item.stat, after.parents[index].stat));
+  if (!sameStableStat(before.root, after.root)
+    || !sameParents
+    || !before.target
+    || !after.target
+    || !sameStableStat(before.target, after.target)) {
+    throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A workspace path changed while a manifest file was being read: ${relative}.`);
+  }
+}
+
+function validManifestEntryPath(rootPath, relative, seenPortablePaths) {
+  if (!isCanonicalReadPath(rootPath, relative)) return false;
+  return !registerPortablePath(relative, seenPortablePaths);
+}
+
+function isCanonicalReadPath(rootPath, relative) {
+  if (typeof relative !== "string" || !relative || relative.includes("\\") || path.isAbsolute(relative)) return false;
+  const segments = relative.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment.includes(":"))) return false;
+  try {
+    const absolute = resolveManifestPath(rootPath, relative);
+    return relativePath(rootPath, absolute) === relative;
+  } catch {
+    return false;
+  }
+}
+
+function isProtectedManifestReadPath(relative) {
+  const segments = String(relative || "").split("/");
+  const basename = segments.at(-1) || "";
+  if (basename === DISPOSABLE_COPY_MARKER || isSensitiveFile(basename)) return true;
+  return segments.slice(0, -1).some((segment) => isSensitiveDirectory(segment)
+    || VCS_DIRECTORIES.has(segment.toLocaleLowerCase("en-US"))
+    || NORMALIZED_SKIPPED_DIRECTORIES.has(segment.toLocaleLowerCase("en-US")));
+}
+
+function pathIsCoveredByBoundaryRecord(relative, records) {
+  return records.some((recordPath) => relative === recordPath || relative.startsWith(`${recordPath}/`));
+}
+
+function validRecordedIdentity(identity) {
+  return identity
+    && ["dev", "ino", "birthtimeNs", "mtimeNs", "ctimeNs", "size"]
+      .every((field) => typeof identity[field] === "string" && /^\d+$/.test(identity[field]));
+}
+
+function readByteLimit(value, fallback, name) {
+  if (value === undefined) return fallback;
+  if (Number.isSafeInteger(value) && value >= 0) return value;
+  throw boundaryError("DATA_BOUNDARY_READ_LIMIT_INVALID", `${name} must be a non-negative safe integer.`, 400);
+}
+
+function canonicalFilesystemPath(value) {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLocaleLowerCase("en-US") : resolved;
+}
+
 async function hashStableFile(filePath, expectedStat) {
   const handle = await fs.open(filePath, "r");
   try {
@@ -318,7 +577,7 @@ async function copyStableFile(sourcePath, targetPath, expectedStat, manifestFile
 function directoryExclusion(name, rel, ignoreRules) {
   const normalizedName = name.toLocaleLowerCase("en-US");
   if (VCS_DIRECTORIES.has(normalizedName)) return "vcs-metadata";
-  if ([...SKIPPED_DIRECTORIES].some((item) => item.toLocaleLowerCase("en-US") === normalizedName)) return "generated-directory";
+  if (NORMALIZED_SKIPPED_DIRECTORIES.has(normalizedName)) return "generated-directory";
   if (isIgnoredByRules(rel, true, ignoreRules)) return "gitignore";
   return "";
 }
@@ -454,31 +713,57 @@ function isIgnoredByRules(rel, isDirectory, rules) {
   return decision === true;
 }
 
-async function assertWorkspaceAndParents(rootPath, expectedRootIdentity, relative, expectedTargetIdentity, targetIsDirectory, expectedParents = new Map()) {
+async function assertWorkspaceAndParents(
+  rootPath,
+  expectedRootIdentity,
+  relative,
+  expectedTargetIdentity,
+  targetIsDirectory,
+  expectedParents = new Map(),
+  { requireRecordedParents = false, requireStableParentIdentity = false } = {}
+) {
   const workspace = await captureWorkspaceIdentity(rootPath);
   if (workspace.digest !== expectedRootIdentity) throw boundaryError("DATA_BOUNDARY_PATH_CHANGED", "A copy workspace root changed identity during the operation.");
+  const rootStat = await safeLstat(workspace.rootPath);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw boundaryError("DATA_BOUNDARY_PATH_CHANGED", "A copy workspace root became a link or non-directory.");
+  }
   const segments = String(relative || "").split("/").filter(Boolean);
   let current = workspace.rootPath;
   const parentCount = Math.max(0, segments.length - 1);
+  const parents = [];
   for (let index = 0; index < parentCount; index += 1) {
     current = path.join(current, segments[index]);
-    const stat = await fs.lstat(current, { bigint: true });
+    const stat = await safeLstat(current);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw boundaryError("DATA_BOUNDARY_PATH_CHANGED", "A copy path parent became a link or non-directory.");
     const parentRel = segments.slice(0, index + 1).join("/");
     const expectedParent = expectedParents.get(parentRel);
-    if (expectedParent && !matchesRecordedEntity(stat, expectedParent)) {
+    if (requireRecordedParents && !expectedParent) {
+      throw boundaryError("DATA_BOUNDARY_MANIFEST_INVALID", `A manifest parent identity is missing: ${parentRel}.`);
+    }
+    const parentMatches = requireStableParentIdentity
+      ? matchesRecordedIdentity(stat, expectedParent)
+      : matchesRecordedEntity(stat, expectedParent);
+    if (expectedParent && !parentMatches) {
       throw boundaryError("DATA_BOUNDARY_PATH_CHANGED", `A copy path parent changed identity: ${parentRel}.`);
     }
+    parents.push({ path: parentRel, stat });
   }
+  let targetStat = null;
   if (expectedTargetIdentity) {
     const target = resolveManifestPath(workspace.rootPath, relative);
-    const stat = await fs.lstat(target, { bigint: true });
-    if (!matchesRecordedIdentity(stat, expectedTargetIdentity)
-      || targetIsDirectory && !stat.isDirectory()
-      || !targetIsDirectory && !stat.isFile()) {
+    targetStat = await safeLstat(target);
+    if (!matchesRecordedIdentity(targetStat, expectedTargetIdentity)
+      || targetIsDirectory && (!targetStat.isDirectory() || targetStat.isSymbolicLink())
+      || !targetIsDirectory && (!targetStat.isFile() || targetStat.isSymbolicLink() || targetStat.nlink !== 1n)) {
       throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A manifest source entry changed identity: ${relative}.`);
     }
   }
+  const finalWorkspace = await captureWorkspaceIdentity(workspace.rootPath);
+  if (finalWorkspace.digest !== expectedRootIdentity) {
+    throw boundaryError("DATA_BOUNDARY_PATH_CHANGED", "A copy workspace root changed identity during the operation.");
+  }
+  return { root: rootStat, parents, target: targetStat };
 }
 
 function comparePath(left, right) {

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +29,7 @@ test("TaskStore creates and returns latest tasks", async () => {
   const second = await store.create({ goal: "second", rootPath: "C:/repo-a" });
 
   assert.equal(first.status, "planned");
+  assert.equal(first.revision, 1);
   assert.equal((await store.latest({ rootPath: "C:/repo-a" })).id, second.id);
 });
 
@@ -38,16 +40,24 @@ test("TaskStore stores plan, tool calls, verification, and completion", async ()
   await store.setPlan(task.id, { title: "Plan", steps: [{ id: "one" }] });
   await store.appendToolCall(task.id, { tool: "read_file", summary: "ok" });
   await store.appendContextFile(task.id, { path: "src/index.js", summary: "export" });
-  await store.appendSuggestion(task.id, { provider: "mock", content: "try this" });
+  await store.recordModelEvent(task.id, {
+    operation: "suggestion",
+    provider: "mock",
+    model: "mock-codeclaw",
+    requestSha256: digest("request"),
+    responseSha256: digest("response"),
+    status: "ok"
+  });
   await store.setVerification(task.id, { exitCode: 0, timedOut: false });
   const completed = await store.complete(task.id, "done");
 
   assert.equal(completed.status, "completed");
   assert.equal(completed.toolCalls.length, 1);
   assert.equal(completed.contextFiles.length, 1);
-  assert.equal(completed.suggestions.length, 1);
+  assert.equal(completed.modelEvents.length, 1);
   assert.equal(completed.verification.exitCode, 0);
   assert.equal(completed.summary, "done");
+  assert.equal(completed.revision, 7);
   assert.match(completed.reviewDraft, /Title: fix tests/);
   assert.match(completed.reviewDraft, /Verification:/);
   assert.match(summarizeTask(completed), /completed/);
@@ -56,10 +66,18 @@ test("TaskStore stores plan, tool calls, verification, and completion", async ()
 test("TaskStore updates duplicate context files", async () => {
   const store = await makeStore();
   const task = await store.create({ goal: "read context", rootPath: "C:/repo-a" });
-  await store.appendContextFile(task.id, { path: "src/index.js", summary: "first" });
-  const updated = await store.appendContextFile(task.id, { path: "src/index.js", summary: "second" });
+  await store.appendContextFile(task.id, {
+    path: "src/index.js",
+    summary: "UTF-8 text metadata: 1 line(s), 5 byte(s).",
+    size: 5
+  });
+  const updated = await store.appendContextFile(task.id, {
+    path: "src/index.js",
+    summary: "UTF-8 text metadata: 2 line(s), 6 byte(s).",
+    size: 6
+  });
   assert.equal(updated.contextFiles.length, 1);
-  assert.equal(updated.contextFiles[0].summary, "second");
+  assert.equal(updated.contextFiles[0].summary, "UTF-8 text metadata: 2 line(s), 6 byte(s).");
 });
 
 test("TaskStore stores patch proposals and tracks revert state", async () => {
@@ -75,6 +93,25 @@ test("TaskStore stores patch proposals and tracks revert state", async () => {
 
   const reverted = await store.markLastPatchReverted(task.id);
   assert.ok(reverted.appliedPatches[0].revertedAt);
+});
+
+test("TaskStore normalization preserves applicable patch proposal payloads", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "preserve patch", rootPath: "C:/repo-a" });
+  await store.setPatchProposal(task.id, {
+    applicable: true,
+    path: "src/index.js",
+    content: "export const value = 2;\n",
+    diff: "--- a/src/index.js\n+++ b/src/index.js\n@@\n-old\n+new",
+    summary: "Update the value."
+  });
+  const before = JSON.parse(await fs.readFile(store.storagePath, "utf8"))[0].patchProposal;
+
+  await store.create({ goal: "force defensive write normalization", rootPath: "C:/repo-b" });
+  const after = JSON.parse(await fs.readFile(store.storagePath, "utf8"))[0].patchProposal;
+  assert.deepEqual(after, before);
+  assert.equal(after.content, "export const value = 2;\n");
+  assert.deepEqual(await store.initialize(), { migrated: 0, taskCount: 2 });
 });
 
 test("TaskStore can revert a specific applied patch", async () => {
@@ -100,10 +137,347 @@ test("TaskStore keeps completed status when reverting after completion", async (
 test("TaskStore serializes concurrent read-modify-write updates", async () => {
   const store = await makeStore();
   const task = await store.create({ goal: "concurrent updates", rootPath: "C:/repo-a" });
-  await Promise.all(Array.from({ length: 20 }, (_, index) => store.appendSuggestion(task.id, { provider: "mock", content: `suggestion-${index}` })));
+  await Promise.all(Array.from({ length: 20 }, (_, index) => store.recordModelEvent(task.id, {
+    operation: "suggestion",
+    provider: "mock",
+    model: "mock-codeclaw",
+    requestSha256: digest(`request-${index}`),
+    responseSha256: digest(`response-${index}`),
+    status: "ok"
+  })));
   const updated = await store.get(task.id);
-  assert.equal(updated.suggestions.length, 20);
-  assert.equal(new Set(updated.suggestions.map((item) => item.content)).size, 20);
+  assert.equal(updated.modelEvents.length, 20);
+  assert.equal(new Set(updated.modelEvents.map((item) => item.responseSha256)).size, 20);
+  assert.equal(updated.revision, 21);
+});
+
+test("TaskStore keeps only hashed context metadata on disk", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "minimize context", rootPath: "C:/repo-a" });
+  const secret = "CONTEXT_BODY_MUST_NOT_PERSIST-中文-😀";
+  const updated = await store.appendContextFile(task.id, {
+    path: "src/private.js",
+    summary: "CONTEXT_SUMMARY_MUST_NOT_PERSIST",
+    content: secret,
+    contentComplete: true,
+    size: 1,
+    source: "read_file",
+    prompt: "PROMPT_MUST_NOT_PERSIST",
+    key: "KEY_MUST_NOT_PERSIST"
+  });
+
+  assert.deepEqual(Object.keys(updated.contextFiles[0]).sort(), [
+    "contentComplete",
+    "path",
+    "sha256",
+    "size",
+    "source",
+    "summary",
+    "time"
+  ]);
+  assert.equal(updated.contextFiles[0].sha256, digest(secret));
+  assert.equal(updated.contextFiles[0].size, Buffer.byteLength(secret, "utf8"));
+  assert.equal(updated.contextFiles[0].summary, "");
+  assert.equal(updated.contextFiles[0].contentComplete, true);
+  assert.equal(updated.revision, 2);
+  const summaryOnly = await store.appendContextFile(task.id, {
+    path: "src/summary-only.js",
+    summary: "CONTEXT_SUMMARY_ONLY_MUST_NOT_PERSIST",
+    size: 41,
+    sha256: digest("summary-only"),
+    contentComplete: true,
+    source: "UNTRUSTED_CONTEXT_SOURCE_MUST_NOT_PERSIST"
+  });
+  assert.equal(summaryOnly.contextFiles[1].summary, "");
+  assert.equal(summaryOnly.contextFiles[1].source, "");
+  assert.equal(summaryOnly.revision, 3);
+  const raw = await fs.readFile(store.storagePath, "utf8");
+  assert.doesNotMatch(raw, /CONTEXT_(?:BODY|SUMMARY|SUMMARY_ONLY)_MUST_NOT_PERSIST|PROMPT_MUST_NOT_PERSIST|KEY_MUST_NOT_PERSIST|UNTRUSTED_CONTEXT_SOURCE_MUST_NOT_PERSIST/);
+  assert.doesNotMatch(raw, /"content"\s*:/);
+});
+
+test("TaskStore records only allowlisted model event metadata", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "minimize model state", rootPath: "C:/repo-a" });
+  const updated = await store.recordModelEvent(task.id, {
+    operation: "patch-proposal",
+    provider: "openai-compatible",
+    model: "gpt-test",
+    requestSha256: digest("request"),
+    responseSha256: digest("response"),
+    status: "completed",
+    content: "MODEL_CONTENT_MUST_NOT_PERSIST",
+    messages: [{ content: "MODEL_MESSAGES_MUST_NOT_PERSIST" }],
+    prompt: "MODEL_PROMPT_MUST_NOT_PERSIST",
+    error: "MODEL_ERROR_MUST_NOT_PERSIST",
+    key: "MODEL_KEY_MUST_NOT_PERSIST"
+  });
+
+  assert.deepEqual(Object.keys(updated.modelEvents[0]), [
+    "operation",
+    "provider",
+    "model",
+    "requestSha256",
+    "responseSha256",
+    "status",
+    "time"
+  ]);
+  const raw = await fs.readFile(store.storagePath, "utf8");
+  assert.doesNotMatch(raw, /MODEL_(?:CONTENT|MESSAGES|PROMPT|ERROR|KEY)_MUST_NOT_PERSIST/);
+  for (const forbidden of ["content", "messages", "prompt", "error", "key"]) {
+    assert.equal(Object.hasOwn(updated.modelEvents[0], forbidden), false);
+  }
+});
+
+test("TaskStore does not persist raw notes for a new inapplicable patch proposal", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "reject raw invalid response", rootPath: "C:/repo-a" });
+  const updated = await store.setPatchProposal(task.id, {
+    applicable: false,
+    provider: "mock",
+    model: "mock-codeclaw",
+    reason: "invalid_response",
+    summary: "No applicable patch.",
+    content: "INVALID_CONTENT_MUST_NOT_PERSIST",
+    diff: "INVALID_DIFF_MUST_NOT_PERSIST",
+    note: "INVALID_NOTE_MUST_NOT_PERSIST",
+    raw: "INVALID_RAW_MUST_NOT_PERSIST",
+    prompt: "INVALID_PROMPT_MUST_NOT_PERSIST"
+  }, { expectedRevision: task.revision });
+
+  assert.equal(updated.patchProposal.applicable, false);
+  for (const forbidden of ["content", "diff", "note", "raw", "prompt"]) {
+    assert.equal(Object.hasOwn(updated.patchProposal, forbidden), false);
+  }
+  assert.doesNotMatch(await fs.readFile(store.storagePath, "utf8"), /INVALID_(?:CONTENT|DIFF|NOTE|RAW|PROMPT)_MUST_NOT_PERSIST/);
+});
+
+test("TaskStore commits a patch proposal and minimized model event in one CAS revision", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "atomic model patch", rootPath: "C:/repo-a" });
+  const updated = await store.setPatchProposal(task.id, {
+    applicable: true,
+    path: "src/index.js",
+    content: "export const value = 2;\n",
+    diff: "+value",
+    summary: "Update the value."
+  }, {
+    expectedRevision: task.revision,
+    modelEvent: {
+      operation: "patch-proposal",
+      provider: "mock",
+      model: "mock-codeclaw",
+      requestSha256: digest("atomic-request"),
+      responseSha256: digest("atomic-response"),
+      status: "ok",
+      content: "ATOMIC_MODEL_BODY_MUST_NOT_PERSIST",
+      error: "ATOMIC_MODEL_ERROR_MUST_NOT_PERSIST"
+    }
+  });
+
+  assert.equal(updated.revision, task.revision + 1);
+  assert.equal(updated.patchProposal.path, "src/index.js");
+  assert.equal(updated.modelEvents.length, 1);
+  assert.equal(updated.modelEvents[0].requestSha256, digest("atomic-request"));
+  assert.equal(updated.modelEvents[0].responseSha256, digest("atomic-response"));
+  const raw = await fs.readFile(store.storagePath, "utf8");
+  assert.doesNotMatch(raw, /ATOMIC_MODEL_(?:BODY|ERROR)_MUST_NOT_PERSIST/);
+
+  await assert.rejects(
+    () => store.setPatchProposal(task.id, { applicable: false, summary: "stale" }, {
+      expectedRevision: task.revision,
+      modelEvent: { operation: "patch-proposal", status: "stale" }
+    }),
+    (error) => error.code === "TASK_REVISION_CONFLICT" && error.currentRevision === updated.revision
+  );
+  assert.equal((await store.get(task.id)).modelEvents.length, 1);
+});
+
+test("TaskStore revision CAS rejects stale updates before running a mutation", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "compare and swap", rootPath: "C:/repo-a" });
+  let staleCallbackRan = false;
+  const updated = await store.update(task.id, { status: "running" }, { expectedRevision: task.revision });
+  assert.equal(updated.revision, 2);
+
+  await assert.rejects(
+    () => store.update(task.id, () => {
+      staleCallbackRan = true;
+      return { status: "failed" };
+    }, { expectedRevision: task.revision }),
+    (error) => error.code === "TASK_REVISION_CONFLICT"
+      && error.status === 409
+      && error.currentRevision === 2
+  );
+  assert.equal(staleCallbackRan, false);
+
+  const proposed = await store.setPatchProposal(task.id, {
+    applicable: true,
+    path: "src/index.js",
+    content: "export const value = 2;\n",
+    diff: "+value"
+  }, { expectedRevision: updated.revision });
+  assert.equal(proposed.revision, 3);
+  await assert.rejects(
+    () => store.setPatchProposal(task.id, { applicable: false, note: "stale raw note" }, { expectedRevision: updated.revision }),
+    (error) => error.code === "TASK_REVISION_CONFLICT" && error.status === 409
+  );
+  assert.equal((await store.get(task.id)).revision, 3);
+});
+
+test("TaskStore runs a final async guard inside the mutation lock before writing", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "guard commit", rootPath: "C:/repo-a" });
+  const order = [];
+  await assert.rejects(
+    () => store.update(task.id, async () => {
+      order.push("mutation");
+      await Promise.resolve();
+      return { status: "running" };
+    }, {
+      expectedRevision: task.revision,
+      beforeCommit: async ({ currentTask, nextPatch }) => {
+        order.push("guard");
+        assert.equal(currentTask.revision, task.revision);
+        assert.equal(nextPatch.status, "running");
+        throw Object.assign(new Error("changed before commit"), { code: "FINAL_GUARD_CHANGED" });
+      }
+    }),
+    { code: "FINAL_GUARD_CHANGED" }
+  );
+  assert.deepEqual(order, ["mutation", "guard"]);
+  assert.equal((await store.get(task.id)).revision, task.revision);
+  assert.equal((await store.get(task.id)).status, task.status);
+});
+
+test("TaskStore CAS allows only one concurrent writer across instances", async () => {
+  const root = await makeTemporaryRoot("codeclaw-task-cas-");
+  const storagePath = path.join(root, "tasks.json");
+  const first = new TaskStore({ storagePath });
+  const second = new TaskStore({ storagePath });
+  const task = await first.create({ goal: "one winner", rootPath: "C:/repo-a" });
+
+  const results = await Promise.allSettled([
+    first.update(task.id, { status: "running" }, { expectedRevision: task.revision }),
+    second.update(task.id, { status: "blocked" }, { expectedRevision: task.revision })
+  ]);
+  assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
+  assert.equal(results.find((result) => result.status === "rejected").reason.code, "TASK_REVISION_CONFLICT");
+  assert.equal((await first.get(task.id)).revision, 2);
+});
+
+test("TaskStore startup migration removes legacy model and context bodies atomically", async () => {
+  const root = await makeTemporaryRoot("codeclaw-task-migration-");
+  const storagePath = path.join(root, "tasks.json");
+  const time = "2026-07-13T00:00:00.000Z";
+  const legacy = [{
+    id: "task-legacy",
+    goal: "migrate private state",
+    rootPath: null,
+    rootIdentity: null,
+    workspaceId: null,
+    status: "patch_ready",
+    plan: null,
+    toolCalls: [],
+    contextFiles: [{
+      path: "src/private.js",
+      summary: "LEGACY_CONTEXT_SUMMARY_SECRET",
+      content: "LEGACY_CONTEXT_BODY_SECRET",
+      contentComplete: true,
+      source: "preflight",
+      time
+    }, {
+      path: "src/summary-only.js",
+      summary: "LEGACY_SUMMARY_ONLY_SOURCE_SECRET",
+      size: 33,
+      sha256: digest("legacy-summary-only"),
+      contentComplete: true,
+      source: "legacy",
+      time
+    }],
+    suggestions: [{
+      kind: "failure-fix",
+      provider: "mock",
+      model: "mock-codeclaw",
+      content: "LEGACY_SUGGESTION_BODY_SECRET",
+      prompt: "LEGACY_SUGGESTION_PROMPT_SECRET",
+      time
+    }],
+    modelEvents: [{
+      operation: "suggestion",
+      provider: "mock",
+      model: "mock-codeclaw",
+      requestSha256: digest("legacy-request"),
+      responseSha256: digest("legacy-response"),
+      status: "completed",
+      content: "LEGACY_EVENT_BODY_SECRET",
+      error: "LEGACY_EVENT_ERROR_SECRET",
+      time
+    }],
+    verification: null,
+    verificationHistory: [],
+    failureSummary: "",
+    patchProposal: {
+      applicable: false,
+      provider: "mock",
+      model: "mock-codeclaw",
+      path: null,
+      files: [],
+      reason: "invalid_response",
+      summary: "No applicable patch.",
+      content: "LEGACY_INVALID_PATCH_CONTENT_SECRET",
+      diff: "LEGACY_INVALID_PATCH_DIFF_SECRET",
+      note: "LEGACY_INVALID_PATCH_NOTE_SECRET",
+      raw: "LEGACY_INVALID_PATCH_RAW_SECRET",
+      prompt: "LEGACY_INVALID_PATCH_PROMPT_SECRET",
+      proposalId: "proposal-legacy",
+      time
+    },
+    appliedPatches: [],
+    summary: "",
+    reviewDraft: "",
+    createdAt: time,
+    updatedAt: time
+  }];
+  await fs.writeFile(storagePath, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
+  const store = new TaskStore({ storagePath });
+
+  const compatible = await store.get("task-legacy");
+  assert.equal(compatible.revision, 0);
+  assert.equal(Object.hasOwn(compatible, "suggestions"), false);
+  assert.equal(Object.hasOwn(compatible.contextFiles[0], "content"), false);
+  assert.equal(compatible.contextFiles[0].summary, "");
+  assert.equal(Object.hasOwn(compatible.patchProposal, "note"), false);
+
+  const result = await store.initialize();
+  assert.deepEqual(result, { migrated: 1, taskCount: 1 });
+  const migrated = JSON.parse(await fs.readFile(storagePath, "utf8"))[0];
+  assert.equal(migrated.revision, 1);
+  assert.equal(Object.hasOwn(migrated, "suggestions"), false);
+  assert.equal(migrated.modelEvents.length, 2);
+  assert.equal(migrated.contextFiles[0].sha256, digest("LEGACY_CONTEXT_BODY_SECRET"));
+  assert.equal(migrated.contextFiles[0].summary, "");
+  assert.equal(migrated.contextFiles[0].source, "preflight");
+  assert.equal(migrated.contextFiles[1].summary, "");
+  assert.equal(migrated.contextFiles[1].source, "");
+  assert.deepEqual(Object.keys(migrated.contextFiles[0]).sort(), [
+    "contentComplete",
+    "path",
+    "sha256",
+    "size",
+    "source",
+    "summary",
+    "time"
+  ]);
+  for (const forbidden of ["content", "diff", "note", "raw", "prompt"]) {
+    assert.equal(Object.hasOwn(migrated.patchProposal, forbidden), false);
+  }
+  const raw = await fs.readFile(storagePath, "utf8");
+  assert.doesNotMatch(raw, /LEGACY_(?:CONTEXT|SUMMARY_ONLY|SUGGESTION|EVENT|INVALID_PATCH)_[A-Z_]*SECRET/);
+
+  const beforeSecondMigration = raw;
+  assert.deepEqual(await store.initialize(), { migrated: 0, taskCount: 1 });
+  assert.equal(await fs.readFile(storagePath, "utf8"), beforeSecondMigration);
 });
 
 test("TaskStore coordinates concurrent mutations across instances and Windows path casing", async (t) => {
@@ -200,7 +574,7 @@ test("buildTaskReviewDraft summarizes changed files and verification", () => {
   const draft = buildTaskReviewDraft({
     goal: "add coverage",
     toolCalls: [],
-    suggestions: [],
+    modelEvents: [{ operation: "patch-proposal", status: "ok" }],
     contextFiles: [],
     appliedPatches: [{ path: "test/example.test.js", revertedAt: null }],
     verification: { exitCode: 0, timedOut: false }
@@ -209,5 +583,10 @@ test("buildTaskReviewDraft summarizes changed files and verification", () => {
   assert.match(draft, /Title: add coverage/);
   assert.match(draft, /- test\/example\.test\.js/);
   assert.match(draft, /Exit code 0/);
+  assert.match(draft, /1 minimized event/);
   assert.match(draft, /Verification passed/);
 });
+
+function digest(value) {
+  return createHash("sha256").update(String(value), "utf8").digest("hex");
+}

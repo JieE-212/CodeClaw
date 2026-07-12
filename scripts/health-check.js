@@ -1,35 +1,38 @@
 import { spawn } from "node:child_process";
-import fs from "node:fs/promises";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
+import { findAvailablePort, withAutomationResources } from "./automation-resource-scope.js";
+import { previewAndApproveModelOperation } from "./model-operation-client.js";
 
 const rootPath = process.cwd();
 const fixturePath = path.join(rootPath, "examples", "support-inbox-js");
-const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-health-"));
-const port = await findFreePort();
-const baseUrl = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ["apps/web/server.js"], {
-  cwd: rootPath,
-  env: {
-    ...process.env,
-    CODECLAW_PORT: String(port),
-    CODECLAW_STATE_DIR: stateDir,
-    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true
-});
+let stateDir = "";
+let port = 0;
+let baseUrl = "";
+let server = null;
 let serverOutput = "";
 
-server.stdout.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
-server.stderr.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
+await withAutomationResources(async (scope) => {
+  stateDir = await scope.temporaryDirectory("codeclaw-health-");
+  port = await findAvailablePort();
+  baseUrl = `http://127.0.0.1:${port}`;
+  server = scope.child(spawn(process.execPath, ["apps/web/server.js"], {
+    cwd: rootPath,
+    env: {
+      ...process.env,
+      CODECLAW_PORT: String(port),
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  }), "CodeClaw health-check server");
+  server.stdout.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
+  server.stderr.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
 
-try {
   await waitForHealth();
   const system = await request("/api/system/check");
   assert(system.ok, "System check did not return ok.");
@@ -116,14 +119,12 @@ try {
   });
   assert(demoPreflight.report?.writeAttempted === false, "Chinese Demo preflight attempted a write.");
   assert(demoPreflight.workspace?.kind === "built-in-demo", "Demo capability was not resolved by the server.");
-  const demoPatch = await request("/api/model/patch-proposal", {
-    goal: demoGoal,
-    repoProfile: demoPreflight.profile,
-    rootPath: demoPreflight.profile?.rootPath,
+  const demoPatch = (await previewAndApproveModelOperation(request, {
+    operation: "patch-proposal",
     taskId: demoPreflight.task?.id
-  });
-  assert(demoPatch.proposal?.applicable === true, `Chinese Demo patch was not applicable: ${demoPatch.proposal?.reason || "unknown"}`);
-  assert(demoPatch.proposal?.files?.length > 0, "Chinese Demo patch contained no files.");
+  })).result;
+  assert(demoPatch?.applicable === true, `Chinese Demo patch was not applicable: ${demoPatch?.reason || "unknown"}`);
+  assert(demoPatch?.files?.length > 0, "Chinese Demo patch contained no files.");
 
   console.log(JSON.stringify({
     ok: true,
@@ -141,14 +142,11 @@ try {
     },
     sessionRestored: Boolean(session.session?.restored),
     chineseDemoPatch: {
-      applicable: demoPatch.proposal.applicable,
-      files: demoPatch.proposal.files.length
+      applicable: demoPatch.applicable,
+      files: demoPatch.files.length
     }
   }, null, 2));
-} finally {
-  server.kill();
-  await fs.rm(stateDir, { recursive: true, force: true });
-}
+});
 
 async function request(url, body) {
   const response = await fetch(`${baseUrl}${url}`, {
@@ -194,17 +192,6 @@ async function waitForHealth() {
   throw new Error(`Server did not become ready.\n${serverOutput}`);
 }
 
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const selected = address.port;
-      probe.close(() => resolve(selected));
-    });
-  });
-}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

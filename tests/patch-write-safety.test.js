@@ -9,6 +9,7 @@ import { TaskStore } from "../packages/task-store/src/index.js";
 import { hashContent } from "../packages/tool-registry/src/index.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../packages/shared/src/cross-process-lock.js";
 import { createActivatedWorkspace } from "./helpers/activated-workspace.js";
+import { previewAndApproveModelOperation } from "../scripts/model-operation-client.js";
 
 test("patch APIs reject stale and ignored targets, while protecting post-apply edits", async () => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-patch-safety-"));
@@ -65,21 +66,19 @@ test("patch APIs reject stale and ignored targets, while protecting post-apply e
       content: calculatorOriginal,
       contentComplete: true
     });
-    const proposed = await request(baseUrl, "/api/model/patch-proposal", {
-      taskId: staleTask.id,
-      goal: staleTask.goal,
-      rootPath: workspace,
-      repoProfile: { rootPath: workspace, files: [] }
-    });
-    assert.equal(proposed.response.status, 200);
-    assert.deepEqual(proposed.payload.proposal.files[0].expectedBaseline, {
+    const proposed = await previewAndApproveModelOperation(
+      (pathname, body) => request(baseUrl, pathname, body),
+      { operation: "patch-proposal", taskId: staleTask.id }
+    );
+    assert.equal(proposed.sendEnvelope.response.status, 200);
+    assert.deepEqual(proposed.result.files[0].expectedBaseline, {
       exists: true,
       sha256: hashContent(calculatorOriginal)
     });
 
     const privateManualEdit = "PRIVATE-MANUAL-EDIT-MUST-NOT-LEAK\n";
     await fs.writeFile(calculatorPath, privateManualEdit, "utf8");
-    const staleApply = await request(baseUrl, "/api/tasks/apply-patch", { taskId: staleTask.id, proposalId: proposed.payload.proposal.proposalId, proposalDigest: proposed.payload.proposal.proposalDigest, approved: true });
+    const staleApply = await request(baseUrl, "/api/tasks/apply-patch", { taskId: staleTask.id, proposalId: proposed.result.proposalId, proposalDigest: proposed.result.proposalDigest, approved: true });
     assert.equal(staleApply.response.status, 409);
     assert.equal(staleApply.payload.code, "PATCH_BASELINE_CONFLICT");
     assert.doesNotMatch(staleApply.payload.error, /PRIVATE-MANUAL-EDIT/);

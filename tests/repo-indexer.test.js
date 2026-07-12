@@ -45,6 +45,16 @@ test("scanRepository follows root .gitignore rules", async (t) => {
   assert.ok(profile.skipped.some((item) => item.path === ".codeclaw" && item.reason === "skipped-directory"));
 });
 
+test("ignored manifests cannot contribute commands or framework metadata", async (t) => {
+  const root = await makeFixture(t);
+  await fs.writeFile(path.join(root, ".gitignore"), "package.json\nignored.log\ncache/\n", "utf8");
+  const profile = await scanRepository(root);
+  assert.ok(profile.skipped.some((item) => item.path === "package.json" && item.reason === "gitignore"));
+  assert.equal(profile.commands.length, 0);
+  assert.equal(profile.frameworks.includes("React"), false);
+  assert.equal(profile.packageManagers.includes("npm"), false);
+});
+
 test("scanRepository skips protected directories case-insensitively and follows nested ignore rules", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-indexer-boundary-"));
   t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));

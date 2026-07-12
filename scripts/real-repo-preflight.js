@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { decidePreflightGate, pickSearchQuery, summarizeContextCoverage } from "../packages/preflight/src/index.js";
+import { findAvailablePort, withAutomationResources } from "./automation-resource-scope.js";
+import { previewAndApproveModelOperation } from "./model-operation-client.js";
 
 const rootPath = process.cwd();
 const targetRepo = path.resolve(process.argv[2] || process.env.CODECLAW_TRIAL_REPO || "");
@@ -16,29 +16,34 @@ if (!process.argv[2] && !process.env.CODECLAW_TRIAL_REPO) {
 
 await ensureDirectory(targetRepo);
 
-const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-real-preflight-"));
-const port = await findFreePort();
-const baseUrl = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ["apps/web/server.js"], {
-  cwd: rootPath,
-  env: {
-    ...process.env,
-    CODECLAW_PORT: String(port),
-    CODECLAW_STATE_DIR: stateDir,
-    CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true
-});
+let stateDir = "";
+let port = 0;
+let baseUrl = "";
+let server = null;
 let serverOutput = "";
-server.stdout.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
-server.stderr.on("data", (chunk) => {
-  serverOutput += String(chunk);
-});
 
-try {
+await withAutomationResources(async (scope) => {
+  stateDir = await scope.temporaryDirectory("codeclaw-real-preflight-");
+  port = await findAvailablePort();
+  baseUrl = `http://127.0.0.1:${port}`;
+  server = scope.child(spawn(process.execPath, ["apps/web/server.js"], {
+    cwd: rootPath,
+    env: {
+      ...process.env,
+      CODECLAW_PORT: String(port),
+      CODECLAW_STATE_DIR: stateDir,
+      CODECLAW_PROJECT_LOCK_DIR: path.join(stateDir, "project-locks")
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  }), "CodeClaw real-repo preflight server");
+  server.stdout.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
+  server.stderr.on("data", (chunk) => {
+    serverOutput += String(chunk);
+  });
+
   await waitForHealth();
   await request("/api/model/config", {
     type: "mock",
@@ -51,14 +56,12 @@ try {
   const scan = await request("/api/repo/scan", { path: targetRepo });
   const task = await request("/api/tasks/create", { goal, rootPath: scan.profile.rootPath });
   const plan = await request("/api/agent/plan", { goal, repoProfile: scan.profile, taskId: task.task.id });
-  const context = await request("/api/model/context-files", {
-    goal,
-    repoProfile: scan.profile,
-    rootPath: scan.profile.rootPath,
+  const context = (await previewAndApproveModelOperation(request, {
+    operation: "context-files",
     taskId: task.task.id
-  });
+  })).result;
 
-  const selected = context.suggestion.files.slice(0, 5);
+  const selected = context.files.slice(0, 5);
   const readFiles = [];
   for (const file of selected) {
     const read = await request("/api/tools/call", {
@@ -108,10 +111,7 @@ try {
     contextCoverage: summarizeContextCoverage(selected),
     nextGate: decidePreflightGate({ goal, scan: scan.profile, selected, searchHits: search.result || [] })
   }, null, 2));
-} finally {
-  server.kill();
-  await fs.rm(stateDir, { recursive: true, force: true });
-}
+});
 
 async function ensureDirectory(directoryPath) {
   let stat = null;
@@ -150,16 +150,4 @@ async function waitForHealth() {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Server did not become ready.\n${serverOutput}`);
-}
-
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const selected = address.port;
-      probe.close(() => resolve(selected));
-    });
-  });
 }
