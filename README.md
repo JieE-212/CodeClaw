@@ -63,7 +63,7 @@
 
 ## Quickstart
 
-在 Windows PowerShell 里建议使用 `npm.cmd`：
+源码工作区在 Windows PowerShell 里使用：
 
 ```bash
 npm.cmd run dev
@@ -86,16 +86,25 @@ npm.cmd run dev
 
 ## 启动
 
+源码开发启动：
+
 ```bash
 npm run dev
 ```
 
 打开：<http://127.0.0.1:4173>
 
-Windows 试用用户也可以直接运行：
+`start-codeclaw.cmd` 不是源码开发入口。它只用于由 `npm.cmd run stage4b:machine` 生成、同时包含 Authority JSON 与 SHA-256 sidecar 的 verified machine candidate。在该候选目录中双击或运行：
 
 ```text
 start-codeclaw.cmd
+```
+
+候选启动器会验证 Node 20+ 和全部包内容，预扫 `127.0.0.1:4173-4199`，在匹配 ready 身份后才打开浏览器。显式检查或停止：
+
+```powershell
+node scripts/codeclaw-launcher.js status --candidate-root .
+stop-codeclaw.cmd
 ```
 
 启动指南见 [`docs/START_GUIDE.md`](docs/START_GUIDE.md)。
@@ -109,7 +118,7 @@ npm run scan -- "C:\\path\\to\\repo"
 ## 安全工作区边界
 
 - 任意普通项目路径默认登记为 `original-readonly`。客户端传入 `mode`、路径、工作区 ID 或 `approved: true` 都不能开启写入。
-- 内置 Demo 由服务端按安装路径和目录实体身份识别，可以 Apply、Revert 和运行白名单命令。
+- 内置 Demo 由服务端按受信配置路径和目录实体身份识别，可以 Apply、Revert 和运行白名单命令；machine candidate 使用 LocalAppData 下的候选级可写 Demo，绝不修改 Authority 覆盖的包内容。
 - 真实项目若要试写，先在“安全工作区”中运行副本预览。CodeClaw 会完整枚举复制范围、逐文件计算 SHA-256，并拒绝秘密文件名、链接、硬链接、特殊对象和便携路径碰撞；ignored、VCS 元数据和生成目录不会复制。
 - 创建副本不会自动激活。显式激活并重新运行只读预检后，该副本才可 Apply、Revert 或运行项目命令。
 - 副本仍包含复制范围内的普通源码，不是匿名化副本，也不代表适合上传或分享。命令执行也不是操作系统沙箱；确认前仍要检查完整命令和项目脚本。
@@ -121,7 +130,7 @@ npm run scan -- "C:\\path\\to\\repo"
 npm test
 ```
 
-默认完整测试使用有界并发 `4`，避免测试进程按主机 CPU 数量无上限放大并压垮本地端口或子进程资源。Stage 3.0.14 的最终有界全量结果为 398 total、394 pass、0 fail、4 个环境性 skip；单并发完整基线为 397/393/0/4，随后唯一新增的文件增长预算回归也以单并发通过。三语 i18n 各 723 个 key，0 warning/failure。
+默认完整测试使用有界并发 `4`，避免测试进程按主机 CPU 数量无上限放大并压垮本地端口或子进程资源。Stage 4B 最终默认并发与单并发全量结果均为 476 total、469 pass、0 fail、7 个环境性 skip；Stage 4B 聚焦门禁为 84 total、81 pass、0 fail、3 个环境性 skip。三语 i18n 当前各 724 个 key，0 warning/failure。
 
 ## Smoke 验证
 
@@ -139,21 +148,22 @@ npm.cmd run health
 
 该命令会自动启动临时本地服务，验证页面关键标记、mock 模型配置、只读预检、会话恢复和无写入行为。它不会修改真实项目文件。
 
-## 本地试用包
+## Stage 4B machine candidate
+
+```bash
+npm.cmd run stage4b:machine
+```
+
+该命令是唯一完整的可运行候选门禁。它只接受 clean Git commit，只复制该提交的 tracked blob，运行源码与候选检查、真实 launcher start/status/stop/restart 和最终完整性复验，再把 machine candidate 留在被 Git 忽略的 `dist/`。Authority/sidecar 可检测内容变化，但不是发布者代码签名。
+
+旧命令仍可回归历史 hosted-trial 脚本和文档：
 
 ```bash
 npm.cmd run package:local-trial
-```
-
-该命令会在 `dist/CodeClaw-local-trial-YYYYMMDD` 准备一个可分享的本地试用文件夹，并自动排除 `.codeclaw`、日志、API key 配置、`node_modules`、构建产物和 git 元数据。分享前仍应先跑 `health`、`check` 和 `test`。
-
-发给试用者前，推荐直接跑完整 readiness：
-
-```bash
 npm.cmd run trial:ready
 ```
 
-它会自动跑 `health/check/test`、生成试用包、检查包内容卫生，并在生成包里再次验证 `check/health/test`，最后写出 `dist/TRIAL_READINESS_REPORT.json`。
+这两个 legacy 结果明确不可启动、不可压缩分发，也不能授权真人测试；其包不再包含 production start/stop wrapper。详见 [`docs/STAGE_4B_MACHINE_CANDIDATE.md`](docs/STAGE_4B_MACHINE_CANDIDATE.md)。
 
 没有外部试用者时，可以先跑模拟试用：
 
@@ -287,11 +297,11 @@ Windows 本地启动指南在 [`docs/START_GUIDE.md`](docs/START_GUIDE.md)。
 - 阶段三 inbox fixture：`pilot:inbox` 用 `examples/support-inbox-js` 验证 API 查询、视图状态、多文件 patch、测试、Review 和回滚。
 - 真实仓库预检：`pilot:real:preflight` 对任意指定仓库做只读扫描、计划、上下文读取和搜索，作为进入真实写入试验前的安全门。
 - 发布路线：优先做本地 Web 试用包，再做本地启动器/桌面壳；微信小程序更适合作为后续 companion，而不是第一版核心产品。
-- 试用包：`docs/LOCAL_TRIAL_PACKAGE.md` 记录本地 trial package 应包含/排除的文件、验证命令、试用任务和停止条件。
-- 试用包脚本：`npm.cmd run package:local-trial` 会生成干净的 `dist/CodeClaw-local-trial-YYYYMMDD` 文件夹和 `PACKAGE_MANIFEST.md`。
+- Machine candidate：`docs/STAGE_4B_MACHINE_CANDIDATE.md` 记录 clean-commit 打包、Authority、launcher、外置 runtime Demo 和人工验收边界。
+- Legacy regression package：`docs/LOCAL_TRIAL_PACKAGE.md` 记录历史 trial workflow 回归；`package:local-trial`/`trial:ready` 不可启动或分发。
 
-当前安全边界：Stage 3.0.14 已完成机器验证、最终 Git 审计和独立提交。原项目继续强制只读；写入和项目命令仅限内置 Demo，或由当前服务创建、登记、显式激活并重新验证的可丢弃副本。运行时预算、取消、有界关停、状态增长上限和测试资源隔离降低了资源失控与残留风险，但不是操作系统沙箱。Node 没有 `openat` 风格的目录句柄相对操作，最终路径检查仍保留极小 TOCTOU 边界；当前 Windows 沙箱也未完成真实 `taskkill /T` 后代树验证，父包装进程已退出后的可靠后代归属仍需 Job Object 或干净 Windows 验收。真实断电、杀毒软件/网络盘/自定义 ACL、像素、完整键盘、NVDA、高对比度、干净 Windows 和真人原项目写入均未验收。真人测试继续暂停，tester-2 的 `AFTER_LIVE_BLOCKED` 与 remediation 的 `REMEDIATION_HOLD` 保持不变；当前工程阶段是 Stage 4B。
-- 发包检查：`npm.cmd run trial:ready` 会生成试用包、检查敏感文件排除、在包内复跑验证并输出 `dist/TRIAL_READINESS_REPORT.json`。
+当前安全边界：Stage 4B 已完成机器验证和独立提交；生成物仍只是 machine candidate，不是签名安装器或最终 Windows 发布。原项目继续强制只读；写入和项目命令仅限外置 runtime Demo，或由当前服务创建、登记、显式激活并重新验证的可丢弃副本。运行时预算、取消、有界关停、状态增长上限、候选完整性、实例身份和测试资源隔离降低风险，但不是操作系统沙箱。真实 `taskkill /T`、干净 Windows、非管理员、Defender/SmartScreen、默认浏览器、双击、像素、完整键盘、NVDA 和高对比度均未验收。真人测试继续暂停，tester-2 的 `AFTER_LIVE_BLOCKED`、remediation 的 `REMEDIATION_HOLD` 与 tester-3 `not scheduled` 保持不变；Stage 4C 未开始。
+- 历史回归检查：`npm.cmd run trial:ready` 只验证 legacy trial workflow，不产生 runnable machine candidate，也不授权真人会话。
 - 模拟试用：`npm.cmd run trial:simulate` 会扮演第一位安全路径试用者，输出 `dist/SIMULATED_FIRST_TRIAL_REPORT.md`。
 - 夜跑验证：`npm.cmd run nightly:trial` 会跑 2.5 小时安全检查和模拟试用，输出 `dist/nightly-trial/.../summary.md`。
 - 拟人化评审：`docs/PERSONA_TRIAL_REVIEW.md` 记录一人公司视角下的首次使用卡点、已修复问题和下一批 UX 候选。

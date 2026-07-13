@@ -1,23 +1,110 @@
-# CodeClaw Local Trial Package
+# CodeClaw Legacy Local-Trial Regression Package
 
-This document defines what to include when sharing CodeClaw with a small group of local Windows trial users.
+This document defines the remaining purpose of `package:local-trial`.
 
-## Package Goal
+## Current Decision
 
-Share a runnable local Web trial without turning CodeClaw into an installer yet.
+The local-trial package is a historical packaging and trial-workflow regression artifact. It is not a runnable Stage 4B candidate, must not be sent to a tester, and must not be used for Windows launcher acceptance.
 
-The trial user should be able to:
+Real-person testing is paused. Do not use this workflow to:
 
-1. Unzip or open the folder.
-2. Run `start-codeclaw.cmd`.
-3. Open the browser workspace automatically.
-4. Try Demo first.
-5. Run read-only preflight on one local project.
-6. Optionally configure a real model and try a narrow disposable task.
+- rerun tester-2 after-live.
+- alter tester-2's historical `AFTER_LIVE_BLOCKED` result.
+- change remediation from `REMEDIATION_HOLD`.
+- create or schedule tester-3.
+- produce a package for a new live session.
 
-## Include
+The only command that creates a runnable Stage 4B candidate is:
 
-Include these paths:
+```powershell
+npm.cmd run stage4b:machine
+```
+
+See [`STAGE_4B_MACHINE_CANDIDATE.md`](STAGE_4B_MACHINE_CANDIDATE.md).
+
+## Package Types Must Not Be Mixed
+
+| Folder | Command | Authority | Intended use |
+| --- | --- | --- | --- |
+| Git source checkout | none | No candidate Authority | Development with `npm.cmd run dev` |
+| Legacy regression package | `npm.cmd run package:local-trial` | None | Historical package hygiene and regression checks only |
+| Stage 4B machine candidate | `npm.cmd run stage4b:machine` | Canonical Authority plus SHA-256 sidecar | Candidate-aware Windows start/status/stop |
+
+Passing `trial:ready`, `trial:freeze`, or `trial:dispatch` does not convert a legacy package into a machine candidate and does not authorize a human trial.
+
+## Why The Legacy Package Is Not Runnable
+
+The legacy packager:
+
+- can be invoked without the clean committed source identity required by Stage 4B.
+- copies a bounded historical include set while removing `.git/` and local state.
+- writes a human `PACKAGE_MANIFEST.md`.
+- does not write `CODECLAW_CANDIDATE_AUTHORITY.json`.
+- does not write `CODECLAW_CANDIDATE_AUTHORITY.json.sha256`.
+- does not bind the package to an exact candidate ID and complete payload inventory.
+
+Candidate launch must therefore fail closed.
+
+An older generated legacy folder may contain `start-codeclaw.cmd`, `start-codeclaw.ps1`, `stop-codeclaw.cmd`, or `stop-codeclaw.ps1` because those source files were copied historically. Their presence is not launch authority. The verified launcher must reject that folder because its Authority pair is absent.
+
+Do not add an Authority to a legacy package merely to make the wrappers run. That would misrepresent a dirty or unidentified source copy as a verified candidate.
+
+## Regression Command
+
+From the Git source checkout:
+
+```powershell
+npm.cmd run package:local-trial
+```
+
+The default ignored output is:
+
+```text
+dist/CodeClaw-local-trial-YYYYMMDD
+```
+
+To replace that ignored output intentionally:
+
+```powershell
+npm.cmd run package:local-trial -- --force
+```
+
+This command is useful only when maintaining historical trial automation or checking that local/private files stay out of the copied regression tree.
+
+Do not run `stage4b:machine` from the generated legacy folder. The package excludes `.git/`, so it cannot prove a clean source commit.
+
+## Historical Readiness Command
+
+```powershell
+npm.cmd run trial:ready
+```
+
+This workflow historically:
+
+1. runs source health, check, and tests.
+2. creates the legacy package.
+3. checks its required and excluded paths.
+4. runs check, health, and tests inside that package.
+5. writes an ignored readiness report.
+
+Its result means only that the historical source/package regression completed. Any old report wording such as “share,” “ready to send,” or “start with START_GUIDE” is superseded by this document while real-person testing is paused.
+
+`trial:ready` does not verify:
+
+- the Stage 4B Authority.
+- a clean 40-hex source commit for the package.
+- candidate identity.
+- candidate-aware port routing.
+- authenticated start/status/stop.
+- old-browser-tab protection.
+- the external runtime Demo boundary.
+- a clean Windows machine.
+
+Use `stage4b:machine` for those machine-candidate checks.
+
+## Historical Include Boundary
+
+The regression packager copies selected project source such as:
 
 ```text
 apps/
@@ -29,57 +116,11 @@ tests/
 .gitignore
 package.json
 README.md
-run-nightly-trial.cmd
-start-codeclaw.cmd
-start-codeclaw.ps1
 ```
 
-Recommended docs to point testers to:
+Some historical support wrappers may also be copied. No copied filename grants candidate authority.
 
-```text
-docs/START_GUIDE.md
-docs/FIRST_TRIAL_RUNBOOK.md
-docs/HANDOFF_RESTART.md
-docs/HUMAN_TRIAL_OBSERVATION.md
-docs/PERSONA_TRIAL_REVIEW.md
-docs/REAL_REPO_TRIAL.md
-docs/TRIAL_HOST_BRIEF.md
-docs/TRIAL_GO_NO_GO.md
-docs/TRIAL_5_MIN_PRECHECK.md
-docs/TRIAL_FEEDBACK_TEMPLATE.md
-docs/TRIAL_FEEDBACK_INGEST.md
-docs/TRIAL_FIX_BACKLOG.md
-docs/TRIAL_SESSION_PACK.md
-docs/TRIAL_HOST_READY.md
-docs/TRIAL_HOST_RUN.md
-docs/TRIAL_SESSION_COMPLETION.md
-docs/TRIAL_SESSION_REVIEW.md
-docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md
-docs/TRIAL_PRE_LIVE.md
-docs/TRIAL_LIVE_CAPTURE.md
-docs/TRIAL_AFTER_LIVE.md
-docs/TRIAL_NEXT_LIVE.md
-docs/TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md
-docs/TRIAL_RECORD_DRAFT.md
-docs/TRIAL_POST_CALL_REHEARSAL.md
-docs/TRIAL_POST_SESSION.md
-docs/TRIAL_PRIVACY_CHECK.md
-docs/TRIAL_COHORT_SUMMARY.md
-docs/TRIAL_COHORT_HANDOFF.md
-docs/TRIAL_ARCHIVE_SESSION.md
-docs/TRIAL_STATUS.md
-docs/TRIAL_TESTER_INTAKE.md
-docs/TRIAL_INTAKE_SESSION.md
-docs/TRIAL_TESTER_LAUNCH_PLAN.md
-docs/TRIAL_FIRST_LIVE_STANDBY.md
-docs/TRIAL_RESULT_RECORD.md
-docs/TRIAL_INVITE_MESSAGE.md
-docs/RELEASE_STRATEGY.md
-```
-
-## Exclude
-
-Do not include:
+The package excludes local and generated state such as:
 
 ```text
 .git/
@@ -88,432 +129,78 @@ node_modules/
 coverage/
 dist/
 build/
-docs/trial-feedback/
+trial-feedback/
 trial-session-packs/
 examples/trial-privacy-risk/
-server-bg.log
-*.local
-*.env
+environment files
+local override files
+logs
 ```
 
-Also do not include:
+The package must also exclude:
 
-- User API keys.
-- Real project source code.
-- Personal audit logs.
-- Personal memory files.
-- Temporary output from smoke or pilot runs.
+- API keys and secret tokens.
+- real project source, names, and paths.
+- tester rosters and raw records.
+- screenshots, recordings, and terminal logs.
+- personal audit and memory state.
+- after-live evidence packets.
+- temporary projects and one-use debug code.
 
-## Pre-share Validation
+This exclusion list reduces accidental copying. It is not the complete cryptographic inventory provided by the Stage 4B Authority.
 
-Run these commands before preparing a package:
+## Do Not Use It For A Live Session
 
-```bash
-npm.cmd run health
-npm.cmd run check
-npm.cmd test
+Do not:
+
+- zip or send the legacy output to a tester.
+- ask someone to double-click a copied launcher wrapper.
+- fill tester records inside the package.
+- run intake, pre-live, live-capture, after-live, next-live, freeze, or dispatch to manufacture authorization.
+- interpret a historical `GO_HOSTED_TRIAL` or `READY_TO_SEND` artifact as current permission.
+- modify original projects through a legacy package.
+
+Human-trial documents remain historical inputs for a later host-controlled decision. They are not current commands to execute.
+
+## Runnable Candidate Path
+
+From a clean, committed Git source checkout:
+
+```powershell
+npm.cmd run stage4b:machine
 ```
 
-Optional deeper validation:
+The machine gate creates a separate ignored folder whose manifest explicitly identifies it as a Stage 4B machine candidate. That folder contains the Authority pair and candidate-aware wrappers.
 
-```bash
-npm.cmd run smoke
-npm.cmd run pilot:self
-npm.cmd run pilot:fixture
-npm.cmd run pilot:inbox
-npm.cmd run pilot:model
-npm.cmd run pilot:real:preflight -- "examples\support-inbox-js" "add channel filtering to the support inbox API and view state"
+Inside that candidate:
+
+- keep the payload immutable.
+- use `start-codeclaw.cmd`, launcher `status`, and `stop-codeclaw.cmd`.
+- let the launcher store state and the writable Demo under `%LOCALAPPDATA%`.
+- do not run legacy package or trial-artifact commands.
+
+## Cleanup And Git Boundary
+
+Both legacy regression output and machine candidates remain below ignored `dist/`. Neither belongs in Git.
+
+After a legacy regression:
+
+- remove no-longer-needed output folders.
+- confirm temporary listeners and processes are stopped.
+- confirm fixture files are restored.
+- remove one-use test switches and temporary code.
+- do not retain commented-out implementations or tombstone branches.
+
+Before any commit, inspect:
+
+```powershell
+git diff --check
+git status --short
+git diff --cached --name-only
 ```
 
-Expected minimum:
+Never stage `dist/`, `.codeclaw/`, logs, screenshots, real-person records, private project data, runtime control records, or evidence packets.
 
-- `health` returns `"ok": true`.
-- `check` exits with code `0`.
-- `test` passes all tests.
-- `health.preflight.writeAttempted` is `false`.
-- `health.preflight.tools` contains only read/search tools.
+## Future Human Distribution
 
-## Prepare The Folder
-
-After validation passes, create the local trial folder:
-
-```bash
-npm.cmd run package:local-trial
-```
-
-By default this writes:
-
-```text
-dist/CodeClaw-local-trial-YYYYMMDD
-```
-
-If the folder already exists and you intentionally want to replace it:
-
-```bash
-npm.cmd run package:local-trial -- --force
-```
-
-The package script copies only the include list above and skips local state, logs, env files, `node_modules`, build output, and git metadata. It also writes `PACKAGE_MANIFEST.md` into the package folder so the shared copy can be checked before zipping.
-
-## One-command Readiness
-
-For the safest pre-share path, run the full readiness command:
-
-```bash
-npm.cmd run trial:ready
-```
-
-This command:
-
-1. Runs `health`, `check`, and `test` in the source project.
-2. Creates a fresh local trial package.
-3. Checks that required package files exist.
-4. Checks that excluded state, env, log, dependency, build, and git paths are absent.
-5. Runs `check`, `health`, and `test` again inside the generated package.
-6. Writes `dist/TRIAL_READINESS_REPORT.json`.
-
-Treat a package as shareable only when this command exits successfully.
-
-## Pre-Human-Tester Operator Flow
-
-The in-app `Trial host checklist` is the compact operator view for tester-2. It separates waiting, before-call, during-call, and immediately-after-call work and includes copyable commands.
-
-While waiting for a real person, keep tester-2 paused and use only:
-
-```bash
-npm.cmd run trial:first-live-standby -- --tester tester-2
-npm.cmd run trial:post-call-rehearsal -- --force
-```
-
-The rehearsal is synthetic-only and must never be counted as real feedback.
-
-When a real tester is scheduled, rerun standby. Host only on `FIRST_LIVE_STANDBY_READY` or `FIRST_LIVE_STANDBY_READY_WITH_REVIEW`, after reading every warning. Keep `HOST_RUNBOOK.md`, `LIVE_SESSION_CAPTURE.md`, and the three final record templates open. Stay within Demo plus real-project read-only preflight, and stop before Apply on every real project.
-
-Immediately after the real call, keep raw notes local and run in this order:
-
-```bash
-npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2
-npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force
-```
-
-Copy only confirmed draft values into the final records. Leave unanswered fields for human follow-up, then run `trial:after-live` only after those records are complete.
-
-## Freeze Candidate
-
-After `trial:simulate` and `trial:ready` pass, freeze the candidate:
-
-```bash
-npm.cmd run trial:freeze
-```
-
-This reads:
-
-```text
-dist/SIMULATED_FIRST_TRIAL_REPORT.json
-dist/TRIAL_READINESS_REPORT.json
-```
-
-It writes:
-
-```text
-dist/TRIAL_FREEZE_REPORT.md
-dist/TRIAL_FREEZE_REPORT.json
-```
-
-Treat the package as ready for one hosted tester only when the freeze report says:
-
-```text
-Decision: GO_HOSTED_TRIAL
-```
-
-Then generate the final dispatch note:
-
-```bash
-npm.cmd run trial:dispatch
-```
-
-This writes:
-
-```text
-dist/TRIAL_DISPATCH_NOTE.md
-dist/TRIAL_DISPATCH_NOTE.json
-```
-
-Send the package only when the dispatch note says:
-
-```text
-Decision: READY_TO_SEND
-```
-
-## Feedback Ingest
-
-After tester 1 completes the hosted trial, place completed Markdown records in a folder such as:
-
-```text
-docs/trial-feedback/tester-1/
-```
-
-Then run:
-
-```bash
-npm.cmd run trial:ingest-feedback -- docs/trial-feedback/tester-1
-npm.cmd run trial:fix-backlog
-npm.cmd run trial:session-pack
-npm.cmd run trial:host-ready
-npm.cmd run trial:host-run
-npm.cmd run trial:privacy-check
-npm.cmd run trial:complete-session
-npm.cmd run trial:post-session
-npm.cmd run trial:review-session
-npm.cmd run trial:intake-review-dry-run -- --force
-npm.cmd run trial:pre-live
-npm.cmd run trial:live-capture
-npm.cmd run trial:record-draft -- --session <session-folder>
-npm.cmd run trial:after-live -- --session <session-folder> --tester <tester-id>
-npm.cmd run trial:remediation -- --tester <previous-tester-id>
-npm.cmd run trial:next-live -- --tester <tester-id> --accept-review --accepted-by <host-id>
-npm.cmd run trial:cohort-summary -- <completed-trials-folder>
-npm.cmd run trial:cohort-handoff -- --accept-review --accept-privacy --accepted-by <host-id>
-npm.cmd run trial:archive-session -- --session <session-folder> --tester <tester-id>
-npm.cmd run trial:status
-npm.cmd run trial:intake
-npm.cmd run trial:intake-session -- --force
-npm.cmd run trial:tester-launch-plan -- --tester <tester-id>
-npm.cmd run trial:first-live-standby -- --tester <tester-id>
-npm.cmd run trial:post-call-rehearsal -- --force
-```
-
-This writes:
-
-```text
-dist/TRIAL_FEEDBACK_SUMMARY.md
-dist/TRIAL_FEEDBACK_SUMMARY.json
-dist/TRIAL_FIX_BACKLOG.md
-dist/TRIAL_FIX_BACKLOG.json
-dist/trial-session-packs/tester-1/
-dist/TRIAL_HOST_READY_REPORT.md
-dist/TRIAL_HOST_READY_REPORT.json
-dist/TRIAL_HOST_RUN_REPORT.md
-dist/TRIAL_HOST_RUN_REPORT.json
-dist/TRIAL_POST_SESSION_REPORT.md
-dist/TRIAL_POST_SESSION_REPORT.json
-dist/TRIAL_REVIEW_REPORT.md
-dist/TRIAL_REVIEW_REPORT.json
-dist/TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.md
-dist/TRIAL_INTAKE_REVIEW_DRY_RUN_REPORT.json
-dist/TRIAL_PRE_LIVE_REPORT.md
-dist/TRIAL_PRE_LIVE_REPORT.json
-dist/TRIAL_LIVE_CAPTURE_REPORT.md
-dist/TRIAL_LIVE_CAPTURE_REPORT.json
-dist/TRIAL_RECORD_DRAFT.md
-dist/TRIAL_RECORD_DRAFT.json
-dist/TRIAL_AFTER_LIVE_REPORT.md
-dist/TRIAL_AFTER_LIVE_REPORT.json
-dist/trial-after-live/<tester-id>-<timestamp>/
-dist/TRIAL_NEXT_LIVE_REPORT.md
-dist/TRIAL_NEXT_LIVE_REPORT.json
-dist/trial-session-packs/<tester-id>/NEXT_LIVE_HOST_HANDOFF.md
-dist/TRIAL_PRIVACY_REPORT.md
-dist/TRIAL_PRIVACY_REPORT.json
-dist/TRIAL_COHORT_SUMMARY.md
-dist/TRIAL_COHORT_SUMMARY.json
-dist/TRIAL_COHORT_HANDOFF.md
-dist/TRIAL_COHORT_HANDOFF.json
-dist/COHORT_EXPANSION_HANDOFF.md
-dist/TRIAL_ARCHIVE_REPORT.md
-dist/TRIAL_ARCHIVE_REPORT.json
-dist/TRIAL_STATUS_REPORT.md
-dist/TRIAL_STATUS_REPORT.json
-dist/TRIAL_TESTER_INTAKE_REPORT.md
-dist/TRIAL_TESTER_INTAKE_REPORT.json
-dist/TRIAL_INTAKE_SESSION_REPORT.md
-dist/TRIAL_INTAKE_SESSION_REPORT.json
-dist/TRIAL_TESTER_LAUNCH_PLAN.md
-dist/TRIAL_TESTER_LAUNCH_PLAN.json
-dist/TRIAL_FIRST_LIVE_STANDBY.md
-dist/TRIAL_FIRST_LIVE_STANDBY.json
-dist/TRIAL_POST_CALL_REHEARSAL_REPORT.md
-dist/TRIAL_POST_CALL_REHEARSAL_REPORT.json
-dist/trial-post-call-rehearsals/<run-id>/
-```
-
-Proceed to the next tester only when completion and privacy pass and either after-live is ready, or a preserved Fix-first `AFTER_LIVE_BLOCKED` has a current independent remediation ready result. Remediation must not rewrite the original report. `trial:next-live` must say `NEXT_LIVE_READY` or accepted `NEXT_LIVE_READY_WITH_REVIEW`. Expand to 3-5 testers only after two clean post-fix after-live results and when cohort summary/handoff allow expansion. Generate a fresh `trial:session-pack` for every hosted tester.
-
-Use `trial:first-live-standby` while waiting for the first real human tester. It checks that tester-2 intake, host gates, live capture, launch plan, and session files are still aligned. Use `trial:post-call-rehearsal` to rehearse the post-call pipeline with clearly synthetic anonymous data; never count rehearsal output as real tester feedback. Use `trial:record-draft` after the real call if the host has local notes and wants help mapping explicit notes into the three final record files. It never invents missing feedback. Use `trial:after-live` once after the call when the session records are filled. It runs completion, privacy, post-session, review, archive, and status in order; a ready run creates a local-only evidence packet, while a blocked run preserves its report without a packet. Use `trial:archive-session` separately only when you need to repair or recreate an eligible archive. Archives and after-live packets are local-only by default and do not copy raw tester records.
-
-## Simulated First Trial
-
-If you do not have a human tester yet, run:
-
-```bash
-npm.cmd run trial:simulate
-```
-
-This simulates the first safe trial path:
-
-1. Checks first-run UI markers.
-2. Runs Demo read-only preflight.
-3. Generates a Demo patch proposal without applying it.
-4. Runs one real-project read-only preflight.
-5. Confirms no write or command tool was used in read-only paths.
-6. Writes `dist/SIMULATED_FIRST_TRIAL_REPORT.md` and `.json`.
-
-Read the persona review when deciding what to fix before a broader trial:
-
-```text
-docs/PERSONA_TRIAL_REVIEW.md
-```
-
-## Tester Setup Instructions
-
-Send testers this short flow:
-
-1. Install Node.js 20 or later from <https://nodejs.org/>.
-2. Unzip the CodeClaw trial folder.
-3. Double-click `start-codeclaw.cmd`.
-4. Keep the launcher window open.
-5. In the browser, click `Demo`.
-6. Follow `快速开始` in the UI.
-7. Before using a real project, run read-only preflight first.
-
-## Suggested Trial Tasks
-
-Use these in order:
-
-### Trial 1 - Demo Only
-
-Purpose: Check whether the tester can launch and understand the workflow.
-
-Expected:
-
-- Demo runs read-only preflight.
-- Quick Start shows a clear next action.
-- Patch gate is understandable.
-
-### Trial 2 - Real Project Read-only Preflight
-
-Purpose: Check whether CodeClaw understands a real local project without writes.
-
-Suggested goal:
-
-```text
-understand this project and identify safe first context files
-```
-
-Expected:
-
-- No writes.
-- Source/test context is selected.
-- Warnings are understandable.
-
-### Trial 3 - Disposable Patch
-
-Purpose: Check a narrow real workflow on a disposable branch or copied repo.
-
-Rules:
-
-- Use DeepSeek V4 Flash first.
-- Use Pro only for review or ambiguous tasks.
-- Apply only one small patch.
-- Run verification.
-- Revert unless the user explicitly wants to keep the change.
-
-## Feedback Collection
-
-Ask testers to fill:
-
-```text
-docs/TRIAL_FEEDBACK_TEMPLATE.md
-```
-
-Use this host runbook for the first external trial:
-
-```text
-docs/FIRST_TRIAL_RUNBOOK.md
-```
-
-Use these host-facing checklists while freezing and observing the package:
-
-```text
-docs/TRIAL_HOST_BRIEF.md
-docs/TRIAL_GO_NO_GO.md
-docs/TRIAL_5_MIN_PRECHECK.md
-docs/HUMAN_TRIAL_OBSERVATION.md
-docs/TRIAL_RESULT_RECORD.md
-docs/TRIAL_FEEDBACK_INGEST.md
-docs/TRIAL_FIX_BACKLOG.md
-docs/TRIAL_SESSION_PACK.md
-docs/TRIAL_HOST_READY.md
-docs/TRIAL_HOST_RUN.md
-docs/TRIAL_SESSION_COMPLETION.md
-docs/TRIAL_SESSION_REVIEW.md
-docs/TRIAL_INTAKE_REVIEW_DRY_RUN.md
-docs/TRIAL_PRE_LIVE.md
-docs/TRIAL_LIVE_CAPTURE.md
-docs/TRIAL_AFTER_LIVE.md
-docs/TRIAL_NEXT_LIVE.md
-docs/TRIAL_RECORD_DRAFT.md
-docs/TRIAL_POST_CALL_REHEARSAL.md
-docs/TRIAL_POST_SESSION.md
-docs/TRIAL_PRIVACY_CHECK.md
-docs/TRIAL_COHORT_SUMMARY.md
-docs/TRIAL_COHORT_HANDOFF.md
-docs/TRIAL_ARCHIVE_SESSION.md
-docs/TRIAL_STATUS.md
-docs/TRIAL_TESTER_INTAKE.md
-docs/TRIAL_INTAKE_SESSION.md
-docs/TRIAL_TESTER_LAUNCH_PLAN.md
-docs/TRIAL_FIRST_LIVE_STANDBY.md
-```
-
-Use this ready-to-send invite if helpful:
-
-```text
-docs/TRIAL_INVITE_MESSAGE.md
-```
-
-Collect feedback on:
-
-- Startup.
-- First-run clarity.
-- Preflight trust.
-- Model configuration.
-- Patch confidence.
-- Verification.
-- Errors or confusing copy.
-- Whether they would use it again on a real project.
-
-## Trial Stop Conditions
-
-Stop the trial before writes if:
-
-- Preflight has blockers.
-- Context misses obvious source or test files.
-- No verification command is available for a project that should have tests.
-- The goal is broad or risky.
-- The tester is unsure what a button will do.
-- A real API key or cost risk is unclear.
-
-## Package Naming
-
-Use a simple folder name:
-
-```text
-CodeClaw-local-trial-YYYYMMDD
-```
-
-Example:
-
-```text
-CodeClaw-local-trial-20260707
-```
-
-## Current Recommendation
-
-Share this package with 3-5 technically comfortable testers before building an installer or desktop shell.
-
-Only consider Electron/Tauri packaging after testers confirm that:
-
-- The local workflow is useful.
-- The safety gates feel trustworthy.
-- Setup friction is the main blocker.
+A future host-controlled Windows trial requires a fresh Stage 4B machine candidate plus the still-pending manual Windows, accessibility, remediation, privacy, and live-session decisions. Machine-candidate readiness alone is not permission to resume testing.

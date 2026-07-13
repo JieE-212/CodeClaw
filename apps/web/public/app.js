@@ -1,6 +1,8 @@
 import { initI18n, t } from "./i18n.js";
 import { visualizeModelReviewBody } from "./model-review-text.js";
 
+const launcherPageIdentity = readLauncherPageIdentity();
+
 const healthStatus = document.querySelector("#healthStatus");
 const navItems = [...document.querySelectorAll("[data-nav-view]")];
 const viewPanels = [...document.querySelectorAll("[data-view]")];
@@ -266,6 +268,7 @@ const MODEL_COST_PROFILES = {
   }
 };
 let recentRepoItems = loadRecentRepos();
+let launcherPageLocked = false;
 
 initI18n({ select: languageSelect });
 boot();
@@ -288,6 +291,7 @@ updateControls();
 async function boot() {
   try {
     const health = await request("/api/health");
+    assertLauncherPageIdentity(health);
     healthStatus.textContent = health.ok ? t("health.online") : t("health.error");
     healthStatus.classList.toggle("ok", Boolean(health.ok));
     systemInfo = await request("/api/system/check");
@@ -297,10 +301,53 @@ async function boot() {
     await refreshModelStatus();
     await restoreLastSession();
     await refreshAudit();
-  } catch {
+  } catch (error) {
+    if (error?.code === "LAUNCHER_PAGE_IDENTITY_MISMATCH") {
+      lockInterfaceForLauncherMismatch();
+      return;
+    }
     healthStatus.textContent = t("health.offline");
     renderSystemCheck(null, t("system.offline.detail"));
   }
+}
+
+function assertLauncherPageIdentity(health) {
+  if (!launcherPageIdentity.supplied && health?.launcherProtocol !== 1) return;
+  if (!launcherPageIdentity.candidateId || !launcherPageIdentity.instanceId
+    || health?.launcherProtocol !== 1
+    || health?.candidateId !== launcherPageIdentity.candidateId
+    || health?.instanceId !== launcherPageIdentity.instanceId) {
+    const error = new Error("The browser URL does not match the running CodeClaw candidate.");
+    error.code = "LAUNCHER_PAGE_IDENTITY_MISMATCH";
+    throw error;
+  }
+  document.body.dataset.launchIdentity = "verified";
+}
+
+function readLauncherPageIdentity() {
+  const parameters = new URLSearchParams(window.location.search);
+  const candidateId = parameters.get("candidate");
+  const instanceId = parameters.get("instance");
+  return Object.freeze({
+    supplied: candidateId !== null || instanceId !== null,
+    candidateId: candidateId || "",
+    instanceId: instanceId || ""
+  });
+}
+
+function lockInterfaceForLauncherMismatch() {
+  launcherPageLocked = true;
+  document.body.dataset.launchIdentity = "mismatch";
+  enforceLauncherPageLock();
+  healthStatus.textContent = t("health.launchIdentityMismatch");
+  healthStatus.classList.remove("ok");
+  renderSystemCheck(null, t("health.launchIdentityMismatch"));
+  if (workflowStatus) workflowStatus.textContent = t("health.launchIdentityMismatch");
+}
+
+function enforceLauncherPageLock() {
+  if (!launcherPageLocked) return;
+  for (const control of document.querySelectorAll("button, input, select, textarea")) control.disabled = true;
 }
 
 function renderSystemCheck(info, error = "") {
@@ -318,8 +365,11 @@ function renderSystemCheck(info, error = "") {
   const demoState = info.demoExists ? t("system.demo.available") : t("system.demo.missing");
   const model = info.model?.configured ? `${info.model.type}:${info.model.model}` : t("system.model.unconfigured");
   const recovery = info.recovery?.ok === false ? t("system.recovery.blocked") : t("system.recovery.ready");
+  const candidate = info.launcher
+    ? `CodeClaw ${info.launcher.packageVersion} / ${String(info.launcher.sourceCommit || "").slice(0, 12)} / ${info.launcher.candidateId}`
+    : "";
   systemCheck.className = `system-check ${info.demoExists && info.recovery?.ok !== false ? "ok" : "warn"}`;
-  systemCheck.textContent = `${info.node} / ${demoState} / ${model} / ${recovery}`;
+  systemCheck.textContent = [candidate, info.node, demoState, model, recovery].filter(Boolean).join(" / ");
 }
 
 function bindNavigation() {
@@ -1866,6 +1916,10 @@ function taskHasCurrentSuccessfulVerification(task) {
 }
 
 function updateControls() {
+  if (launcherPageLocked) {
+    enforceLauncherPageLock();
+    return;
+  }
   const hasRepoPath = Boolean(repoPath.value.trim());
   const hasRepo = Boolean(repoProfile?.rootPath);
   const hasGoal = Boolean(goalInput.value.trim() || currentTask?.goal);
@@ -2983,9 +3037,14 @@ function operationWasCancelled(error) {
 }
 
 async function request(url, body) {
+  const headers = body ? { "content-type": "application/json" } : {};
+  if (launcherPageIdentity.candidateId && launcherPageIdentity.instanceId) {
+    headers["x-codeclaw-candidate-id"] = launcherPageIdentity.candidateId;
+    headers["x-codeclaw-instance-id"] = launcherPageIdentity.instanceId;
+  }
   const response = await fetch(url, {
     method: body ? "POST" : "GET",
-    headers: body ? { "content-type": "application/json" } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined
   });
   const payload = await response.json();
@@ -2993,6 +3052,7 @@ async function request(url, body) {
     const error = new Error(payload.error || payload.message || "Request failed");
     error.code = payload.code;
     error.status = response.status;
+    if (error.code === "LAUNCHER_PAGE_IDENTITY_MISMATCH") lockInterfaceForLauncherMismatch();
     throw error;
   }
   return payload;

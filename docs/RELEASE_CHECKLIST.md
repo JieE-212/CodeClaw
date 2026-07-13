@@ -2,7 +2,7 @@
 
 Use this checklist before sharing the MVP with another tester.
 
-Current status: real-person testing is paused. This checklist does not authorize a new live session, rerunning tester-2 after-live, or creating tester-3. Tester-2 remains `AFTER_LIVE_BLOCKED` and remediation remains `REMEDIATION_HOLD`.
+Current status: Stage 4B is machine verified and committed, but its artifact is only a machine candidate. Real-person testing is paused. This checklist does not authorize a new live session, rerunning tester-2 after-live, creating tester-3, or claiming final Windows release readiness. Tester-2 remains `AFTER_LIVE_BLOCKED` and remediation remains `REMEDIATION_HOLD`.
 
 ## Environment
 
@@ -14,7 +14,7 @@ Current status: real-person testing is paused. This checklist does not authorize
 
 Run these commands sequentially because several pilots temporarily patch and restore fixture files.
 
-`npm.cmd test` is bounded to concurrency 4. The final Stage 3.0.14 bounded full-suite baseline is 398 total, 394 pass, 0 fail, and 4 environment-only skips. The single-concurrency full baseline was 397/393/0/4; its sole subsequently added file-growth budget regression also passed at concurrency 1. i18n has 723 keys per language with 0 warnings/failures.
+`npm.cmd test` is bounded to concurrency 4. The final Stage 4B default-concurrency and single-concurrency full suites both report 476 total, 469 pass, 0 fail, and 7 environment-only skips. The Stage 4B focused gate reports 84/81/0/3. i18n has 724 keys per language with 0 warnings/failures.
 
 Run from `项目工程`:
 
@@ -223,10 +223,33 @@ Expected result:
 - SIGINT/SIGTERM stops new API work and aborts running operations. Running cleanup has a 2.5-second wait; an in-flight commit receives its separate 10-second deadline plus a 750 ms margin, followed by up to 1 second for connection close. The force-exit ceiling is 13.25 seconds.
 - Task, memory, and audit state have file/record/history limits and startup migration. Audit rotation is locked and digest-linked; active patch/recovery evidence is not silently evicted.
 - POSIX process groups receive TERM then KILL. Windows uses a parameterized, deadline-bound `taskkill.exe /PID <pid> /T /F` attempt and fails closed when descendant termination cannot be verified.
-- The final default bounded full suite reports 398 total, 394 pass, 0 fail, and 4 environment-only skips. The single-concurrency full baseline reports 397/393/0/4, and the sole subsequently added file-growth budget regression passes separately at concurrency 1. `check` passes; i18n reports 723 keys per language, 0 warnings, and 0 failures.
+- The final Stage 4B default bounded and single-concurrency full suites both report 476 total, 469 pass, 0 fail, and 7 environment-only skips. The focused Stage 4B gate reports 84/81/0/3. `check` passes; i18n reports 724 keys per language, 0 warnings, and 0 failures.
 - Explicit in-flight model cancellation and bounded SIGTERM integration tests release operation capacity and do not persist a successful model result.
 
 Manual/unverified boundary: the current sandbox cannot execute the real Windows `taskkill /T` descendant-tree case. A wrapper that already exited may require Job Object ownership for reliable child cleanup. Node has no `openat`-style directory-handle-relative traversal, so path-identity revalidation does not eliminate every external replacement race. Do not infer real power-loss, large-project subjective performance, pixel, complete keyboard, NVDA, high-contrast, clean Windows 10/11, non-admin, Defender/SmartScreen, default-browser, or real double-click acceptance from this gate.
+
+## Stage 4B Machine Candidate Gate
+
+- Run only from a clean, committed 40-hex Git HEAD: `npm.cmd run stage4b:machine`.
+- Treat `stage4b:machine` as the single ready gate. `package:machine-candidate` produces only an integrity-packaged snapshot; `package:local-trial` and `trial:ready` are non-runnable historical regression flows.
+- Confirm packaging reads exact tracked Git blobs rather than the mutable worktree; ignored and untracked files must be absent.
+- Confirm Authority JSON and its SHA-256 sidecar bind package version, clean source commit, candidate ID, exact file/empty-directory inventory, byte counts, and hashes.
+- Reject changed, missing, extra, truncated, linked, hard-linked, special, over-budget, Windows-unsafe, case-colliding, or NFC-colliding candidate content.
+- Verify Node 20+ before runtime writes; spawn only after candidate verification; listen only on `127.0.0.1`.
+- Pre-scan 4173–4199 for an unverified same-candidate claim. Route around unrelated default-port occupants; fail closed when an explicit port is occupied.
+- Materialize the writable Demo and all state under candidate-specific LocalAppData. Applying to Demo must not change candidate integrity. Direct server startup inside a candidate must be refused.
+- Bind health proof to candidate, instance, nonce, server PID, port, and random challenge. Require the same proof for reuse/status/stop; require verified tree termination for force cleanup.
+- Publish a durable reserved record before spawn, publish the child PID before releasing the bounded stdin nonce gate, and prove dead/rebooted reservation recovery without permitting a delayed second listener.
+- Disable launcher HTTP redirects and reject unexpected response URLs, wrong content types, oversized bodies, and deadlines before trusting health or sending shutdown authority.
+- Bind every browser API request to candidate and instance. A stale or parameterless tab must remain locked after port reuse, even after later UI renders.
+- Strip launcher bearer capabilities and private runtime variables from project and Git child commands.
+- Run real packaged launcher start, independent status, independent stop, restart, final stop, port release, control cleanup, and post-run candidate-integrity verification.
+- Keep candidate construction in a pending directory until all candidate checks pass. On failure, remove owned pending/final output or surface a cleanup blocker; never leave a false-ready final candidate.
+- Syntax-check `start-codeclaw.ps1` and `stop-codeclaw.ps1`; verify CMD wrappers preserve the PowerShell exit code.
+- Before commit, run focused tests, default and single-concurrency full suites, `check`, source health/smoke/pilots, `git diff --check`, temp/port/process scans, and an explicit staged-file audit.
+- Never commit `dist/`, `.codeclaw/`, logs, screenshots, real-person records, evidence packets, runtime state, or generated Authority files.
+
+Still manual: clean Windows 10/11, non-admin account, Defender/SmartScreen, default-browser behavior, real double-click and console-close behavior, real `taskkill /T`, signing/installer UX, pixel layout, complete keyboard operation, NVDA, and high contrast. Passing Stage 4B does not start Stage 4C or authorize a human test.
 
 ## Safety Review
 

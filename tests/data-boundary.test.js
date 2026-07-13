@@ -245,7 +245,7 @@ test("manifest file reads detect mutation after the stable handle starts reading
         const result = await handle.read(...readArgs);
         if (!injected) {
           injected = true;
-          await fs.writeFile(target, "mutated bytes!\n", "utf8");
+          await fs.writeFile(target, "mutated bytes with a different length\n", "utf8");
         }
         return result;
       }

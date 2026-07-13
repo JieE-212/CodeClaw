@@ -1,14 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  hermeticGitArguments,
+  hermeticGitEnvironment,
   inspectSourceVersion,
   sourceVersionBindingIssues,
   sourceVersionIssueMessage
 } from "../scripts/source-version.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("source-version Git subprocess inputs discard ambient Git authority", () => {
+  const environment = hermeticGitEnvironment({
+    Path: "fixture-path",
+    HOME: "fixture-home",
+    GIT_DIR: "redirected",
+    git_work_tree: "redirected-worktree",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: "hostile-hook"
+  });
+
+  assert.equal(environment.Path, "fixture-path");
+  assert.equal(environment.HOME, "fixture-home");
+  assert.equal(environment.GIT_DIR, undefined);
+  assert.equal(environment.git_work_tree, undefined);
+  assert.equal(environment.GIT_CONFIG_COUNT, undefined);
+  assert.deepEqual(hermeticGitArguments(rootPath, ["status", "--porcelain"]), [
+    "-c", "core.fsmonitor=false", "-c", `safe.directory=${rootPath}`, "status", "--porcelain"
+  ]);
+  assert.deepEqual(Object.fromEntries(Object.entries(environment).filter(([name]) => name.startsWith("GIT_"))), {
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : os.devNull,
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_LAZY_FETCH: "1"
+  });
+});
 
 test("inspectSourceVersion identifies the current Git worktree without exposing file names", async () => {
   const version = await inspectSourceVersion(rootPath);

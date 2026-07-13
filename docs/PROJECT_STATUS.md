@@ -2,6 +2,12 @@
 
 Updated: 2026-07-13
 
+## Current Status
+
+Stage 4B is machine verified and committed. The generated artifact is a machine candidate, not a signed installer or final Windows release. Real-person testing remains paused; tester-2 stays `AFTER_LIVE_BLOCKED`, remediation stays `REMEDIATION_HOLD`, and tester-3 is not scheduled. Original projects remain read-only.
+
+The only runnable packaged path is `npm.cmd run stage4b:machine` from a clean Git commit. `package:local-trial` and `trial:ready` now serve only historical workflow regression and must not be launched, shared, or treated as release evidence. Stage 4C is deferred and has not started.
+
 ## Completed Phase
 
 Stage 1.3 is complete: hosted trial privacy protection and redaction checks.
@@ -639,12 +645,12 @@ The remediation mapping, candidate-binding checks, and engineering safeguards ar
 
 ## Next Planned Phase
 
-Stage 3.0.14 is machine verified and independently committed. Real-person testing remains intentionally postponed.
+Stage 4B is the stopping point of the currently authorized automatic engineering loop. Real-person testing remains intentionally postponed.
 
-The engineering order is:
+The next possible phase is Stage 4C, but it is deferred rather than automatically started. Before any later desktop-shell decision or new human session:
 
-1. Implement the Stage 4B candidate-aware Windows launcher and hashed candidate package.
-2. Run the Stage 4B machine-only integrity, startup, stop, port-routing, and orphan-process gates.
+1. Complete the explicitly manual clean-Windows, non-admin, Defender/SmartScreen, default-browser, double-click, accessibility, and real `taskkill /T` acceptance items.
+2. Preserve tester-2 and remediation history unchanged and obtain a separate user decision before scheduling any new live test.
 
 Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code and fixture copies must be deleted after verification; do not retain tombstone code.
 
@@ -725,11 +731,6 @@ Machine evidence:
 - Default local state was migrated to 26 tasks and 59 context records with zero persisted bodies, all 59 sources equal to the allowed `read_file` value, zero legacy suggestion entries, no credential field in `model.json`, and blank detail in all model/server-error audit entries.
 - All 14 automation `%TEMP%` prefixes had zero remaining directories; the known historical leftovers and `server-bg.log` were removed, port 4173 had no listener, and the Demo, task-board, and support-inbox examples were unchanged.
 
-Pending before the stage commit:
-
-- Review the complete combined diff, rerun `git diff --check`, and stage only an explicit source/test/document list.
-- Confirm `dist`, `.codeclaw`, logs, screenshots, evidence, and real-person records remain outside the index; then create the independent Stage 3.0.12 commit without pushing.
-
 Honest limits: this stage did not rerun a real managed-cloud provider. An approved online request still leaves the device and provider retention is outside CodeClaw's control; a local provider still receives bytes over loopback HTTP; retained request-buffer overwriting is best effort rather than cryptographic erasure. Manifest revalidation and the later TaskStore rename are not one filesystem-atomic snapshot, so an extreme external edit can leave a stale draft; Apply's baseline-hash check prevents it from overwriting the changed file, but not every external TOCTOU is claimed closed. No real-person, pixel-level, keyboard/NVDA, high-contrast, clean-Windows, real-power-loss, unusual-filesystem, or provider-retention acceptance is claimed. `REMEDIATION_HOLD`, tester-2's `AFTER_LIVE_BLOCKED`, tester-3's `not scheduled` state, and the original-project write prohibition remain unchanged.
 
 ## Stage 3.0.13 - Beginner workflow, accessibility semantics, and ordered task state
@@ -780,3 +781,23 @@ Machine evidence:
 - Focused operation, process cleanup, stable-directory, state-growth, server security/model-outbound, UI/accessibility/workflow, health, and diff checks passed. Explicit in-flight model cancellation and bounded SIGTERM integration checks also passed without saving a successful model result.
 
 Honest limits: the current sandbox could not execute the real Windows `taskkill /T` descendant-tree path, so Windows child-tree termination is an environment skip rather than an acceptance claim. A parent wrapper that has already exited can require Windows Job Object ownership for reliable descendant cleanup. Node does not expose `openat`-style directory-handle-relative traversal, so identity revalidation narrows but cannot erase every external path-replacement interval. Real power loss, large-project subjective latency, pixel-level rendering, complete keyboard use, NVDA, high contrast, clean Windows 10/11, non-administrator launch, Defender/SmartScreen, and real double-click behavior remain unverified. No new human test ran; `REMEDIATION_HOLD`, tester-2's historical `AFTER_LIVE_BLOCKED`, tester-3's `not scheduled` state, and the original-project write prohibition remain unchanged.
+
+## Stage 4B - Candidate-aware Windows launcher and machine candidate
+
+Stage 4B is machine verified and committed. Its generated `dist/` artifact is intentionally ignored and is a machine candidate, not a signed installer or final Windows release.
+
+Implemented:
+
+- The package is constructed only from exact blobs in one clean 40-hex Git commit. Ignored and untracked files are not inputs; Git object hashes, Windows-portable paths, case/NFC collisions, file/entry/depth/byte budgets, links, hard links, empty directories, a canonical Authority JSON, and its SHA-256 sidecar are checked fail closed.
+- `stage4b:machine` is the single complete gate. It uses a pending directory, runs source checks and health, packages the tracked commit, runs candidate checks, starts/statuses/stops/restarts the real packaged launcher, re-verifies integrity, and only then atomically publishes the final candidate name. Failed gates remove owned pending/final output or report cleanup failure.
+- The launcher verifies the candidate before any spawn, browser open, or runtime write; requires Node 20+; binds only `127.0.0.1`; pre-scans 4173-4199 for an unverified same-candidate claim; routes around unrelated services; and fails closed for an occupied explicit port.
+- Runtime state and the writable built-in Demo live under candidate-specific LocalAppData, outside the immutable package. Direct `npm run dev` from a machine candidate is blocked; the candidate must use its launcher. Project and Git commands do not inherit launcher tokens or private runtime variables.
+- Health identity uses a challenge-bound HMAC over candidate, instance, nonce, server PID, port, and challenge. Stop requires the same proof; process-tree force cleanup is accepted only when tree termination is verified. Failed startup retains control authority if cleanup cannot be proved.
+- A durable reserved control record is written before spawn. The real server must receive the exact launch nonce plus EOF over a bounded stdin gate before it initializes state or listens; PID authority is published before that gate is released. A crashed launcher therefore cannot leave a delayed child that later creates a second listening instance, while dead or pre-reboot reservations remain safely recoverable.
+- Browser URLs carry candidate and instance identity. Every non-health browser API request repeats that binding and the server verifies it, so a stale or parameterless tab cannot operate a later instance after port reuse. Mismatch locking remains sticky in the UI.
+- `start`, `status`, and `stop` share candidate control state and bounded locks. Browser opening occurs only after a matching ready proof. All launcher HTTP calls reject redirects, unexpected response URLs, oversized bodies, wrong content types, and deadlines. Public output excludes tokens, private paths, raw child output, and arbitrary server responses.
+- The legacy `package:local-trial`/`trial:ready` path is explicitly non-runnable and non-shareable; it no longer contains production start/stop wrappers. It remains only for historical workflow regression.
+
+Final machine evidence: the Stage 4B focused gate reported 84 total, 81 pass, 0 fail, and 3 environment-only skips. Both the bounded default-concurrency and single-concurrency full suites reported 476 total, 469 pass, 0 fail, and 7 environment-only skips. `npm.cmd run check` passed with 724 keys per language and no i18n warnings/failures. Health, smoke, all four pilots, the explicit real-repository read-only preflight, PowerShell wrapper syntax, temp/port/process cleanup, and `git diff --check` passed. Independent security review found no remaining High or Medium issue.
+
+Honest limits: SHA-256 integrity is not publisher signing, and same-account malicious processes are outside the operating-system sandbox boundary. Real Windows `taskkill /T`, console-close behavior, clean Windows 10/11, non-admin launch, Defender/SmartScreen, default-browser opening, double-click UX, signed distribution, pixel rendering, complete keyboard use, NVDA, and high contrast remain manual. Stage 4C is deferred; no human test was started.

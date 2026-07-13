@@ -191,6 +191,32 @@ test("every workflow module has localized semantics and all data boundaries are 
   assert.deepEqual([...new Set(attributeValues(html, "data-boundary"))].sort(), [...BOUNDARIES].sort());
 });
 
+test("candidate-bound browser tabs fail closed before loading mutable workspace state", () => {
+  const bootBody = functionBody(app, "boot");
+  assert.ok(bootBody.indexOf('request("/api/health")') < bootBody.indexOf('request("/api/system/check")'));
+  assert.match(bootBody, /assertLauncherPageIdentity\(health\)/);
+  const identityBody = functionBody(app, "assertLauncherPageIdentity");
+  assert.match(identityBody, /launcherProtocol !== 1/);
+  assert.match(identityBody, /health\?\.candidateId !== launcherPageIdentity\.candidateId/);
+  assert.match(identityBody, /health\?\.instanceId !== launcherPageIdentity\.instanceId/);
+  assert.doesNotMatch(identityBody, /candidateId === null && instanceId === null\) return/);
+  const requestBody = functionBody(app, "request");
+  assert.match(requestBody, /x-codeclaw-candidate-id/);
+  assert.match(requestBody, /x-codeclaw-instance-id/);
+  assert.match(requestBody, /LAUNCHER_PAGE_IDENTITY_MISMATCH/);
+  const lockBody = functionBody(app, "lockInterfaceForLauncherMismatch");
+  assert.match(lockBody, /launcherPageLocked = true/);
+  assert.match(lockBody, /enforceLauncherPageLock\(\)/);
+  const stickyLockBody = functionBody(app, "enforceLauncherPageLock");
+  assert.match(stickyLockBody, /querySelectorAll\("button, input, select, textarea"\)/);
+  assert.match(stickyLockBody, /control\.disabled = true/);
+  const controlsBody = functionBody(app, "updateControls");
+  assert.match(controlsBody, /if \(launcherPageLocked\)/);
+  for (const language of SUPPORTED_LANGUAGES) {
+    assert.ok(DICTIONARIES[language]["health.launchIdentityMismatch"]);
+  }
+});
+
 test("removed workflow keys are absent from markup, app code, and all dictionaries", () => {
   for (const prefix of REMOVED_UI_PREFIXES) {
     assert.doesNotMatch(`${html}\n${app}`, new RegExp(`["']${escapeRegExp(prefix)}`));

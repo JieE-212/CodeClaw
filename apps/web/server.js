@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -29,15 +29,21 @@ import { OperationManager, throwIfAborted } from "../../packages/shared/src/oper
 import { runManagedOperation } from "../../packages/shared/src/operation-runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const applicationRoot = path.resolve(__dirname, "../..");
 const publicDir = path.join(__dirname, "public");
 const localStateDir = path.resolve(process.env.CODECLAW_STATE_DIR || path.join(process.cwd(), ".codeclaw"));
-const demoPath = path.resolve(__dirname, "../../examples/demo-js");
+const demoPath = path.resolve(process.env.CODECLAW_DEMO_ROOT || path.join(__dirname, "../../examples/demo-js"));
 const disposableCopyRoot = path.resolve(process.env.CODECLAW_DISPOSABLE_ROOT
   || (process.env.CODECLAW_STATE_DIR ? path.join(localStateDir, "disposable-copies") : defaultDisposableCopyRoot(localStateDir)));
+const projectLockDir = path.resolve(process.env.CODECLAW_PROJECT_LOCK_DIR || defaultProjectCoordinationDir());
+const port = DEFAULT_PORT;
+const launcherIdentity = loadLauncherIdentity(process.env);
+await assertCandidateUsesLauncher(applicationRoot, launcherIdentity.enabled);
+await waitForLauncherStartGate(process.stdin, launcherIdentity);
+clearLauncherProcessEnvironment(process.env, launcherIdentity.enabled);
 const auditLog = new AuditLog({ storagePath: path.join(localStateDir, "audit.jsonl") });
 const taskStore = new TaskStore({ storagePath: path.join(localStateDir, "tasks.json") });
 const patchTransactionStore = new PatchTransactionStore({ storagePath: path.join(localStateDir, "patch-transactions") });
-const projectLockDir = path.resolve(process.env.CODECLAW_PROJECT_LOCK_DIR || defaultProjectCoordinationDir());
 const projectWriteLockManager = new CrossProcessLockManager({
   storagePath: projectLockDir,
   namespace: "project-write",
@@ -59,8 +65,13 @@ const modelConfigPath = path.join(localStateDir, "model.json");
 const MODEL_CONTEXT_MAX_FILE_BYTES = 1024 * 1024;
 const MODEL_CONTEXT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 const MODEL_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
-const UNTRUSTED_REQUEST_REJECTION_CODES = new Set(["LOCAL_ORIGIN_REQUIRED", "JSON_CONTENT_TYPE_REQUIRED", "JSON_BODY_INVALID", "JSON_BODY_TOO_LARGE"]);
-const port = DEFAULT_PORT;
+const UNTRUSTED_REQUEST_REJECTION_CODES = new Set([
+  "LAUNCHER_PAGE_IDENTITY_MISMATCH",
+  "LOCAL_ORIGIN_REQUIRED",
+  "JSON_CONTENT_TYPE_REQUIRED",
+  "JSON_BODY_INVALID",
+  "JSON_BODY_TOO_LARGE"
+]);
 const operationManager = new OperationManager({
   maxActive: 6,
   maxPerKind: 2,
@@ -84,6 +95,7 @@ let lastWorkspace = null;
 let lastWorkspaceBinding = null;
 const patchOperationQueues = new Map();
 let shutdownPromise = null;
+let shutdownExitPromise = null;
 
 function defaultProjectCoordinationDir() {
   if (process.platform === "win32") {
@@ -101,12 +113,181 @@ function defaultDisposableCopyRoot(stateDir) {
   return path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "codeclaw", "disposable-workspaces-v1", stateKey);
 }
 
+function loadLauncherIdentity(environment) {
+  const fields = {
+    protocol: String(environment.CODECLAW_LAUNCHER_PROTOCOL || "").trim(),
+    candidateId: String(environment.CODECLAW_CANDIDATE_ID || "").trim(),
+    packageVersion: String(environment.CODECLAW_PACKAGE_VERSION || "").trim(),
+    sourceCommit: String(environment.CODECLAW_SOURCE_COMMIT || "").trim(),
+    instanceId: String(environment.CODECLAW_INSTANCE_ID || "").trim(),
+    launchNonce: String(environment.CODECLAW_LAUNCH_NONCE || "").trim(),
+    shutdownToken: String(environment.CODECLAW_SHUTDOWN_TOKEN || "").trim()
+  };
+  const supplied = Object.values(fields).filter(Boolean).length;
+  if (supplied === 0) return Object.freeze({ enabled: false });
+  if (supplied !== Object.keys(fields).length
+    || fields.protocol !== "1"
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/.test(fields.candidateId)
+    || !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/.test(fields.packageVersion)
+    || !/^[0-9a-f]{40}$/i.test(fields.sourceCommit)
+    || !/^[A-Za-z0-9_-]{16,128}$/.test(fields.instanceId)
+    || !/^[A-Za-z0-9_-]{16,128}$/.test(fields.launchNonce)
+    || !/^[A-Za-z0-9_-]{32,128}$/.test(fields.shutdownToken)) {
+    throw patchOperationError("LAUNCHER_IDENTITY_INVALID", "CodeClaw refused an incomplete or invalid launcher identity.", 500);
+  }
+  return Object.freeze({ enabled: true, ...fields });
+}
+
+async function waitForLauncherStartGate(input, identity) {
+  if (!identity.enabled) return;
+  if (!input || typeof input.on !== "function") {
+    throw patchOperationError("LAUNCHER_START_GATE_UNAVAILABLE", "CodeClaw refused to start without its launcher handoff gate.", 500);
+  }
+  const expected = Buffer.from(`${identity.launchNonce}\n`, "utf8");
+  const maxBytes = 256;
+  await new Promise((resolve, reject) => {
+    const chunks = [];
+    let observed = 0;
+    let settled = false;
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onError);
+      input.off("aborted", onAborted);
+      if (error) reject(error);
+      else resolve();
+    };
+    const invalid = () => patchOperationError(
+      "LAUNCHER_START_GATE_INVALID",
+      "CodeClaw refused an incomplete or invalid launcher handoff gate.",
+      500
+    );
+    const onData = (chunk) => {
+      const buffer = Buffer.from(chunk);
+      observed += buffer.byteLength;
+      if (observed > maxBytes) {
+        finish(invalid());
+        input.destroy();
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => {
+      const received = Buffer.concat(chunks);
+      finish(received.length === expected.length && timingSafeEqual(received, expected) ? null : invalid());
+    };
+    const onError = (error) => finish(patchOperationError(
+      "LAUNCHER_START_GATE_FAILED",
+      "CodeClaw launcher handoff failed before the local service started.",
+      500,
+      error
+    ));
+    const onAborted = () => finish(invalid());
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onError);
+    input.once("aborted", onAborted);
+    const timer = setTimeout(() => {
+      finish(patchOperationError("LAUNCHER_START_GATE_TIMEOUT", "CodeClaw launcher handoff exceeded its bounded deadline.", 500));
+      input.destroy();
+    }, 5_000);
+    input.resume();
+  });
+}
+
+async function assertCandidateUsesLauncher(rootPath, launcherEnabled) {
+  if (launcherEnabled) return;
+  for (const marker of [
+    "CODECLAW_CANDIDATE_AUTHORITY.json",
+    "CODECLAW_CANDIDATE_AUTHORITY.json.sha256",
+    "PACKAGE_MANIFEST.md"
+  ]) {
+    try {
+      const stat = await fs.lstat(path.join(rootPath, marker));
+      if (stat.isFile() && !stat.isSymbolicLink()) {
+        throw patchOperationError(
+          "LAUNCHER_REQUIRED_FOR_CANDIDATE",
+          "A verified machine candidate must be started through start-codeclaw.cmd or the candidate-aware launcher.",
+          409
+        );
+      }
+      throw patchOperationError("LAUNCHER_REQUIRED_FOR_CANDIDATE", "A machine-candidate marker path is unsafe.", 409);
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+  }
+}
+
+function clearLauncherProcessEnvironment(environment, enabled) {
+  if (!enabled) return;
+  for (const name of [
+    "CODECLAW_CANDIDATE_ID",
+    "CODECLAW_DEMO_ROOT",
+    "CODECLAW_DISPOSABLE_ROOT",
+    "CODECLAW_INSTANCE_ID",
+    "CODECLAW_LAUNCHER_PROTOCOL",
+    "CODECLAW_LAUNCH_NONCE",
+    "CODECLAW_PACKAGE_VERSION",
+    "CODECLAW_PORT",
+    "CODECLAW_PROJECT_LOCK_DIR",
+    "CODECLAW_SHUTDOWN_TOKEN",
+    "CODECLAW_SOURCE_COMMIT",
+    "CODECLAW_STATE_DIR"
+  ]) delete environment[name];
+}
+
+function healthPayload(url) {
+  const payload = {
+    ok: true,
+    app: "CodeClaw",
+    accepting: shutdownPromise === null,
+    host: "127.0.0.1",
+    port,
+    time: new Date().toISOString(),
+    launcherProtocol: launcherIdentity.enabled ? 1 : null,
+    candidateId: launcherIdentity.enabled ? launcherIdentity.candidateId : null,
+    packageVersion: launcherIdentity.enabled ? launcherIdentity.packageVersion : null,
+    sourceCommit: launcherIdentity.enabled ? launcherIdentity.sourceCommit : null,
+    instanceId: launcherIdentity.enabled ? launcherIdentity.instanceId : null,
+    launchNonce: launcherIdentity.enabled ? launcherIdentity.launchNonce : null,
+    serverPid: launcherIdentity.enabled ? process.pid : null
+  };
+  const challenge = url.searchParams.get("challenge");
+  if (challenge !== null) {
+    if (!launcherIdentity.enabled || !/^[A-Za-z0-9_-]{16,128}$/.test(challenge)) {
+      throw patchOperationError("HEALTH_CHALLENGE_INVALID", "CodeClaw rejected an invalid launcher health challenge.", 400);
+    }
+    payload.proof = launcherProof(challenge);
+  }
+  return payload;
+}
+
+function launcherProof(challenge) {
+  return createHmac("sha256", launcherIdentity.shutdownToken)
+    .update([
+      "codeclaw-launcher-v1",
+      launcherIdentity.candidateId,
+      launcherIdentity.instanceId,
+      launcherIdentity.launchNonce,
+      String(process.pid),
+      String(port),
+      challenge
+    ].join("\n"), "utf8")
+    .digest("base64url");
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
     assertLocalJsonRequest(request);
-    if (request.method === "GET" && url.pathname === "/api/health") return json(response, { ok: true, app: "CodeClaw", accepting: shutdownPromise === null, time: new Date().toISOString() });
+    assertLauncherBrowserBinding(request, url);
+    if (request.method === "GET" && url.pathname === "/api/health") return json(response, healthPayload(url));
     if (shutdownPromise && url.pathname.startsWith("/api/")) throw patchOperationError("SERVER_SHUTTING_DOWN", "CodeClaw is shutting down and is not accepting new operations.", 503);
+    if (request.method === "POST" && url.pathname === "/api/system/shutdown") return await launcherShutdown(request, response);
     if (request.method === "GET" && url.pathname === "/api/operations") return getOperations(response);
     if (request.method === "POST" && url.pathname === "/api/operations/cancel") return await cancelManagedOperation(request, response);
     if (request.method === "GET" && url.pathname === "/api/system/check") return await systemCheck(response);
@@ -190,26 +371,30 @@ async function startServer() {
 
 function installShutdownHandlers() {
   for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.once(signal, () => {
-      const forceExit = setTimeout(
-        () => process.exit(1),
-        operationManager.commitTimeoutMs
-          + SHUTDOWN_COMMIT_MARGIN_MS
-          + SHUTDOWN_CONNECTION_GRACE_MS
-          + SHUTDOWN_FORCE_EXIT_MARGIN_MS
-      );
-      gracefulShutdown(signal).then(
-        ({ idle }) => {
-          clearTimeout(forceExit);
-          process.exit(idle ? 0 : 1);
-        },
-        () => {
-          clearTimeout(forceExit);
-          process.exit(1);
-        }
-      );
-    });
+    process.once(signal, () => requestProcessShutdown(signal));
   }
+}
+
+function requestProcessShutdown(reason) {
+  if (shutdownExitPromise) return shutdownExitPromise;
+  shutdownExitPromise = (async () => {
+    const forceExit = setTimeout(
+      () => process.exit(1),
+      operationManager.commitTimeoutMs
+        + SHUTDOWN_COMMIT_MARGIN_MS
+        + SHUTDOWN_CONNECTION_GRACE_MS
+        + SHUTDOWN_FORCE_EXIT_MARGIN_MS
+    );
+    try {
+      const { idle } = await gracefulShutdown(reason);
+      clearTimeout(forceExit);
+      process.exit(idle ? 0 : 1);
+    } catch {
+      clearTimeout(forceExit);
+      process.exit(1);
+    }
+  })();
+  return shutdownExitPromise;
 }
 
 function gracefulShutdown(reason = "shutdown") {
@@ -217,7 +402,7 @@ function gracefulShutdown(reason = "shutdown") {
   shutdownPromise = (async () => {
     const closed = new Promise((resolve) => server.close(resolve));
     const aborted = operationManager.abortAll(`CodeClaw received ${reason} and is shutting down.`);
-    const hasCommitInFlight = operationManager.list().some((operation) => operation.phase === "committing");
+    const hasCommitInFlight = operationManager.list().some((operation) => operation.phase !== "running");
     const idle = await operationManager.waitForIdle(hasCommitInFlight
       ? operationManager.commitTimeoutMs + SHUTDOWN_COMMIT_MARGIN_MS
       : SHUTDOWN_RUNNING_GRACE_MS);
@@ -230,6 +415,54 @@ function gracefulShutdown(reason = "shutdown") {
     return { aborted, idle };
   })();
   return shutdownPromise;
+}
+
+async function launcherShutdown(request, response) {
+  if (!launcherIdentity.enabled) {
+    throw patchOperationError("LAUNCHER_SHUTDOWN_DISABLED", "This CodeClaw process was not started by a verified local launcher.", 404);
+  }
+  const body = await readJson(request);
+  assertOnlyRequestFields(body, ["instanceId", "token"], "LAUNCHER_SHUTDOWN_FIELDS_INVALID");
+  if (!secureStringEqual(body.instanceId, launcherIdentity.instanceId)
+    || !secureStringEqual(body.token, launcherIdentity.shutdownToken)) {
+    throw patchOperationError("LAUNCHER_SHUTDOWN_UNAUTHORIZED", "CodeClaw rejected a launcher shutdown request with invalid instance authority.", 403);
+  }
+  await recordAudit({
+    type: "launcher.shutdown",
+    title: "Verified local launcher requested shutdown",
+    metadata: { instanceId: launcherIdentity.instanceId, candidateId: launcherIdentity.candidateId }
+  }, { timeoutMs: 500 });
+  json(response, {
+    ok: true,
+    accepted: true,
+    candidateId: launcherIdentity.candidateId,
+    instanceId: launcherIdentity.instanceId
+  }, 202);
+  setImmediate(() => requestProcessShutdown("launcher-stop"));
+}
+
+function secureStringEqual(value, expected) {
+  if (typeof value !== "string" || typeof expected !== "string") return false;
+  const left = Buffer.from(value, "utf8");
+  const right = Buffer.from(expected, "utf8");
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+
+function assertLauncherBrowserBinding(request, url) {
+  if (!launcherIdentity.enabled
+    || !url.pathname.startsWith("/api/")
+    || url.pathname === "/api/health"
+    || url.pathname === "/api/system/shutdown") return;
+  const candidateId = request.headers["x-codeclaw-candidate-id"];
+  const instanceId = request.headers["x-codeclaw-instance-id"];
+  if (!secureStringEqual(candidateId, launcherIdentity.candidateId)
+    || !secureStringEqual(instanceId, launcherIdentity.instanceId)) {
+    throw patchOperationError(
+      "LAUNCHER_PAGE_IDENTITY_MISMATCH",
+      "This browser tab is not bound to the running CodeClaw candidate instance. Open the page from the current launcher.",
+      409
+    );
+  }
 }
 
 function getOperations(response) {
@@ -330,7 +563,14 @@ async function systemCheck(response) {
     demoExists,
     workspace,
     model: modelProvider.status(),
-    recovery: patchRecoveryStatus
+    recovery: patchRecoveryStatus,
+    launcher: launcherIdentity.enabled ? {
+      protocol: 1,
+      candidateId: launcherIdentity.candidateId,
+      packageVersion: launcherIdentity.packageVersion,
+      sourceCommit: launcherIdentity.sourceCommit,
+      instanceId: launcherIdentity.instanceId
+    } : null
   });
 }
 
@@ -1743,8 +1983,8 @@ function normalizePatchPath(value) {
   return String(value || "").replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
-function patchOperationError(code, message, status) {
-  const error = new Error(message);
+function patchOperationError(code, message, status, cause = undefined) {
+  const error = new Error(message, cause ? { cause } : undefined);
   error.code = code;
   error.status = status;
   return error;
@@ -2252,7 +2492,10 @@ async function serveStatic(pathname, response) {
   const requested = path.normalize(normalized).replace(/^([.][.][\\/])+/, "");
   const filePath = path.join(publicDir, requested);
   const content = await fs.readFile(filePath);
-  response.writeHead(200, { "content-type": contentType(filePath) });
+  response.writeHead(200, {
+    "content-type": contentType(filePath),
+    "cache-control": "no-store"
+  });
   response.end(content);
 }
 
@@ -2436,6 +2679,9 @@ function contextFileMetadata(filePath, content, source) {
 }
 
 function json(response, payload, status = 200) {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
   response.end(JSON.stringify(payload, null, 2));
 }

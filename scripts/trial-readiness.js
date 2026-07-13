@@ -64,9 +64,7 @@ const requiredPackageEntries = [
   "package.json",
   "README.md",
   "PACKAGE_MANIFEST.md",
-  "run-nightly-trial.cmd",
-  "start-codeclaw.cmd",
-  "start-codeclaw.ps1"
+  "run-nightly-trial.cmd"
 ];
 
 try {
@@ -106,14 +104,9 @@ try {
     checks: [...sourceResults, packageResult, ...packageResults].map(publicStepResult),
     hygiene,
     nextSteps: [
-      "Zip or share the package folder.",
-      "Ask testers to start with docs/START_GUIDE.md.",
-      "Use docs/TRIAL_HOST_BRIEF.md and docs/TRIAL_GO_NO_GO.md before the hosted session.",
-      "Use docs/TRIAL_5_MIN_PRECHECK.md immediately before starting.",
-      "Use docs/TRIAL_BEGINNER_FIRST_LIVE_GUIDE.md and docs/HUMAN_TRIAL_OBSERVATION.md during hosted first trials.",
-      "Ask testers to fill docs/TRIAL_FEEDBACK_TEMPLATE.md.",
-      "Fill docs/TRIAL_RESULT_RECORD.md before inviting the next tester.",
-      "Stop before writes if preflight reports blockers or context looks wrong."
+      "Do not launch, zip, share, or send this historical regression package.",
+      "Do not use a green trial:ready result to authorize a human session.",
+      "Build the runnable candidate only with npm.cmd run stage4b:machine from a clean commit."
     ]
   };
   await fs.mkdir(path.dirname(reportPath), { recursive: true });

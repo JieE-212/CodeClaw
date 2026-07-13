@@ -18,9 +18,7 @@ const includeEntries = [
   ".gitignore",
   "package.json",
   "README.md",
-  "run-nightly-trial.cmd",
-  "start-codeclaw.cmd",
-  "start-codeclaw.ps1"
+  "run-nightly-trial.cmd"
 ];
 
 const excludedNames = new Set([
@@ -109,7 +107,7 @@ async function writeManifest(copied) {
     "# CodeClaw Local Trial Package Manifest",
     "",
     `Created at: ${new Date().toISOString()}`,
-    `Source root: ${rootPath}`,
+    "Legacy package: not a Stage 4B verified machine candidate.",
     "",
     "## Before Sharing",
     "",
@@ -121,10 +119,11 @@ async function writeManifest(copied) {
     "npm.cmd test",
     "```",
     "",
-    "## Tester Start",
+    "## Historical Regression Boundary",
     "",
-    "Double-click `start-codeclaw.cmd`, then follow `docs/START_GUIDE.md`.",
-    "For hosted first trials, keep `docs/TRIAL_HOST_BRIEF.md`, `docs/TRIAL_GO_NO_GO.md`, `docs/TRIAL_5_MIN_PRECHECK.md`, and a generated `trial:session-pack` folder open. Run `npm.cmd run trial:intake-review-dry-run` once before filling the first real tester roster. Run `npm.cmd run trial:intake` before generating a real tester session pack, then run `npm.cmd run trial:tester-launch-plan -- --tester <tester-id>` to see the next safe command without creating real tester data. If the first real tester is waiting, run `npm.cmd run trial:first-live-standby -- --tester <tester-id>` to confirm the launch path remains ready. If no human tester is available yet, run `npm.cmd run trial:post-call-rehearsal -- --force` to rehearse the post-call pipeline with synthetic data that must not be counted as feedback. Run `npm.cmd run trial:intake-session -- --force`. Run `npm.cmd run trial:status` whenever the next step is unclear. Run `npm.cmd run trial:host-ready` immediately before hosting, then run `npm.cmd run trial:host-run` and use the generated `HOST_RUNBOOK.md` live. Run `npm.cmd run trial:pre-live` before scheduling or starting the real tester session. Run `npm.cmd run trial:live-capture` before the call and use the generated capture files. Ask testers to fill the generated feedback files afterward; if the host has local notes, run `npm.cmd run trial:record-draft` to map explicit notes into draft fields without inventing missing feedback. Then run `npm.cmd run trial:after-live` to complete completion, privacy, post-session, review, archive, status, and local evidence packaging. Before hosting the next tester, run `npm.cmd run trial:next-live -- --tester <tester-id> --accept-review` to confirm after-live, intake, host gates, live capture, and watch items are aligned. After at least two completed tester folders exist, run `npm.cmd run trial:cohort-summary` and `npm.cmd run trial:cohort-handoff` before expanding to 3-5 testers. Keep `trial:archive-session` available for manual local-only archive repair after privacy passes.",
+    "NOT RUNNABLE; NOT SHAREABLE; NOT A STAGE 4B MACHINE CANDIDATE.",
+    "This folder exists only to regression-check the historical hosted-trial document and script set. It intentionally contains no production-named start/stop wrapper and no candidate Authority.",
+    "Use `npm.cmd run stage4b:machine` from a clean committed source worktree to produce the only runnable machine candidate.",
     "",
     "## Exclusions",
     "",

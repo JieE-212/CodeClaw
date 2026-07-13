@@ -879,7 +879,7 @@ async function runGit(rootPath, args, rootIdentity = "", signal = null) {
 }
 
 function safeGitEnvironment(rootPath) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith("GIT_")));
+  const env = Object.fromEntries(Object.entries(safeChildEnvironment()).filter(([name]) => !name.toUpperCase().startsWith("GIT_")));
   return {
     ...env,
     GIT_CEILING_DIRECTORIES: path.dirname(rootPath),
@@ -889,6 +889,23 @@ function safeGitEnvironment(rootPath) {
     GIT_EXTERNAL_DIFF: "",
     GIT_TERMINAL_PROMPT: "0"
   };
+}
+
+function safeChildEnvironment() {
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => ![
+    "CODECLAW_CANDIDATE_ID",
+    "CODECLAW_DEMO_ROOT",
+    "CODECLAW_DISPOSABLE_ROOT",
+    "CODECLAW_INSTANCE_ID",
+    "CODECLAW_LAUNCHER_PROTOCOL",
+    "CODECLAW_LAUNCH_NONCE",
+    "CODECLAW_PACKAGE_VERSION",
+    "CODECLAW_PORT",
+    "CODECLAW_PROJECT_LOCK_DIR",
+    "CODECLAW_SHUTDOWN_TOKEN",
+    "CODECLAW_SOURCE_COMMIT",
+    "CODECLAW_STATE_DIR"
+  ].includes(name.toUpperCase())));
 }
 
 function sameCanonicalPath(left, right) {
@@ -988,7 +1005,7 @@ function executeCommand(rootPath, command, args, commandLine, timeoutMs = COMMAN
   return new Promise((resolve, reject) => {
     const spawnTarget = command.endsWith(".cmd") && process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : command;
     const spawnArgs = spawnTarget === command ? args : ["/d", "/s", "/c", command, ...args];
-    const child = spawn(spawnTarget, spawnArgs, processSpawnOptions({ cwd: rootPath }));
+    const child = spawn(spawnTarget, spawnArgs, processSpawnOptions({ cwd: rootPath, env: safeChildEnvironment() }));
     let stdout = "";
     let stderr = "";
     let settled = false;

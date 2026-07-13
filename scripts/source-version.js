@@ -1,15 +1,41 @@
 import { execFile } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+
+const GIT_SOURCE_TIMEOUT_MS = 15_000;
+
+export function hermeticGitEnvironment(environment = process.env) {
+  const inherited = Object.fromEntries(
+    Object.entries(environment).filter(([name]) => !name.toUpperCase().startsWith("GIT_"))
+  );
+  return {
+    ...inherited,
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : os.devNull,
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_LAZY_FETCH: "1"
+  };
+}
+
+export function hermeticGitArguments(rootPath, args) {
+  return [
+    "-c", "core.fsmonitor=false",
+    "-c", `safe.directory=${path.resolve(rootPath)}`,
+    ...args
+  ];
+}
 
 export async function inspectSourceVersion(rootPath) {
   try {
-    const [commit, status] = await Promise.all([
-      runGit(rootPath, ["rev-parse", "HEAD"]),
-      runGit(rootPath, ["status", "--porcelain"])
-    ]);
+    const commitBefore = (await runGit(rootPath, ["rev-parse", "HEAD"])).trim();
+    const status = await runGit(rootPath, ["status", "--porcelain"]);
+    const commitAfter = (await runGit(rootPath, ["rev-parse", "HEAD"])).trim();
     return {
       available: true,
-      commit: commit.trim(),
-      dirty: Boolean(status.trim())
+      commit: commitAfter,
+      dirty: commitBefore !== commitAfter || Boolean(status.trim())
     };
   } catch {
     return {
@@ -73,7 +99,16 @@ function validCommit(value) {
 
 function runGit(rootPath, args) {
   return new Promise((resolve, reject) => {
-    execFile("git", args, { cwd: rootPath, windowsHide: true }, (error, stdout) => {
+    execFile("git", hermeticGitArguments(rootPath, args), {
+      cwd: rootPath,
+      windowsHide: true,
+      shell: false,
+      env: hermeticGitEnvironment(),
+      timeout: GIT_SOURCE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024
+    }, (error, stdout) => {
       if (error) {
         reject(error);
         return;

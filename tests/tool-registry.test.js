@@ -388,6 +388,27 @@ test("ToolRegistry run_command only runs allowlisted commands", async () => {
   );
 });
 
+test("ToolRegistry child commands do not inherit launcher capabilities", async (t) => {
+  const root = await makeFixture();
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const previousToken = process.env.CODECLAW_SHUTDOWN_TOKEN;
+  const previousState = process.env.CODECLAW_STATE_DIR;
+  process.env.CODECLAW_SHUTDOWN_TOKEN = "launcher-secret-capability";
+  process.env.CODECLAW_STATE_DIR = "private-launcher-state";
+  t.after(() => {
+    if (previousToken === undefined) delete process.env.CODECLAW_SHUTDOWN_TOKEN;
+    else process.env.CODECLAW_SHUTDOWN_TOKEN = previousToken;
+    if (previousState === undefined) delete process.env.CODECLAW_STATE_DIR;
+    else process.env.CODECLAW_STATE_DIR = previousState;
+  });
+  const command = "node -e \"console.log(JSON.stringify({token:process.env.CODECLAW_SHUTDOWN_TOKEN||null,state:process.env.CODECLAW_STATE_DIR||null,path:Boolean(process.env.PATH)}))\"";
+  const registry = new ToolRegistry({ rootPath: root, allowedCommands: [{ name: "env", command }] });
+
+  const result = await registry.call("run_command", { name: "env" }, { approved: true });
+  assert.equal(result.result.exitCode, 0);
+  assert.deepEqual(JSON.parse(result.result.stdout.trim()), { token: null, state: null, path: true });
+});
+
 test("ToolRegistry run_command returns nonzero exits without throwing", async () => {
   const root = await makeFixture();
   const registry = new ToolRegistry({
