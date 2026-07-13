@@ -1,284 +1,208 @@
-# CodeClaw 重启交接：暂停真人测试的工程加固循环
+# CodeClaw 重启交接：Stage 4B 已完成，等待后续阶段规划
 
-更新日期：2026-07-13
+更新日期：2026-07-13（Asia/Shanghai）
 
-这是当前唯一有效的 Codex 重启交接文件。它替代此前“等待 tester-2 首次真人测试”的说明；tester-2 已完成，当前不要再次主持该会话。
+这是重启后唯一有效的 Codex 交接文件，完整替代此前关于 tester-2 首次真人测试、standby、现场主持和 after-live 的旧交接。旧流程已经结束，不得按旧截图或旧聊天重新执行。
 
-## 重启后的第一条指令
+## 重启后可直接发给 Codex
 
-```text
-请完整读取 docs/HANDOFF_RESTART.md、docs/NEXT_PHASE_PLAN.md 和 docs/STAGE_4B_MACHINE_CANDIDATE.md。Stage 4B 已完成机器验证、最终 Git 审计和独立提交；自动工程循环停在 4B，不要自动进入 4C，也不要 push。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码。
-```
+~~~text
+请完整读取 docs/HANDOFF_RESTART.md、docs/NEXT_PHASE_PLAN.md、docs/PROJECT_STATUS.md 和 docs/STAGE_4B_MACHINE_CANDIDATE.md，并按其中顺序接管 CodeClaw。先只读核对 Git、候选 Authority 和当前运行状态，再向我汇报你确认到的事实。
 
-## 当前结论
+当前任务不是继续旧真人测试，而是在短期暂停真人测试的前提下，规划 Stage 4B 之后最合适的后续阶段。请先给出有依赖、优先级、验收证据、停止条件和退出条件的详细规划，不要自动进入 Stage 4C，也不要自动创建 tester-3 或执行真人流程。
 
-- 第一轮真人测试已于 2026-07-12 完成，不再处于 standby。
-- 匿名测试者为 `tester-2`，主持人为 `host-1`，语言为 `zh-CN`，总时长约 120 分钟。
-- 现场同意已明确确认。实际只使用 Demo；因没有安全副本，真实项目只读预检为 `N/A`。
-- 未点击 Apply，未写入项目文件，未确认项目命令，未创建临时项目或测试代码。
-- host-1 已确认三份最终记录准确；最终决定为 `Fix first`，下一位测试者为 `No`。
-- 进入本轮工程循环前的产品修复基线为：
+tester-2 的 AFTER_LIVE_BLOCKED、remediation 的 REMEDIATION_HOLD 和 tester-3 的 not scheduled 都必须保持不变。不要重跑 tester-2 after-live，不要改写真人记录，不要提交 dist、.codeclaw、截图、日志、真人材料或证据包，不要自动 push，不要保留临时测试代码或墓碑代码。
+~~~
 
-```text
-c402b45 Prioritize remediation in trial status
-62d1ec5 Complete Stage 3.0.9 remediation safety
-61f3786 Fix first-live feedback issues
-```
+## 当前状态摘要
 
-- 最新阶段提交以 `git log -1 --oneline` 为准。后续提交仍由用户决定何时运行 `git pushall`；Codex 不直接 push。
-- 下一轮真人测试明确暂缓。`Stage 4B` 已完成 machine candidate 工程闭环；`Stage 4C` 延后且未开始。详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
-- `Stage 3.0.9` 的工程映射完成不代表复测准入通过：host-1 七项人工验收仍缺失，真实状态保持 `REMEDIATION_HOLD`；tester-3 仍为 `not scheduled`。
-- Stage 3.0.10 的最终机器证据为 `npm.cmd test` 187/187、`npm.cmd run check` 通过，以及 health、smoke、四个 pilot 全部通过。它实现了三阶段全局 claim、写前 journal、root/parent/临时文件实体身份绑定和跨 state-dir 恢复阻断，但没有宣称真实断电、自定义 ACL、杀毒软件/网络盘或真人原项目写入已验收。
-- Stage 3.0.11 的最终机器证据为 `npm.cmd test` 245 pass、0 fail、1 个环境性 symlink skip（246 total），`npm.cmd run check` 通过且三语各 665 键，以及 health、smoke、四个 pilot 全部通过。它实现了完整 Data Boundary Manifest、三类服务端工作区能力、显式副本创建/激活/清理、崩溃恢复和 exact-target 复验；原项目仍不可写或运行项目命令。副本不等于匿名化或适合分享，自身被忽略的 `.gitignore` 也不宣称规则快照已被保留。
+| 项目 | 当前真实状态 |
+| --- | --- |
+| Git 功能基线 | 编写本交接前的最新功能提交为 Remove local path and stabilize launcher test；准确哈希以 git log 和候选 Authority 的 sourceCommit 实查为准 |
+| GitHub / Gitee | 2026-07-13 用户已明确确认双端 push；当时本地 main、github/main、gitee/main 精确一致 |
+| 工作树 | 编写本交接前为 clean；本交接文件可能形成一个更晚的纯文档本地提交，重启后以 Git 实查为准 |
+| Stage 3.0.10–3.0.14 | 授权的机器工程循环全部完成并验证 |
+| Stage 4B | machine verified and committed；machine candidate 已生成并只证明其 Authority 绑定的提交 |
+| Windows / host 人工验收 | 尚未完成 |
+| remediation | REMEDIATION_HOLD |
+| tester-2 | AFTER_LIVE_BLOCKED，历史结果不可改写 |
+| tester-3 | not scheduled |
+| 真人测试 | 短期暂停 |
+| 原项目权限 | 服务端强制只读；写入和项目命令只允许内置 Demo 或已创建、登记、激活并复验的 disposable copy |
+| Stage 4C | 延后且未开始 |
 
-## Stage 3.0.12 已提交基线
+其他文档中描述本轮功能提交“尚未 push”的句子是推送前快照；“Codex 不自动 push”的政策仍然有效。2026-07-13 双端 push 由用户明确确认，本地 remote-tracking refs 和 reflog 当时一致，但它们在未 fetch 时不等于服务器当前状态的独立证明；以后如确需证明服务器最新状态，先征得用户同意再 fetch 比较。机器候选身份始终以包内 Authority 为准。
 
-已实现：
+## 当前产品已经具备的能力
 
-- 所有模型操作统一为服务端 `Preview -> 明确审核 -> 单次 Send`，可显式 Cancel；客户端 Preview 只能提交 `operation` 和 `taskId`。
-- Preview 展示完整 UTF-8 body、bytes、SHA-256、endpoint/channel/设备边界、数据类别和逐文件传输字节，并绑定 task revision、workspace/root identity、Manifest digest/policy version、模型配置代次和 prepared request。
-- Send 同步消费 approval，并发双发、失败重放、过期、取消以及 task/source/workspace/config 竞态全部 fail closed；传输前后都会复验权威状态。
-- HTTP 仅允许 loopback；HTTPS 必须为公共地址，检查全部 DNS 结果并 pin/复验实际 remote address，禁止 redirect 和 endpoint 凭据/query/fragment，限制时间与请求/响应大小、要求 JSON Content-Type，并拒绝 API key 回显。
-- API key 仅驻留内存；配置、TaskStore context/model event、audit 和旧状态迁移均已收紧到最小落盘数据。ignored Manifest 内容既不发送，也不参与派生 repo metadata。
-- 八个自动化脚本统一资源 finalizer，覆盖子进程、listener、fixture 与临时目录的有界清理，并聚合工作/清理错误。
+- 唯一八步工作流：project → preflight → plan → context → patch → workspace → verify → complete。
+- 默认新手呈现，桌面 sticky 导航、窄屏响应式布局、模块用途与读/写/联网/命令/本地状态边界说明。
+- 原项目服务端只读；只有 Demo 或显式激活的 disposable copy 可以 Apply、Revert 或运行允许的项目命令。
+- Apply/Revert 使用持久事务、写前 journal、备份、原子替换、跨进程项目锁、冲突停写和启动恢复。
+- 模型操作统一为精确 Preview → 人工单次批准 → Send，可见完整请求、目标、字节、摘要和逐文件披露；敏感内容与 ignored 内容 fail closed。
+- 扫描、上下文、工具输出、状态增长、并发、取消、deadline、commit 和服务关停都有明确预算与回归。
+- Stage 4B 候选从 clean Git commit 的 tracked blobs 构建，使用 Authority 与 SHA-256 sidecar、候选感知启动器、HMAC 实例身份、旧标签锁定、端口分流和外置 runtime Demo。
+- legacy local-trial 包只保留历史回归意义，不可启动、不可分享，也不能作为真人测试或发布准入证据。
 
-最终机器证据：Preview/UI/provider 46/46，server outbound integration 8/8，automation finalizer fault injection 8/8；单并发完整 `npm.cmd test` 为 319 total、318 pass、0 fail、1 个环境性 symlink skip；`npm.cmd run check` 与 i18n 通过，三语各 714 个 key。health、smoke、`pilot:self`、`pilot:fixture`、`pilot:inbox`、`pilot:model`、real-repo preflight 和 first-trial simulation 全部通过，`pilot:model` 为 9 次 fake request、9 次 exact-body check；相关语法检查、`git diff --check` 和三个 example 无 diff 均通过。默认并发全量测试曾出现一次共享状态串扰，失败用例独立运行通过；权威全量结果采用隔离后的单并发运行。
+详细实现历史不要重新抄进本文件。需要时读取：
 
-2026-07-13 的只读运行态检查观察到：4173 没有监听进程；当前 `.codeclaw/model.json` 只有无凭据公共配置字段；26 个任务的 59 个 context 项均无 content/body/prompt/messages，9 个 model event 仅保留最小元数据；59 个 model audit 与 9 个 server-error audit 的 detail 均为空。这里记录的是当前本机观察，不把 `.codeclaw` 加入 Git，也不等于迁移逻辑在所有历史/异常状态上获得真人验收。
-
-清理与迁移结果：
-
-1. 默认 `.codeclaw` 已迁移：26 个 task、59 个 context record 且正文 0，当前 59 个 source 均为白名单内的 `read_file`，legacy suggestion entry 0，`model.json` 无凭据字段，model/server-error audit detail 均为空；该目录仍不得进入 Git。
-2. 14 个自动化 `%TEMP%` 前缀剩余数为 0，两个已知历史临时目录与 `server-bg.log` 已删除；4173 无监听，未发现需保留的一次性测试开关、调试代码或墓碑分支。
-
-Stage 3.0.12 已由独立提交 `267287a Add exact model outbound review` 收口；没有 push，也没有把 `.codeclaw`、`dist`、日志或真人材料加入提交。
-
-诚实边界：未重跑真实云模型；在线模型仍会收到审核过的数据，本机模型仍通过 loopback HTTP 收到字节；Provider 后续保留不可由 CodeClaw 控制，缓冲覆写也只是 best effort。Manifest 复验与随后 TaskStore rename 不是文件系统原子快照，极端外部并发编辑可留下过时草案；Apply baseline hash 会阻断它覆盖已变化文件，但不得宣称所有外部 TOCTOU 已完全关闭。真人、像素、键盘/NVDA、高对比度、干净 Windows、真实断电和异常文件系统验收均未完成。
-
-## Stage 3.0.13 已提交基线
-
-已实现唯一八步工作流、默认新手/呈现型高级模式、模块用途和五类影响边界、sticky/响应式/焦点/高对比度静态契约、Demo 只读预检回执，以及 Unicode-safe 三语词典。Apply -> Verify -> Complete 已由服务端 recovery、patch-set/content、项目锁和 revision CAS 共同约束；completed 任务只允许查看或 Revert。所有 stateful UI 响应绑定 generation、路径、workspace、task 和 revision；MemoryStore 使用跨实例锁、原子写和启动前后对账。
-
-最终机器证据：独立红队无剩余 P0/High/Medium；聚焦回归 58/58；单并发全量 344 total、343 pass、0 fail、1 个环境性 symlink skip；check/i18n 通过，三语各 710 key；health、smoke、四个 pilot、明确路径的真实仓库只读预检和模拟均通过。只读 self pilot 不再伪造 Complete；真实仓库写入为 0；模拟生成的两份 `dist` 报告已删除。
-
-Stage 3.0.13 已经最终 diff/Git/禁入项/临时产物审计并由独立提交收口，没有 push；随后完成的 Stage 3.0.14 状态见下一节。不得运行 tester-2 after-live，不得创建 tester-3。
-
-诚实边界：浏览器插件缺少必需 helper，因此像素、完整键盘、NVDA 和 Windows 高对比度仍是人工待验项；没有运行新真人测试，`REMEDIATION_HOLD`、tester-2 的 `AFTER_LIVE_BLOCKED` 和 tester-3 `not scheduled` 均保持不变。
-
-## Stage 3.0.14 当前交接状态
-
-已实现测试 fixture 全隔离，JSON/扫描/Manifest/上下文/工具输出预算，结构化 partial/truncated 回执，目录父链身份复验，统一 operation 并发/取消/deadline/commit 边界，Scan/Preflight/模型 Send/Verify 四类 UI 取消，以及 SIGINT/SIGTERM 有界关停。TaskStore、MemoryStore 和 AuditLog 已增加增长上限、迁移和有界轮转；活动补丁与恢复证据不因普通历史裁剪而丢失。进程终止在 POSIX 使用独立进程组，在 Windows 走参数化 `taskkill /PID /T /F` 并在无法验证后代清理时 fail closed。
-
-机器证据：默认完整测试限制为并发 4；最终有界全量为 398 total、394 pass、0 fail、4 个环境性 skip。单并发完整基线为 397/393/0/4，随后唯一新增的文件增长预算回归也以单并发通过。`check` 通过，三语各 723 key、0 warning/failure；operation/process/stable-directory/state、server security/model outbound、UI/accessibility/workflow、health 和 diff 聚焦门禁通过。在途模型取消、提交中的 SIGTERM 等待、原子 preflight、审计失败可见性和 Windows 瞬时锁竞争均有回归，操作槽释放、有界退出且取消场景没有落盘成功模型结果。
-
-当前状态是 `machine verified; committed`。最终 diff、`git diff --check`、暂存清单、临时目录/端口/子进程和禁入项审计均已通过；`dist`、`.codeclaw`、日志、截图、真人记录和证据包均未进入提交。其后 Stage 4B 已单独完成，仍不 push。
-
-诚实边界：当前 Windows 沙箱无法执行真实 `taskkill /T` 后代树测试，父 wrapper 已退出后的后代归属仍可能需要 Job Object；Node 缺少 `openat` 风格目录句柄操作，身份复验不能消除每个外部目录替换窗口。像素、完整键盘、NVDA、高对比度、干净 Windows 10/11、非管理员启动、Defender/SmartScreen、默认浏览器、真实双击、真实断电和大型项目主观等待感均未验收。真人测试继续暂停，`REMEDIATION_HOLD`、tester-2 `AFTER_LIVE_BLOCKED`、tester-3 `not scheduled` 与原项目只读边界保持不变。
-
-## Stage 4B 当前交接状态
-
-Stage 4B 已 machine verified and committed。它交付的是 machine candidate，不是签名安装器或最终 Windows release。
-
-- `npm.cmd run stage4b:machine` 是唯一完整门禁：clean source check/health、launcher 聚焦测试、tracked-commit blob package、candidate check、真实 packaged launcher start/status/stop/restart、最终 Authority 复验和 pending-to-final rename。
-- Authority 与 sidecar 绑定 clean commit、候选 ID、精确文件/空目录清单和 SHA-256。ignored/untracked、链接、硬链接、特殊对象、不便携路径和预算超限不会进入候选。
-- Windows start/stop 使用 candidate-scoped Named Pipe 互斥；候选端口预扫 4173–4199，同 candidate 无本地 HMAC authority 时拒绝第二实例。显式端口占用不分流。
-- 启动前先持久化 reserved control；真实 child PID 持久化后才通过有界 stdin nonce gate 允许 server 初始化或监听。父进程提前退出会关闭管道并阻断延迟 child；dead owner 或可证明重启的 reservation 可安全恢复，模糊同机 PID 复用继续 fail closed。
-- 可写 Demo、任务、审计和控制状态都位于候选外 LocalAppData。候选内直接 `npm run dev` 被拒绝，项目/Git 子进程不继承 launcher token 或私有 runtime 变量。
-- health HMAC 绑定 candidate、instance、nonce、server PID、port 和 challenge；独立 stop 只有在身份仍匹配时继续，终止树无法证明时保留 control authority 并 fail closed。
-- Launcher URL 带 candidate/instance；之后每个 browser API 请求都由 server 复验。旧标签或无参数标签不能在端口复用后操作新实例。
-- 最终 ignored `dist/CodeClaw-machine-candidate-*` 可作为本机交付物保留，但绝不加入 Git。不要在文档中硬编码其 candidate ID、提交或绝对路径；以包内 Authority 和当次 gate JSON 为准。
-- `package:local-trial` 与 `trial:ready` 只剩不可启动、不可分发的历史流程回归用途，绿色结果不能授权真人测试。
-
-最终机器证据：Stage 4B 聚焦门禁 84 total、81 pass、0 fail、3 个环境性 skip；默认并发与单并发全量均为 476 total、469 pass、0 fail、7 个环境性 skip。`check`/i18n（每种语言 724 keys、0 warning/failure）、health、smoke、四个 pilot、真实示例仓库只读 preflight、PowerShell wrapper 语法、临时目录/端口/进程和 diff 审计均通过。独立安全复审无剩余 High/Medium。
-
-若重启时 Stage 4B 提交存在但 ignored candidate 不存在，只能在工作树 clean 且 HEAD 正是该提交时重新运行 `npm.cmd run stage4b:machine`。不要从 dirty tree 手工补 Authority，也不要复制源码目录伪造候选。
-
-## 重启后先检查
-
-在项目根目录运行只读检查：
-
-```powershell
-git rev-parse --show-toplevel
-git status --short --branch
-git log -5 --oneline --decorate
-```
-
-不要假设工作树干净。若存在未提交修改，先阅读 diff，区分当前 Stage 3.0.14/4B 工程工作与用户的其他修改；保留无关改动，不使用 `git reset --hard` 或 `git checkout --` 丢弃它们。
-
-随后读取：
-
-```text
+~~~text
 docs/NEXT_PHASE_PLAN.md
 docs/PROJECT_STATUS.md
-docs/FIRST_TRIAL_RUNBOOK.md
+docs/STAGE_4B_MACHINE_CANDIDATE.md
 docs/RELEASE_STRATEGY.md
-```
+~~~
 
-本地真人记录只在确有必要验证摘要时读取，并且不要把原文复制到聊天、源码、文档或 Git diff。
+## 最新机器证据
 
-## tester-2 的不可改写结果
+- 完整测试：476 total、469 pass、0 fail、7 个环境性 skip。
+- Stage 4B 聚焦门禁：84 total、81 pass、0 fail、3 个环境性 skip。
+- check 与 i18n 通过：英文、简体中文、俄文各 724 keys，0 warnings/failures。
+- health、smoke、四个 pilot、真实示例仓库只读 preflight、PowerShell wrapper 语法和 diff 审计通过。
+- 真实 packaged candidate 的 start、status、stop、restart、最终完整性和清理门禁通过。
+- 独立安全复审没有剩余 High 或 Medium。
+- 推送前隐私检查移除了 run-dev.cmd 中写死的本机用户路径。
+- 一个 launcher 取消测试的 100ms 墙钟竞态已改为在真实 readiness 探测时触发；定向连续 20 次和随后完整测试均通过。
+- dist、.codeclaw、日志、截图、真人原始记录、证据包和临时测试产物均未进入 Git。
 
-`trial:after-live` 已在 host-1 确认记录后运行且只运行了一次：
+这些结果只证明 machine candidate。不得据此宣称签名、安装器、SmartScreen、Defender、真实双击、真实 taskkill /T、像素、完整键盘、NVDA、高对比度或真人理解已经通过。
 
-```powershell
-npm.cmd run trial:after-live -- --session dist/trial-session-packs/tester-2 --tester tester-2 --force
-```
+## 重启后第一轮只读检查
 
-真实结果：
+先进入 git rev-parse --show-toplevel 返回的仓库根目录，然后运行：
 
-```text
-SESSION_COMPLETION_READY                 0 blockers,  0 warnings
-PRIVACY_OK                              0 blockers,  0 warnings
-NO_GO_FIX_FIRST                        11 blockers, 10 warnings
-REVIEW_BLOCKED                          3 blockers,  4 warnings
-AFTER_LIVE_BLOCKED                     10 blockers, 27 warnings
-```
+~~~powershell
+git rev-parse --show-toplevel
+git status --short --branch --untracked-files=all
+git log -8 --oneline --decorate
+git rev-list --left-right --count github/main...HEAD
+git rev-list --left-right --count gitee/main...HEAD
+git remote -v
+~~~
 
-重要边界：
+预期解释：
 
-- 不要再次运行该命令。
-- 不要把 `Fix first` 或“下一位：No”改成更容易通过的值。
-- 不要编辑 tester-2 的回答来证明修复有效。
-- 不要把 remediation 结果写回原 after-live。
-- 本轮 archive 没有运行，evidence packet 没有生成。
-- 当时 after-live 错误展示了 2026-07-09 的旧 archive 结果；`61f3786` 已修复新鲜度判断。这只证明显示逻辑已修复，不代表 tester-2 本轮归档成功。
+- 如果本交接的纯文档提交尚未再次推送，main 可能比两端远端领先 1；这是预期状态，不要 reset。
+- 如果用户已把交接提交也 push，两个计数应为 0 / 0。
+- 如果本交接形成了比 Authority sourceCommit 更晚的纯文档提交，现有 candidate 仍只证明 Authority 绑定的旧提交，不能称为“当前 HEAD candidate”。最终验收必须明确绑定旧 Authority 提交，或从新的 clean HEAD 重新生成候选后再验收。
+- 不要自动 fetch、pull、push、reset、checkout 或清理用户改动。
+- 若工作树有变化，先完整阅读 diff 并区分用户改动、交接文档和临时产物。
+- PowerShell 读取中文 Markdown 时显式使用 Get-Content -Encoding UTF8，避免把 UTF-8 显示成乱码。
 
-## 已确认的人类反馈
+查找本地 ignored machine candidate：
 
-- 中文 Demo 目标当时无法生成 Mock 补丁，并显示误导性的英文错误。
-- tester-2 只点击了 Demo；预检随后自动准备计划和读取上下文，但页面没有解释自动进展。
-- 旧会话当时可能在没有显式选择时恢复。
-- tester-2 希望桌面左侧导航滚动时保持可见、页面层次更清楚、每个模块增加新手用途说明。
-- 计划是最能建立信任的部分；补丁是最有价值的预期能力。
-- 解释本地/只读边界后，最终泄露顾虑为 `No`。
-- tester-2 愿意尝试可丢弃补丁，也愿意未来在安全条件下用于真实项目。
+~~~powershell
+Get-ChildItem -LiteralPath dist -Directory -Filter "CodeClaw-machine-candidate-*" -ErrorAction SilentlyContinue
+~~~
 
-技术表述必须准确：预检本来就会创建计划并读取上下文。观察到的问题是产品没有解释这一自动只读进展；不能断言这些步骤必然来自旧会话。
+- 不要把候选目录加入 Git。
+- candidate ID 和 sourceCommit 是身份信息，不是秘密；可以在本地核对或向用户汇报，但不要把动态值、Authority hash 或绝对候选路径硬编码进 tracked 文档。不得复制 LocalAppData control record、shutdown capability、HMAC authority、日志或截图。
+- 有多个候选时，从每个包内 CODECLAW_CANDIDATE_AUTHORITY.json 获取 sourceCommit 和候选身份，不靠目录时间或猜测。
+- 不要删除现有 ignored dist 或 .codeclaw 内容。只清理由本轮新验证明确创建且确认无保留价值的临时资源。
+- 如果候选缺失，不要手工复制源码或补写 Authority。只有在工作树 clean、HEAD 已提交且确实需要新候选时，才运行 npm.cmd run stage4b:machine。
+- 没有代码变化时，不要为了“看起来完整”自动重跑全部耗时门禁。
 
-## `61f3786` 已完成的修复
+只读检查 4173–4199 是否仍有监听：
 
-- 中文、英文、俄文除零 Demo 目标可生成补丁。
-- 已知 Mock 失败原因结构化并本地化，不再附加无关英文原始错误。
-- 已保存会话要求明确选择“继续 / 全新开始”；Demo 使用干净任务状态，迟到旧响应不会覆盖它。
-- 删除未使用的旧 `refreshTask` 路径，没有保留墓碑代码。
-- 预检说明自动生成计划、读取上下文，但不写文件、不运行命令。
-- 桌面侧栏固定、窄屏响应式布局、主持人清单默认收起、模块用途说明增强。
-- Apply 明示写入；Verify 在确认前展示完整命令、用途和风险。
-- 在线模型隐私文案准确说明可能发送目标、元数据、路径和所选上下文。
-- after-live 只承认当前运行的新鲜归档，且没有当前成功归档时禁止 evidence packet。
+~~~powershell
+Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+  Where-Object { $_.LocalAddress -eq "127.0.0.1" -and $_.LocalPort -ge 4173 -and $_.LocalPort -le 4199 } |
+  Select-Object LocalAddress, LocalPort, OwningProcess
+~~~
 
-## 最近已通过的验证
+端口为空表示没有发现该范围的 IPv4 loopback listener；端口非空不等于一定是 CodeClaw，不要据此终止进程。
 
-以 `61f3786` 为基线：
+## 不可改写的真人历史
 
-```text
-focused tests: 28/28
-source tests: 132/132
-packaged tests: 132/132
-npm.cmd run check: passed
-i18n: 544 keys/language, 0 warnings/failures
-npm.cmd run health: passed; Chinese Demo patch applicable, 1 file
-npm.cmd run smoke: Apply/Verify/Revert passed; Demo restored
-npm.cmd run trial:ready: passed
-package hygiene: missing 0, disallowed 0, files 169
-candidate: dist/CodeClaw-local-trial-20260712
-```
+- tester-2 首次真人测试已于 2026-07-12 完成，不再处于 standby。
+- 匿名测试者为 tester-2，主持人为 host-1，语言为 zh-CN，总时长约 120 分钟。
+- 现场同意已确认；测试者只使用 Demo，没有点击 Apply，没有写项目文件，也没有确认项目命令。
+- host-1 已确认最终匿名记录准确；决定为 Fix first，下一位测试者为 No。
+- trial:after-live 已在确认后运行且只运行一次，真实最终状态为 AFTER_LIVE_BLOCKED。
+- 不要再次运行 tester-2 after-live，不要运行 archive 来“修复”历史，不要编辑回答，不要把 remediation 写回原 after-live。
+- 不要邀请朋友补答，不要用合成回答填真人字段，不要自动创建 tester-3。
 
-自动视觉 QA 没有完成：当时 in-app Browser 没有连接实例。因此不能声称已经做过像素级宽屏/窄屏验收。临时视觉服务已停止，没有遗留临时状态目录。
+第一轮反馈所要求的 sticky 导航、清晰层级、模块新手说明、Demo 中文补丁、显式会话选择、只读预检说明、Apply/Verify 风险说明和更准确的隐私文案都已经进入后续工程实现并有机器回归。但机器实现不等于 host 或真人主观验收。
 
-除非代码又发生变化或当前实现需要验证，不要为了“看起来更完整”无意义重跑整套耗时检查。修改后按风险先跑聚焦测试，再跑完整门禁。
+## 尚未完成的 host-1 产品验收
 
-## Stage 3.0.9 历史执行顺序与仍待人工项
+这是内部产品验收，不是新一轮真人测试，也不需要朋友到场。当前仍需由 host-1 在同一候选上真实检查：
 
-以下工程工作已经实现；涉及 host-1 的人工视觉、核心交互和候选接受仍未完成，因此 remediation 继续保持 `REMEDIATION_HOLD`。本节是恢复条件，不是当前待自动重跑的命令清单。
+1. 宽屏滚动时左侧导航持续可见。
+2. 900px、620px、390px 下关键内容和控件可达。
+3. 已保存会话的“继续”和“全新开始”两条分支都正确。
+4. 干净 Demo 使用中文目标时，第一次即可生成可理解的补丁。
+5. 预检清楚解释自动生成计划、读取上下文、写入 0、命令 0。
+6. 模块用途、隐私边界、Apply 写入影响和 Verify 命令用途/风险足够清楚。
+7. Demo 完成 Apply → Verify → Revert，并确认文件恢复。
 
-### 1. 同步文档和事实
+条件项：以后若决定验收 disposable copy，再额外检查基线冲突和 Revert 后人工编辑冲突会拒绝覆盖。原项目不要用于写入验收。
 
-确认 README、项目状态、重启交接和后续路线均已从“等待第一位真人”更新为“真实 blocked -> 修复闭环”。
+## 尚未完成的 Stage 4B Windows 人工验收
 
-### 2. 实现独立 remediation 门禁
+- 干净 Windows 10 与 11。
+- 非管理员账户启动。
+- Node.js 20+ 安装与 PATH。
+- PowerShell execution policy。
+- Defender 与 SmartScreen 实际行为。
+- 默认浏览器打开和复用。
+- 真实双击 start/stop、控制台关闭和错误提示。
+- 真实 Windows taskkill /T 后代进程树清理。
+- 像素布局、完整键盘操作、NVDA 和高对比度。
+- Authority 损坏、端口占用、浏览器失败和实例身份不匹配时的恢复指引。
+- 真实断电、异常 ACL、杀毒软件锁定、网络盘和大型项目主观性能仍是更后面的诚实边界。
 
-目标状态：
+Stage 4B 当前只能叫 machine candidate，不是签名安装器或最终 Windows release。SHA-256 完整性也不等于发布者代码签名。
 
-```text
-REMEDIATION_HOLD
-REMEDIATION_READY_WITH_REVIEW
-REMEDIATION_READY_FOR_RETEST
-```
+## 两个相互独立的人工门禁
 
-remediation 报告必须保留原 `AFTER_LIVE_BLOCKED`，并独立映射 must-fix、修复提交、测试、人工验收、候选包和 host-1 决定。缺少人类验收时不能自动升级为 ready。
+不要把以下门禁合并：
 
-然后让 `trial:status`、`trial:next-live` 和 cohort 流程识别“历史 blocked + 修复闭环完成 = 可在未来受控复测”，而不是要求伪造 `AFTER_LIVE_READY`。
+1. remediation / 未来复测准入：核心是 host-1 七项产品验收、修复映射、证据新鲜度、源码/候选一致性和 host-1 明确接受。它最多支持未来讨论 REMEDIATION_READY_FOR_RETEST，不代表 Windows release 通过。
+2. Stage 4B Windows 人工验收：核心是干净 Windows、非管理员、Defender/SmartScreen、默认浏览器、真实双击、进程树和无障碍矩阵。它通过也不会自动修改 remediation、安排 tester-3 或证明最终 Windows release。
 
-### 3. 加固 Apply/Revert
+任一门禁通过都不能代替另一门禁；二者也都不能代替签名、安装器、更新、修复、卸载和发布者信誉验证。
 
-真实项目写入开放前，至少完成：基线哈希、Apply 冲突拒绝、多文件部分失败回滚、Revert 后续编辑冲突拒绝、路径边界检查及对应测试。
+## 重启后最合适的规划方向
 
-若该工作尚未完成，下一轮范围必须继续限制为 Demo Apply 和真实项目只读；不要用一次成功 smoke 推断真实多文件冲突已经安全。
+当前不适合直接启动 Stage 4C。Stage 4C 的既定准入仍要求 3–5 次独立真人试用，并证明安装摩擦而非工作流困惑是主要剩余问题；短期真人测试暂停时，这些证据不存在。
 
-### 4. 准备 host-1 内部验收
+建议使用“Stage 4B.1：人工验收与 remediation 收口”作为临时工作包名称；它不新增或改写 NEXT_PHASE_PLAN.md 的正式阶段编号。按以下顺序设计计划：
 
-让 host-1 在准确候选提交上检查中文宽屏滚动、900/620/390px、继续/全新开始、干净 Demo、中文首次补丁、预检说明、模块说明、隐私文案以及 Demo Apply -> Verify -> Revert。
+1. 只读基线复核：Git、Authority、候选状态、禁入项和当前机器环境。
+2. 当前电脑的 host-1 七项产品验收，以及 launcher start/status/stop/restart 的低成本人工检查。
+3. 单独规划干净 Windows、非管理员、Defender/SmartScreen、双击、默认浏览器、键盘/NVDA/高对比度的 Stage 4B 环境矩阵和证据模板。
+4. 把 host 产品验收和 Windows 发布验收分别记录；remediation 映射只引用所需的 host 证据，绝不改写 tester-2 after-live。
+5. 若发现真实缺陷，只修复缺陷本身；删除临时测试代码，先跑受影响聚焦测试，再跑完整 test/check 和 Stage 4B gate，从新的 clean commit 生成新候选，并重做受影响的人工作业。
+6. 只有 remediation 所需的全部必做项真实通过、候选/源码/证据指向同一提交且 host-1 明确接受后，才讨论把 remediation 从 HOLD 提升到 READY_FOR_RETEST。
+7. Windows 人工门禁独立给出 passed / hold，不因 remediation 状态自动变化，也不把 machine candidate 升格为最终 release。
+8. 即使达到 READY_FOR_RETEST，也继续保持 tester-3 not scheduled，直到用户以后明确恢复真人测试。
+9. 暂停期只能维护“Stage 4C 证据缺口与继续延后”说明。正式 Stage 4C 决策记录、Electron/Tauri 原型或路线选择必须等既定真人证据与 4B 收益证据满足后再开始。
 
-这是内部产品验收，不是新一轮真人测试。没有真实浏览器证据时保留 review/hold，不能声称通过。
+重启后的 Codex 应先向用户提交这份后续计划，不应在计划呈现前自动执行新阶段、创建验收结论或启动真人流程。
 
-### 5. 重新冻结候选
+## 永久边界
 
-只有 remediation、安全加固和 host 验收完成后才运行：
+- 永久不重跑 tester-2 after-live，也不为该会话补做 archive 或改写任何历史结果。
+- 当前真人测试暂停期不运行 trial freeze、dispatch 或其他真人候选流程；未来只有路线图被用户明确恢复或修订后，才可从匹配的 clean source 流程重新评估。
+- 不创建 tester-3，不开始 intake、session pack、pre-live、live capture 或真人主持。
+- 不自动开始 Stage 4C、Electron、Tauri、云服务、微信小程序或安装器工程。
+- 不把原项目提升为可写；仅 Demo 或明确登记、激活并复验的 disposable copy 可写。
+- 不自动 push。新的提交由用户决定何时运行 git pushall。
+- 不提交 dist、.codeclaw、node_modules、真人记录、roster、截图、录屏、日志、证据包、私密路径、真实项目内容、API key 或 secret token。
+- 不把 legacy local-trial 包当作可启动或可分享候选。
+- 不宣称未执行的人工、Windows、无障碍、签名、安装或真人理解结果。
+- 不保留一次性调试开关、临时测试项目、注释掉的旧实现、未使用分支或墓碑代码。
+- 不使用 git reset --hard 或 git checkout -- 丢弃未知改动。
 
-```powershell
-npm.cmd run trial:simulate
-npm.cmd run trial:ready
-npm.cmd run trial:freeze
-npm.cmd run trial:dispatch
-```
+## 交接完成标准
 
-确保源码、测试、readiness、候选包、freeze、dispatch 和 remediation 指向同一提交。不要复用早于修复的旧产物。
+重启后的接管者应先完成只读核对，然后向用户汇报：
 
-## 当前不要做的事
+1. 实际 HEAD、工作树和双远端差异。
+2. 找到的最新 machine candidate 及其 Authority sourceCommit，并说明它是否与 HEAD 一致；身份值可汇报，但不要暴露 LocalAppData control、shutdown/HMAC capability 或绝对私密路径。
+3. 当前仍为 REMEDIATION_HOLD、tester-3 not scheduled、真人测试暂停。
+4. 临时 4B.1 工作包的详细推荐计划、两个独立人工门禁、每项证据、依赖、风险、停止条件和退出条件。
+5. 哪些步骤需要 host-1 亲自操作，哪些可以由 Codex 自动完成。
 
-- 不要运行 tester-2 after-live、archive 或任何“修复历史结果”的命令。
-- 不要开始 tester-3 intake、session pack、pre-live、live capture 或真人主持。
-- 不要邀请朋友回来补答问题，也不要用合成答案填真人字段。
-- 不要在用户未要求时扩展到 Electron、Tauri、云服务或微信小程序。
-- 不要直接 push。
-- 不要提交 `dist/`、`.codeclaw/`、真人记录、截图、日志、私密路径或 evidence packet。
-- 不要保留验证结束后无用的临时代码、注释掉的旧实现或墓碑分支。
-
-## Git 与隐私边界
-
-永远不提交：
-
-```text
-.codeclaw/
-dist/
-node_modules/
-server-bg.log
-真人原始记录和 roster
-截图、录屏和终端日志
-联系方式、身份信息、API keys 或 secret tokens
-真实项目路径、名称或源代码片段
-after-live evidence packet
-临时测试项目、临时服务状态或一次性调试代码
-```
-
-暂存时必须列出明确的源码、测试和文档文件，不使用可能把本地产物一并加入的宽泛命令。提交前至少检查：
-
-```powershell
-git diff --check
-git status --short
-git diff --cached --name-only
-```
-
-## Stage 3.0.9 仍待满足的人工完成标准
-
-- tester-2 原始 `AFTER_LIVE_BLOCKED` 和计数保持可追溯且未改写。
-- 独立 remediation 报告逐项映射所有 must-fix，并验证证据新鲜度。
-- 自动化门禁、host-1 人工验收和候选包指向同一提交。
-- Apply/Revert 高风险项已修复；若明确延期，则未来真人范围继续禁止真实写入。
-- 视觉验收真实完成；没有浏览器时诚实保留 review/hold。
-- 门禁给出 `REMEDIATION_READY_FOR_RETEST`，但 tester-3 仍保持未安排，直到 host-1 以后主动决定开始。
-- 全量验证按修改风险通过，临时代码已删除，无墓碑代码。
-- Git 暂存区不含任何本地真人/隐私/产物文件。
-
-完成后向用户汇报：实现内容、真实门禁结果、测试结果、尚未完成的人工项、提交哈希，以及是否需要由用户运行 `git pushall`。不要把“可以规划 tester-3”表述成“已经开始 tester-3”。
+如本文与更早聊天或旧截图冲突，以实际 Git、候选 Authority、不可改写的真人历史和用户最新明确决定为准。
