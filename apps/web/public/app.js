@@ -93,17 +93,14 @@ const patchOutput = document.querySelector("#patchOutput");
 const patchState = document.querySelector("#patchState");
 const patchGate = document.querySelector("#patchGate");
 const applyReview = document.querySelector("#applyReview");
-const guideSteps = document.querySelector("#guideSteps");
-const guideState = document.querySelector("#guideState");
-const guideNextButton = document.querySelector("#guideNextButton");
-const nextStepHint = document.querySelector("#nextStepHint");
-const quickStartState = document.querySelector("#quickStartState");
-const quickStartCopy = document.querySelector("#quickStartCopy");
-const quickStartList = document.querySelector("#quickStartList");
-const quickStartPrimary = document.querySelector("#quickStartPrimary");
-const quickStartSecondary = document.querySelector("#quickStartSecondary");
-const trialCommandList = document.querySelector("#trialCommandList");
-const trialCommandStatus = document.querySelector("#trialCommandStatus");
+const workflowSteps = document.querySelector("#workflowSteps");
+const workflowState = document.querySelector("#workflowState");
+const workflowNext = document.querySelector("#workflowNext");
+const workflowPrimary = document.querySelector("#workflowPrimary");
+const workflowSecondary = document.querySelector("#workflowSecondary");
+const workflowStatus = document.querySelector("#workflowStatus");
+const workflowMode = document.querySelector("#workflowMode");
+const preflightReceipt = document.querySelector("#preflightReceipt");
 const sessionRecovery = document.querySelector("#sessionRecovery");
 const sessionRecoveryTitle = document.querySelector("#sessionRecoveryTitle");
 const sessionRecoveryBody = document.querySelector("#sessionRecoveryBody");
@@ -126,19 +123,104 @@ let activeView = "workspace";
 let pendingSessionPayload = null;
 let sessionRecoveryMode = "hidden";
 let sessionRestoreSuperseded = false;
+let workflowGeneration = 0;
 let activeModelReview = null;
 let resolveModelReview = null;
 let modelReviewFocusFallback = null;
+const EXPERIENCE_MODES = new Set(["beginner", "advanced"]);
+const workflowModel = {
+  mode: "beginner",
+  currentStep: "project",
+  demoRequested: false,
+  primaryAction: null,
+  secondaryAction: null
+};
+const DYNAMIC_I18N_KEYS = Object.freeze([
+  "applyBoundary.body",
+  "applyReview.rollback.body",
+  "applyReview.writeWarning.body",
+  "model.review.channel.local",
+  "model.review.channel.loopback",
+  "model.review.channel.network",
+  "model.review.operation.contextFiles",
+  "model.review.operation.failureFix",
+  "model.review.operation.patchProposal",
+  "model.review.operation.taskSuggest",
+  "model.review.warning.body",
+  "model.apiKey.placeholder",
+  "model.cost.custom.detail",
+  "model.cost.custom.level",
+  "model.cost.custom.title",
+  "model.cost.dashscope.detail",
+  "model.cost.dashscope.level",
+  "model.cost.dashscope.title",
+  "model.cost.flash.detail",
+  "model.cost.flash.level",
+  "model.cost.flash.title",
+  "model.cost.mock.detail",
+  "model.cost.mock.level",
+  "model.cost.mock.title",
+  "model.cost.openai.detail",
+  "model.cost.openai.level",
+  "model.cost.openai.title",
+  "model.cost.pro.detail",
+  "model.cost.pro.level",
+  "model.cost.pro.title",
+  "patch.failure.missingContextContent.body",
+  "patch.failure.missingContextContent.state",
+  "patch.failure.missingTestContext.body",
+  "patch.failure.missingTestContext.state",
+  "patch.failure.unsupportedGoal.body",
+  "patch.failure.unsupportedGoal.state",
+  "path.mode.copy.body",
+  "path.mode.copy.title",
+  "path.mode.demo.body",
+  "path.mode.demo.title",
+  "path.mode.empty.body",
+  "path.mode.empty.title",
+  "path.mode.example.body",
+  "path.mode.example.title",
+  "path.mode.real.body",
+  "path.mode.real.title",
+  "path.mode.unverified.body",
+  "path.mode.unverified.title",
+  "preflight.autoProgress.body",
+  "preflight.restored.body",
+  "preflight.restored.state",
+  "session.context.state",
+  "session.recovery.pending.body",
+  "session.recovery.pending.title",
+  "session.recovery.restored.body",
+  "session.recovery.restored.title",
+  "trust.confirm.body",
+  "trust.local.body",
+  "trust.preflight.body",
+  "workflow.boundary.command.body",
+  "workflow.boundary.network.body",
+  "workflow.boundary.read.body",
+  "workflow.boundary.state.body",
+  "workflow.boundary.write.body",
+  "workflow.impact.state",
+  "workflow.receipt.body",
+  "workspace.capability.copy.body",
+  "workspace.capability.demo.body",
+  "workspace.capability.empty.body",
+  "workspace.capability.invalid.body",
+  "workspace.capability.original.body",
+  "workspace.disclosure.body",
+  "workspace.preview.blocked",
+  "workspace.preview.eligible"
+]);
 const RECENT_REPOS_KEY = "codeclaw.recentRepos.v1";
 const MODEL_PRESETS = {
-  mock: { type: "mock", baseUrl: "", model: "mock-codeclaw", apiKeyPlaceholder: "API key" },
-  dashscope: { type: "openai-compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", apiKeyPlaceholder: "DashScope API key" },
-  "deepseek-pro": { type: "openai-compatible", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-pro", apiKeyPlaceholder: "DeepSeek API key" },
-  "deepseek-flash": { type: "openai-compatible", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", apiKeyPlaceholder: "DeepSeek API key" },
-  openai: { type: "openai-compatible", baseUrl: "https://api.openai.com/v1", model: "", apiKeyPlaceholder: "OpenAI API key" },
-  custom: { type: "openai-compatible", baseUrl: "", model: "", apiKeyPlaceholder: "API key or local dummy value" }
+  mock: { type: "mock", baseUrl: "", model: "mock-codeclaw", apiKeyPlaceholderKey: "model.apiKey.placeholder" },
+  dashscope: { type: "openai-compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", apiKeyPlaceholderKey: "model.apiKey.placeholder" },
+  "deepseek-pro": { type: "openai-compatible", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-pro", apiKeyPlaceholderKey: "model.apiKey.placeholder" },
+  "deepseek-flash": { type: "openai-compatible", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", apiKeyPlaceholderKey: "model.apiKey.placeholder" },
+  openai: { type: "openai-compatible", baseUrl: "https://api.openai.com/v1", model: "", apiKeyPlaceholderKey: "model.apiKey.placeholder" },
+  custom: { type: "openai-compatible", baseUrl: "", model: "", apiKeyPlaceholderKey: "model.apiKey.placeholder" }
 };
-const MODEL_COST_GUIDE = {
+const MODEL_COST_PROFILES = {
   mock: {
     levelKey: "model.cost.mock.level",
     titleKey: "model.cost.mock.title",
@@ -183,7 +265,7 @@ boot();
 syncToolInputs();
 bindNavigation();
 bindI18n();
-bindTrialCommandCopies();
+bindWorkflow();
 bindSessionRecovery();
 bindWorkspaceSafety();
 bindModelOutboundReview();
@@ -193,7 +275,7 @@ renderPathHelperForInput(repoPath?.value || "");
 renderPathModeForInput(repoPath?.value || "");
 renderVerifyBoundary();
 renderWorkspaceSafety();
-renderGuide();
+renderWorkflow();
 updateControls();
 
 async function boot() {
@@ -241,7 +323,6 @@ function bindNavigation() {
 
 function bindI18n() {
   window.addEventListener("codeclaw:languagechange", () => {
-    if (trialCommandStatus) trialCommandStatus.textContent = "";
     setActiveView(activeView);
     renderSystemCheck(systemInfo);
     renderRecentRepos();
@@ -255,71 +336,28 @@ function bindI18n() {
     renderSessionRecovery();
     renderVerifyBoundary();
     renderWorkspaceSafety();
-    renderGuide();
+    renderWorkflow();
     if (activeModelReview) renderModelOutboundReview(activeModelReview);
     syncToolInputs();
     updateControls();
   });
 }
 
-function bindTrialCommandCopies() {
-  if (!trialCommandList) return;
-  trialCommandList.addEventListener("click", (event) => {
-    const target = event.target instanceof Element ? event.target : null;
-    const button = target?.closest("[data-trial-command]");
-    if (!button || !trialCommandList.contains(button)) return;
-    copyTrialCommand(button);
+function bindWorkflow() {
+  workflowMode?.addEventListener("change", (event) => {
+    const input = event.target instanceof HTMLInputElement ? event.target : null;
+    if (!input || input.name !== "experienceMode" || !EXPERIENCE_MODES.has(input.value)) return;
+    workflowModel.mode = input.value;
+    syncVisibility();
+    renderWorkflow();
   });
-}
-
-async function copyTrialCommand(button) {
-  const command = button.closest(".trial-command-row")?.querySelector("code")?.textContent?.trim();
-  if (!command) return;
-  const label = t(button.dataset.commandLabelKey || "trialHost.commands.title");
-  button.disabled = true;
-  try {
-    await writeClipboardText(command);
-    button.textContent = t("trialHost.command.copied");
-    if (trialCommandStatus) trialCommandStatus.textContent = t("trialHost.command.copySuccess", { label });
-    window.setTimeout(() => {
-      button.textContent = t("trialHost.command.copy");
-    }, 1600);
-  } catch {
-    button.textContent = t("trialHost.command.copy");
-    if (trialCommandStatus) trialCommandStatus.textContent = t("trialHost.command.copyFailed");
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function writeClipboardText(value) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const buffer = document.createElement("textarea");
-  buffer.className = "clipboard-buffer";
-  buffer.value = value;
-  buffer.setAttribute("readonly", "");
-  document.body.append(buffer);
-  buffer.select();
-  try {
-    if (!document.execCommand("copy")) throw new Error("Copy command failed");
-  } finally {
-    buffer.remove();
-  }
+  workflowPrimary?.addEventListener("click", () => workflowModel.primaryAction?.());
+  workflowSecondary?.addEventListener("click", () => workflowModel.secondaryAction?.());
 }
 
 function setActiveView(view) {
   activeView = view || "workspace";
-  document.body.dataset.activeView = activeView;
-  for (const item of navItems) {
-    item.classList.toggle("active", item.dataset.navView === activeView);
-  }
-  for (const panel of viewPanels) {
-    const views = String(panel.dataset.view || "").split(/\s+/);
-    panel.classList.toggle("hidden", !views.includes(activeView));
-  }
+  syncVisibility();
   const copy = {
     workspace: [t("view.workspace.eyebrow"), t("view.workspace.title")],
     memory: [t("view.memory.eyebrow"), t("view.memory.title")],
@@ -329,6 +367,28 @@ function setActiveView(view) {
   if (viewEyebrow) viewEyebrow.textContent = copy[0];
   if (viewTitle) viewTitle.textContent = copy[1];
   renderSessionRecovery();
+}
+
+function syncVisibility() {
+  document.body.dataset.activeView = activeView;
+  document.body.dataset.experienceMode = workflowModel.mode;
+  for (const item of navItems) {
+    const current = item.dataset.navView === activeView;
+    item.classList.toggle("active", current);
+    if (current) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  }
+  for (const panel of viewPanels) {
+    const views = String(panel.dataset.view || "").split(/\s+/);
+    const advancedOnly = panel.dataset.experience === "advanced";
+    panel.hidden = !views.includes(activeView) || (advancedOnly && workflowModel.mode !== "advanced");
+  }
+  for (const element of document.querySelectorAll("[data-experience='advanced']:not([data-view])")) {
+    element.hidden = workflowModel.mode !== "advanced";
+  }
+  for (const input of workflowMode?.querySelectorAll("input[name='experienceMode']") || []) {
+    input.checked = input.value === workflowModel.mode;
+  }
 }
 
 function bindSessionRecovery() {
@@ -344,7 +404,7 @@ function bindSessionRecovery() {
 function bindWorkspaceSafety() {
   previewCopyButton?.addEventListener("click", previewDisposableCopy);
   createCopyButton?.addEventListener("click", createDisposableCopy);
-  refreshWorkspacesButton?.addEventListener("click", () => refreshWorkspaces({ adoptActive: true }));
+  refreshWorkspacesButton?.addEventListener("click", () => refreshWorkspaces({ adoptActive: false }));
   workspaceList?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-workspace-action]");
     if (!button) return;
@@ -362,15 +422,18 @@ async function previewDisposableCopy() {
     return;
   }
 
+  const target = captureWorkflowTarget(false);
   previewCopyButton.disabled = true;
   disposableCopyPreview = null;
   workspaceNotice = { severity: "pending", message: t("workspace.preview.running") };
   renderWorkspaceSafety();
   try {
     const payload = await request("/api/workspaces/copy/preview", { sourcePath: currentWorkspace.rootPath });
+    if (!workflowTargetIsCurrent(target)) return;
     disposableCopyPreview = payload.preview || null;
     workspaceNotice = null;
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
   } finally {
     renderWorkspaceSafety();
@@ -391,6 +454,7 @@ async function createDisposableCopy() {
     return;
   }
 
+  const target = captureWorkflowTarget(false);
   createCopyButton.disabled = true;
   workspaceNotice = { severity: "pending", message: t("workspace.create.running") };
   renderWorkspaceSafety();
@@ -399,11 +463,13 @@ async function createDisposableCopy() {
       previewId: preview.previewId,
       previewDigest: preview.previewDigest
     });
+    if (!workflowTargetIsCurrent(target)) return;
     if (payload.workspace) mergeKnownWorkspace(payload.workspace);
     disposableCopyPreview = null;
     workspaceNotice = { severity: "ok", message: t("workspace.notice.created") };
     await refreshWorkspaces({ adoptActive: false, silent: true });
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
   } finally {
     renderWorkspaceSafety();
@@ -438,6 +504,8 @@ async function refreshWorkspaces({ adoptActive = false, silent = false } = {}) {
 async function activateWorkspace(workspace) {
   const workspaceId = workspaceIdentifier(workspace);
   if (!workspaceId || !workspace.workspaceDigest) return;
+  advanceWorkflowGeneration();
+  const target = captureWorkflowTarget(false);
   workspaceNotice = { severity: "pending", message: t("workspace.activate.running") };
   renderWorkspaceSafety();
   try {
@@ -445,6 +513,8 @@ async function activateWorkspace(workspace) {
       workspaceId,
       workspaceDigest: workspace.workspaceDigest
     });
+    if (!workflowTargetIsCurrent(target)) return;
+    advanceWorkflowGeneration();
     const goal = goalInput.value;
     resetWorkspaceBoundState();
     goalInput.value = goal;
@@ -460,9 +530,10 @@ async function activateWorkspace(workspace) {
     scanState.textContent = t("workspace.activation.needsPreflight");
     renderPreflightReport(null);
     renderWorkspaceSafety();
-    renderGuide();
+    renderWorkflow();
     updateControls();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     workspaceNotice = { severity: "error", message: friendlyErrorMessage(error) };
     renderWorkspaceSafety();
   }
@@ -768,8 +839,9 @@ async function restoreLastSession() {
 }
 
 function hydrateRestoredSession(payload) {
+  advanceWorkflowGeneration();
   repoProfile = payload.profile;
-  currentTask = payload.task || currentTask;
+  adoptTaskResponse(payload.task, { replace: true });
   currentMemory = payload.memory || currentMemory;
   currentPreflight = null;
   repoPath.value = repoProfile.rootPath;
@@ -843,9 +915,11 @@ function resetWorkspaceBoundState() {
 }
 
 function startFreshClientWorkflow() {
+  advanceWorkflowGeneration();
   sessionRestoreSuperseded = true;
   pendingSessionPayload = null;
   sessionRecoveryMode = "hidden";
+  workflowModel.demoRequested = false;
   resetWorkspaceBoundState();
   repoPath.value = "";
   goalInput.value = "";
@@ -853,13 +927,14 @@ function startFreshClientWorkflow() {
   renderPathHelperForInput("");
   renderPathModeForInput("");
   renderSessionRecovery();
-  renderGuide();
+    renderWorkflow();
   updateControls();
 }
 
 demoButton.addEventListener("click", () => {
   setActiveView("workspace");
   startFreshClientWorkflow();
+  workflowModel.demoRequested = true;
   if (systemInfo?.demoPath) repoPath.value = systemInfo.demoPath;
   if (!goalInput.value.trim()) goalInput.value = t("demo.goal.default");
   renderPathHelper("ok", t("path.demo"));
@@ -881,6 +956,7 @@ examplePathButton?.addEventListener("click", () => {
 });
 
 repoPath.addEventListener("input", () => {
+  advanceWorkflowGeneration();
   const nextPath = repoPath.value;
   if (sessionRecoveryMode !== "hidden") {
     sessionRestoreSuperseded = true;
@@ -889,6 +965,7 @@ repoPath.addEventListener("input", () => {
     renderSessionRecovery();
   }
   if (currentWorkspace || repoProfile || currentTask || currentPreflight) resetWorkspaceBoundState();
+  workflowModel.demoRequested = false;
   repoPath.value = nextPath;
   clearWorkspaceAuthority();
   renderPathHelperForInput(repoPath.value);
@@ -896,13 +973,14 @@ repoPath.addEventListener("input", () => {
   updateControls();
 });
 goalInput.addEventListener("input", () => {
+  advanceWorkflowGeneration();
   currentPreflight = null;
   renderPreflightReport(null);
-  renderGuide();
+    renderWorkflow();
   updateControls();
 });
 contextCandidates.addEventListener("change", () => {
-  renderGuide();
+  renderWorkflow();
   updateControls();
 });
 
@@ -913,11 +991,13 @@ scanButton.addEventListener("click", async () => {
     renderPathHelper("error", t("path.empty"));
     return;
   }
+  const target = captureWorkflowTarget(false);
   scanButton.disabled = true;
   scanState.textContent = t("scan.state.scanning");
   renderPathHelper("warn", t("path.checking"));
   try {
     const result = await request("/api/repo/scan", { path });
+    if (!workflowTargetIsCurrent(target)) return;
     repoProfile = result.profile;
     adoptServerWorkspace(result.workspace);
     currentPreflight = null;
@@ -930,9 +1010,10 @@ scanButton.addEventListener("click", async () => {
     renderRepoSummary(repoProfile);
     renderVerifyCommands(repoProfile.commands || []);
     await refreshMemory();
-    renderGuide();
+    renderWorkflow();
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     scanState.textContent = t("scan.state.failed");
     renderPathHelper("error", friendlyErrorMessage(error).split("\n\n")[0]);
     contextOutput.textContent = friendlyErrorMessage(error);
@@ -948,6 +1029,7 @@ preflightButton.addEventListener("click", async () => {
     renderPathHelper("error", t("path.empty"));
     return;
   }
+  const target = captureWorkflowTarget(false);
   preflightButton.disabled = true;
   preflightState.textContent = t("preflight.state.running");
   renderPathHelper("warn", t("path.preflightRunning"));
@@ -957,10 +1039,11 @@ preflightButton.addEventListener("click", async () => {
       path,
       goal: goalInput.value.trim() || t("preflight.goal.default")
     });
+    if (!workflowTargetIsCurrent(target)) return;
     currentPreflight = payload.report;
     repoProfile = payload.profile;
     adoptServerWorkspace(payload.workspace);
-    currentTask = payload.task || currentTask;
+    adoptTaskResponse(payload.task, { replace: true });
     currentMemory = payload.memory || currentMemory;
     suggestedContextFiles = (currentPreflight.contextFiles || []).map((file) => ({ path: file.path, reason: file.reason || t("preflight.reason.default") }));
     rememberRepo(repoProfile);
@@ -982,12 +1065,13 @@ preflightButton.addEventListener("click", async () => {
     toolState.textContent = t("tool.state.readOnlyReady");
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     currentPreflight = null;
     preflightState.textContent = t("preflight.state.failed");
     renderPathHelper("error", friendlyErrorMessage(error).split("\n\n")[0]);
     preflightOutput.textContent = friendlyErrorMessage(error);
   } finally {
-    renderGuide();
+    renderWorkflow();
     updateControls();
   }
 });
@@ -995,20 +1079,25 @@ preflightButton.addEventListener("click", async () => {
 planButton.addEventListener("click", async () => {
   const goal = goalInput.value.trim();
   if (!goal) return;
+  const target = captureWorkflowTarget(false);
   planButton.disabled = true;
   planIntent.textContent = t("plan.state.generating");
   try {
     if (!currentTask || currentTask.goal !== goal || currentTask.rootPath !== repoProfile?.rootPath) {
       const created = await request("/api/tasks/create", { goal, rootPath: repoProfile?.rootPath });
-      currentTask = created.task;
+      if (!workflowTargetIsCurrent(target)) return;
+      adoptTaskResponse(created.task, { replace: true });
     }
+    const taskTarget = captureWorkflowTarget(true);
     const result = await request("/api/agent/plan", { goal, repoProfile, taskId: currentTask.id });
-    if (result.task) currentTask = result.task;
+    if (!workflowTargetIsCurrent(taskTarget)) return;
+    if (result.task && !adoptTaskResponse(result.task)) return;
     renderPlan(result.plan);
     renderTask(currentTask);
     planIntent.textContent = result.plan.intent;
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     timeline.innerHTML = `<li><h4>${escapeHtml(t("plan.state.failed"))}</h4><p>${escapeHtml(friendlyErrorMessage(error))}</p></li>`;
   } finally {
     updateControls();
@@ -1016,7 +1105,10 @@ planButton.addEventListener("click", async () => {
 });
 
 clearButton.addEventListener("click", () => {
+  advanceWorkflowGeneration();
   goalInput.value = "";
+  currentPreflight = null;
+  renderPreflightReport(null);
   timeline.innerHTML = "";
   planIntent.textContent = t("state.waiting");
   updateControls();
@@ -1027,12 +1119,36 @@ completeTaskButton.addEventListener("click", async () => {
     taskState.textContent = t("task.state.none");
     return;
   }
-  const result = await request("/api/tasks/complete", { taskId: currentTask.id });
-  currentTask = result.task;
-  if (result.memory) currentMemory = result.memory;
-  renderTask(currentTask);
-  renderMemory(currentMemory);
-  await refreshAudit();
+  if (!currentPreflight) {
+    taskState.textContent = t("control.needPreflight");
+    return;
+  }
+  if (!taskHasActivePatch(currentTask)) {
+    taskState.textContent = t("control.needAppliedPatch");
+    return;
+  }
+  if (!taskHasCurrentSuccessfulVerification(currentTask)) {
+    taskState.textContent = t("control.needSuccessfulVerify");
+    return;
+  }
+  const target = captureWorkflowTarget(true);
+  completeTaskButton.disabled = true;
+  try {
+    const result = await request("/api/tasks/complete", { taskId: currentTask.id });
+    if (!workflowTargetIsCurrent(target)) return;
+    if (result.task && !adoptTaskResponse(result.task)) return;
+    if (result.memory) currentMemory = result.memory;
+    renderTask(currentTask);
+    renderMemory(currentMemory);
+    await refreshAudit();
+  } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
+    const message = friendlyErrorMessage(error);
+    taskState.textContent = message;
+    taskSummary.textContent = message;
+  } finally {
+    updateControls();
+  }
 });
 
 saveMemoryButton.addEventListener("click", async () => {
@@ -1040,14 +1156,17 @@ saveMemoryButton.addEventListener("click", async () => {
     memoryState.textContent = t("tool.state.scanFirst");
     return;
   }
+  const target = captureWorkflowTarget(false);
   saveMemoryButton.disabled = true;
   memoryState.textContent = t("memory.state.saving");
   try {
     const result = await request("/api/memory/notes", { rootPath: repoProfile.rootPath, notes: memoryNotes.value });
+    if (!workflowTargetIsCurrent(target)) return;
     currentMemory = result.memory;
     renderMemory(currentMemory);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     memoryState.textContent = t("memory.state.saveFailed");
     memoryOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1336,16 +1455,19 @@ function formatModelReviewTime(value) {
 }
 
 suggestButton.addEventListener("click", async () => {
+  const target = captureWorkflowTarget(true);
   suggestButton.disabled = true;
   try {
     const payload = await executeReviewedModelOperation("task-suggest", suggestButton, modelState);
     if (!payload) return;
-    if (payload.task) currentTask = payload.task;
+    if (!workflowTargetIsCurrent(target)) return;
+    if (payload.task && !adoptTaskResponse(payload.task)) return;
     modelState.textContent = payload.result?.provider || t("model.review.state.completed");
     modelOutput.textContent = payload.result?.content || t("model.review.result.empty");
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     modelState.textContent = t("model.state.suggestFailed");
     modelOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1354,19 +1476,22 @@ suggestButton.addEventListener("click", async () => {
 });
 
 contextButton.addEventListener("click", async () => {
+  const target = captureWorkflowTarget(true);
   contextButton.disabled = true;
   try {
     const payload = await executeReviewedModelOperation("context-files", contextButton, modelState);
     if (!payload) return;
-    if (payload.task) currentTask = payload.task;
+    if (!workflowTargetIsCurrent(target)) return;
+    if (payload.task && !adoptTaskResponse(payload.task)) return;
     suggestedContextFiles = payload.result?.files || [];
     modelState.textContent = t("model.state.contextCandidates", { count: suggestedContextFiles.length });
     renderContextCandidates(suggestedContextFiles);
     modelOutput.textContent = (payload.result?.note || t("model.context.noteFallback")).trim();
     renderTask(currentTask);
-    renderGuide();
+    renderWorkflow();
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     modelState.textContent = t("model.state.contextFailed");
     modelOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1382,13 +1507,15 @@ readContextButton.addEventListener("click", async () => {
     return;
   }
 
+  const target = captureWorkflowTarget(true);
   readContextButton.disabled = true;
   modelState.textContent = t("model.state.readingContext");
   try {
     const outputs = [];
     for (const file of selected) {
       const result = await request("/api/tools/call", { tool: "read_file", args: { path: file.path }, rootPath: repoProfile.rootPath, taskId: currentTask?.id });
-      if (result.task) currentTask = result.task;
+      if (!workflowTargetIsCurrent(target)) return;
+      if (result.task && !adoptTaskResponse(result.task)) return;
       outputs.push(`${file.path}: ${typeof result.result === "string" ? result.result.length : 0} chars`);
     }
     renderTask(currentTask);
@@ -1396,6 +1523,7 @@ readContextButton.addEventListener("click", async () => {
     modelOutput.textContent = outputs.join("\n");
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     modelState.textContent = t("model.state.readFailed");
     modelOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1414,15 +1542,18 @@ proposePatchButton.addEventListener("click", async () => {
     patchOutput.textContent = gate.detail;
     return;
   }
+  const target = captureWorkflowTarget(true);
   proposePatchButton.disabled = true;
   try {
     const payload = await executeReviewedModelOperation("patch-proposal", proposePatchButton, patchState);
     if (!payload) return;
-    currentTask = payload.task;
+    if (!workflowTargetIsCurrent(target)) return;
+    if (payload.task && !adoptTaskResponse(payload.task)) return;
     renderPatchProposal(payload.result);
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     patchState.textContent = t("patch.state.draftFailed");
     patchOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1456,6 +1587,7 @@ applyPatchButton.addEventListener("click", async () => {
     t("confirm.apply.rollback")
   ].join("\n"));
   if (!approved) return;
+  const target = captureWorkflowTarget(true);
   applyPatchButton.disabled = true;
   patchState.textContent = t("patch.state.applying");
   try {
@@ -1465,13 +1597,15 @@ applyPatchButton.addEventListener("click", async () => {
       proposalDigest: approvedProposal.proposalDigest,
       approved: true
     });
-    if (result.task) currentTask = result.task;
+    if (!workflowTargetIsCurrent(target)) return;
+    if (result.task && !adoptTaskResponse(result.task)) return;
     if (result.workspace) adoptServerWorkspace(result.workspace);
     patchState.textContent = t("patch.state.applied");
     patchOutput.textContent = result.result?.diff || currentTask.patchProposal.diff || t("patch.output.appliedFallback");
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     patchState.textContent = t("patch.state.applyFailed");
     patchOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1499,6 +1633,7 @@ revertPatchButton.addEventListener("click", async () => {
     t("confirm.revert.review")
   ].join("\n"));
   if (!approved) return;
+  const target = captureWorkflowTarget(true);
   revertPatchButton.disabled = true;
   patchState.textContent = t("patch.state.reverting");
   try {
@@ -1509,13 +1644,15 @@ revertPatchButton.addEventListener("click", async () => {
       workspaceIdentity: currentTask.rootIdentity,
       approved: true
     });
-    if (result.task) currentTask = result.task;
+    if (!workflowTargetIsCurrent(target)) return;
+    if (result.task && !adoptTaskResponse(result.task)) return;
     if (result.workspace) adoptServerWorkspace(result.workspace);
     patchState.textContent = t("patch.state.reverted");
     patchOutput.textContent = result.result?.diff || t("patch.output.revertedFallback");
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     patchState.textContent = t("patch.state.revertFailed");
     patchOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1530,10 +1667,12 @@ callToolButton.addEventListener("click", async () => {
   }
 
   const tool = toolSelect.value;
+  const target = captureWorkflowTarget(true);
   callToolButton.disabled = true;
   toolState.textContent = t("tool.state.calling");
   try {
     let result = await callTool(tool, false);
+    if (!workflowTargetIsCurrent(target)) return;
     if (result.blocked) {
       const approved = window.confirm([
         t("confirm.tool.title", { tool }),
@@ -1541,14 +1680,18 @@ callToolButton.addEventListener("click", async () => {
         t("confirm.tool.riskPrefix", { risk: result.permission.risk }),
         t("confirm.tool.cancel")
       ].join("\n"));
-      if (approved) result = await callTool(tool, true);
+      if (approved) {
+        result = await callTool(tool, true);
+        if (!workflowTargetIsCurrent(target)) return;
+      }
     }
-    if (result.task) currentTask = result.task;
+    if (result.task && !adoptTaskResponse(result.task)) return;
     toolState.textContent = result.blocked ? t("tool.state.blocked") : result.permission.level;
     renderToolResult(tool, result);
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     toolState.textContent = t("tool.state.failed");
     toolOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1561,14 +1704,6 @@ verifyCommandSelect.addEventListener("change", () => {
   renderVerifyBoundary();
   updateControls();
 });
-guideNextButton.addEventListener("click", runGuideNextStep);
-quickStartPrimary?.addEventListener("click", runQuickStartPrimary);
-quickStartSecondary?.addEventListener("click", () => {
-  setActiveView("workspace");
-  const model = quickStartModel();
-  if (model.secondaryAction) model.secondaryAction();
-  else preflightButton.click();
-});
 
 runVerifyButton.addEventListener("click", async () => {
   if (!repoProfile) {
@@ -1577,6 +1712,10 @@ runVerifyButton.addEventListener("click", async () => {
   }
   if (!currentPreflight) {
     verifyState.textContent = t("verify.state.preflightRequired");
+    return;
+  }
+  if (!taskHasActivePatch(currentTask)) {
+    verifyState.textContent = t("control.needAppliedPatch");
     return;
   }
 
@@ -1593,10 +1732,12 @@ runVerifyButton.addEventListener("click", async () => {
     return;
   }
 
+  const target = captureWorkflowTarget(true);
   runVerifyButton.disabled = true;
   verifyState.textContent = t("verify.state.waitingConfirm");
   try {
     let result = await request("/api/tools/call", { tool: "run_command", args: { command: command.command }, rootPath: repoProfile.rootPath, taskId: currentTask?.id });
+    if (!workflowTargetIsCurrent(target)) return;
     if (result.blocked) {
       const approved = window.confirm([
         t("confirm.verify.title"),
@@ -1609,15 +1750,17 @@ runVerifyButton.addEventListener("click", async () => {
       if (approved) {
         verifyState.textContent = t("verify.state.running");
         result = await request("/api/tools/call", { tool: "run_command", args: { command: command.command }, rootPath: repoProfile.rootPath, taskId: currentTask?.id, approved: true });
+        if (!workflowTargetIsCurrent(target)) return;
       }
     }
-    if (result.task) currentTask = result.task;
+    if (result.task && !adoptTaskResponse(result.task)) return;
     if (result.workspace) adoptServerWorkspace(result.workspace);
     verifyState.textContent = result.result?.timedOut ? t("verify.state.timeout") : result.result?.exitCode === 0 ? t("verify.state.passed") : t("verify.state.failed");
     renderVerifyResult(command, result);
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     verifyState.textContent = t("verify.state.runFailed");
     verifyOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1630,16 +1773,19 @@ fixFailureButton.addEventListener("click", async () => {
     verifyState.textContent = t("verify.state.noFailure");
     return;
   }
+  const target = captureWorkflowTarget(true);
   fixFailureButton.disabled = true;
   try {
     const payload = await executeReviewedModelOperation("failure-fix", fixFailureButton, verifyState);
     if (!payload) return;
-    if (payload.task) currentTask = payload.task;
+    if (!workflowTargetIsCurrent(target)) return;
+    if (payload.task && !adoptTaskResponse(payload.task)) return;
     verifyState.textContent = t("verify.state.fixReady");
     modelOutput.textContent = payload.result?.content || t("model.review.result.empty");
     renderTask(currentTask);
     await refreshAudit();
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     verifyState.textContent = t("verify.state.fixFailed");
     verifyOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1656,6 +1802,58 @@ function syncToolInputs() {
   updateControls();
 }
 
+function taskHasActivePatch(task) {
+  return Boolean(task?.appliedPatches?.some((patch) => !patch.revertedAt));
+}
+
+function advanceWorkflowGeneration() {
+  workflowGeneration += 1;
+}
+
+function captureWorkflowTarget(trackTask = true) {
+  return {
+    generation: workflowGeneration,
+    path: repoPath?.value.trim() || "",
+    taskId: trackTask ? currentTask?.id || null : null,
+    workspaceId: workspaceIdentifier(currentWorkspace),
+    workspaceRoot: currentWorkspace?.rootPath || ""
+  };
+}
+
+function workflowTargetIsCurrent(target) {
+  if (!target || target.generation !== workflowGeneration) return false;
+  if (target.path !== (repoPath?.value.trim() || "")) return false;
+  if (target.workspaceId !== workspaceIdentifier(currentWorkspace)) return false;
+  if (target.workspaceRoot !== (currentWorkspace?.rootPath || "")) return false;
+  return !target.taskId || target.taskId === currentTask?.id;
+}
+
+function adoptTaskResponse(task, options) {
+  const replace = options?.replace === true;
+  if (!task?.id) return false;
+  if (replace) {
+    currentTask = task;
+    return true;
+  }
+  if (!currentTask) return false;
+  if (task.id !== currentTask.id) return false;
+  const incomingRevision = Number.isSafeInteger(task.revision) ? task.revision : 0;
+  const currentRevision = Number.isSafeInteger(currentTask.revision) ? currentTask.revision : 0;
+  if (incomingRevision < currentRevision) return false;
+  currentTask = task;
+  return true;
+}
+
+function taskHasCurrentSuccessfulVerification(task) {
+  const activePatches = (task?.appliedPatches || []).filter((patch) => !patch.revertedAt);
+  const verification = task?.verification;
+  if (!activePatches.length || !verification || verification.exitCode !== 0 || verification.timedOut) return false;
+  if (!/^[a-f0-9]{64}$/i.test(verification.patchSetDigest || "")) return false;
+  const verifiedAt = Date.parse(verification.time || "");
+  const latestAppliedAt = Math.max(...activePatches.map((patch) => Date.parse(patch.time || "")).filter(Number.isFinite));
+  return Number.isFinite(verifiedAt) && Number.isFinite(latestAppliedAt) && verifiedAt >= latestAppliedAt;
+}
+
 function updateControls() {
   const hasRepoPath = Boolean(repoPath.value.trim());
   const hasRepo = Boolean(repoProfile?.rootPath);
@@ -1669,6 +1867,9 @@ function updateControls() {
   const activePatches = currentTask?.appliedPatches?.filter((patch) => !patch.revertedAt).length || 0;
   const verificationCommand = selectedVerifyCommand();
   const taskComplete = currentTask?.status === "completed";
+  const startsNewTask = Boolean(goalInput.value.trim() && goalInput.value.trim() !== currentTask?.goal);
+  const hasActivePatch = taskHasActivePatch(currentTask);
+  const hasSuccessfulVerification = taskHasCurrentSuccessfulVerification(currentTask);
   const patchDraftGateStatus = preflightPatchGateStatus();
   const patchApplyGateStatus = applyPatchGateStatus();
   const writeGateStatus = workspaceWriteGateStatus();
@@ -1677,26 +1878,25 @@ function updateControls() {
 
   setControlState(scanButton, !hasRepoPath, hasRepoPath ? "" : t("control.needProjectPathDemo"));
   setControlState(preflightButton, !hasRepoPath, hasRepoPath ? "" : t("control.needProjectPath"));
-  setControlState(planButton, !hasGoal, hasGoal ? "" : t("control.needGoal"));
-  setControlState(completeTaskButton, !hasTask || taskComplete, !hasTask ? t("control.needTask") : taskComplete ? t("control.taskComplete") : "");
+  setControlState(planButton, !hasGoal || taskComplete && !startsNewTask, !hasGoal ? t("control.needGoal") : taskComplete && !startsNewTask ? t("control.taskComplete") : "");
+  setControlState(completeTaskButton, !hasTask || taskComplete || !currentPreflight || !hasActivePatch || !hasSuccessfulVerification, !hasTask ? t("control.needTask") : taskComplete ? t("control.taskComplete") : !currentPreflight ? t("control.needPreflight") : !hasActivePatch ? t("control.needAppliedPatch") : !hasSuccessfulVerification ? t("control.needSuccessfulVerify") : "");
   setControlState(saveMemoryButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
   setControlState(refreshMemoryButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
   setControlState(saveModelButton, false);
-  setControlState(suggestButton, !hasTask, hasTask ? "" : t("control.needPlan"));
-  setControlState(contextButton, !hasTask || !hasRepo, !hasTask ? t("control.needPlan") : !hasRepo ? t("control.needScan") : "");
-  setControlState(readContextButton, !hasTask || !hasContextCandidates || selectedContextCount === 0, !hasTask ? t("control.needPlan") : !hasContextCandidates ? t("control.needContextCandidates") : selectedContextCount === 0 ? t("control.needContextSelection") : "");
-  setControlState(proposePatchButton, !hasTask || !hasContext || patchDraftGateStatus.blocksPatch, !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : patchDraftGateStatus.detail);
-  setControlState(applyPatchButton, !proposalFiles.length || activePatches > 0 || patchApplyGateStatus.blocksPatch, !proposalFiles.length ? t("control.needApplicablePatch") : activePatches > 0 ? t("control.hasActivePatch") : patchApplyGateStatus.detail);
+  setControlState(suggestButton, !hasTask || taskComplete, !hasTask ? t("control.needPlan") : taskComplete ? t("control.taskComplete") : "");
+  setControlState(contextButton, !hasTask || !hasRepo || taskComplete, !hasTask ? t("control.needPlan") : !hasRepo ? t("control.needScan") : taskComplete ? t("control.taskComplete") : "");
+  setControlState(readContextButton, !hasTask || !hasContextCandidates || selectedContextCount === 0 || taskComplete, !hasTask ? t("control.needPlan") : !hasContextCandidates ? t("control.needContextCandidates") : selectedContextCount === 0 ? t("control.needContextSelection") : taskComplete ? t("control.taskComplete") : "");
+  setControlState(proposePatchButton, !hasTask || !hasContext || taskComplete || patchDraftGateStatus.blocksPatch, !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : taskComplete ? t("control.taskComplete") : patchDraftGateStatus.detail);
+  setControlState(applyPatchButton, !proposalFiles.length || activePatches > 0 || taskComplete || patchApplyGateStatus.blocksPatch, !proposalFiles.length ? t("control.needApplicablePatch") : activePatches > 0 ? t("control.hasActivePatch") : taskComplete ? t("control.taskComplete") : patchApplyGateStatus.detail);
   setControlState(revertPatchButton, activePatches === 0 || writeGateStatus.blocksPatch, activePatches === 0 ? t("control.noRevertPatch") : writeGateStatus.detail);
   setControlState(callToolButton, !hasRepo || selectedToolRunsProcess && commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : selectedToolRunsProcess ? commandGateStatus.detail : "");
-  setControlState(runVerifyButton, !hasRepo || !currentPreflight || !verificationCommand || commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : !currentPreflight ? t("control.needPreflight") : !verificationCommand ? t("control.noVerifyCommand") : commandGateStatus.detail);
-  setControlState(fixFailureButton, !currentTask?.failureSummary, currentTask?.failureSummary ? "" : t("control.needFailedVerify"));
-  setControlState(guideNextButton, !canRunGuideNextStep(), t("guide.disabled.currentInfo"));
+  setControlState(runVerifyButton, !hasRepo || !currentPreflight || !hasActivePatch || !verificationCommand || taskComplete || commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : !currentPreflight ? t("control.needPreflight") : !hasActivePatch ? t("control.needAppliedPatch") : !verificationCommand ? t("control.noVerifyCommand") : taskComplete ? t("control.taskComplete") : commandGateStatus.detail);
+  setControlState(fixFailureButton, !currentTask?.failureSummary || taskComplete, taskComplete ? t("control.taskComplete") : currentTask?.failureSummary ? "" : t("control.needFailedVerify"));
   renderPatchGate(proposalFiles.length ? patchApplyGateStatus : patchDraftGateStatus);
   renderApplyReview(currentTask?.patchProposal, currentTask, patchApplyGateStatus);
   renderVerifyBoundary();
   renderWorkspaceSafety();
-  renderQuickStart();
+  renderWorkflow();
 
   if (!hasPlan && !hasGoal) planIntent.textContent = t("state.waiting");
   if (!hasRepo) toolState.textContent = t("tool.state.waitingProject");
@@ -1835,148 +2035,142 @@ function renderApplyReview(proposal, task, gate = applyPatchGateStatus()) {
   `;
 }
 
-function quickStartModel() {
+function buildWorkflowSnapshot() {
   const hasPath = Boolean(repoPath.value.trim() || repoProfile?.rootPath);
-  const hasGoal = Boolean(goalInput.value.trim() || currentTask?.goal);
   const preflightWarnings = currentPreflight?.nextGate?.warnings?.length || 0;
   const preflightBlockers = currentPreflight?.nextGate?.blockers?.length || 0;
   const hasPlan = Boolean(currentTask?.plan);
   const hasContext = Boolean(currentTask?.contextFiles?.length);
   const hasPatch = Boolean(currentTask?.patchProposal);
-  const hasActivePatch = Boolean(currentTask?.appliedPatches?.some((patch) => !patch.revertedAt));
-  const verified = Boolean(currentTask?.verification);
-  const completed = Boolean(currentTask?.summary);
-  const steps = [
-    { label: t("quick.step.project"), done: hasPath, detail: hasPath ? t("quick.step.project.ready") : t("quick.step.project.choose") },
-    { label: t("quick.step.preflight"), done: Boolean(currentPreflight), detail: currentPreflight ? preflightWarnings || preflightBlockers ? t("quick.step.preflight.needsHandling") : t("quick.step.preflight.done") : t("quick.step.preflight.todo") },
-    { label: t("quick.step.plan"), done: hasPlan, detail: hasPlan ? t("quick.step.plan.done") : hasGoal ? t("quick.step.plan.goalReady") : t("quick.step.plan.todo") },
-    { label: t("quick.step.context"), done: hasContext, detail: hasContext ? t("quick.step.context.done") : t("quick.step.context.todo") },
-    { label: t("quick.step.patchVerify"), done: hasActivePatch && verified, detail: verified ? t("quick.step.patchVerify.verified") : hasActivePatch ? t("quick.step.patchVerify.applied") : hasPatch ? t("quick.step.patchVerify.patchReady") : t("quick.step.patchVerify.todo") },
-    { label: t("quick.step.finish"), done: completed, detail: completed ? t("quick.step.finish.done") : t("quick.step.finish.todo") }
-  ];
+  const hasActivePatch = taskHasActivePatch(currentTask);
+  const verified = taskHasCurrentSuccessfulVerification(currentTask);
+  const completed = verified && Boolean(currentTask?.summary);
+  const steps = buildWorkflowSteps();
 
   if (!hasPath) return {
-    state: t("quick.state.waiting"),
-    copy: t("quick.copy.waiting"),
-    primary: t("quick.primary.demo"),
-    secondary: t("quick.secondary.runPreflight"),
-    secondaryDisabled: true,
+    state: t("workflow.state.project"),
+    copy: t("workflow.next.project"),
+    primary: t("workflow.action.demo"),
+    secondary: t("workflow.action.ownProject"),
     action: () => demoButton.click(),
+    secondaryAction: () => { repoPath.focus(); repoPath.scrollIntoView({ behavior: "smooth", block: "center" }); },
     steps
   };
   if (!currentPreflight) return {
-    state: t("quick.state.needsPreflight"),
-    copy: t("quick.copy.needsPreflight"),
-    primary: t("quick.primary.runPreflight"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
+    state: t("workflow.state.preflight"),
+    copy: t("workflow.next.preflight"),
+    primary: t("workflow.action.preflight"),
+    secondary: t("workflow.action.project"),
     action: () => preflightButton.click(),
+    secondaryAction: () => { repoPath.focus(); repoPath.scrollIntoView({ behavior: "smooth", block: "center" }); },
     steps
   };
   if (preflightBlockers || preflightWarnings) return {
-    state: preflightBlockers ? t("quick.state.blockers") : t("quick.state.warnings"),
-    copy: preflightBlockers ? t("quick.copy.blockers") : t("quick.copy.warnings"),
-    primary: t("quick.primary.rerunPreflight"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
+    state: preflightBlockers ? t("workflow.state.blocked") : t("workflow.state.warning"),
+    copy: preflightBlockers ? t("workflow.next.blocked") : t("workflow.next.warning"),
+    primary: t("workflow.action.rerunPreflight"),
+    secondary: t("workflow.action.reviewPreflight"),
     action: () => preflightButton.click(),
+    secondaryAction: () => document.querySelector("[data-workflow-section='preflight']")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     steps
   };
   if (!hasPlan) return {
-    state: t("quick.state.canPlan"),
-    copy: t("quick.copy.canPlan"),
-    primary: t("quick.primary.generatePlan"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
+    state: t("workflow.state.plan"),
+    copy: t("workflow.next.plan"),
+    primary: t("workflow.action.plan"),
+    secondary: t("workflow.action.rerunPreflight"),
     action: () => {
-      if (!goalInput.value.trim()) goalInput.value = currentTask?.goal || t("quick.defaultGoal");
+      if (!goalInput.value.trim()) goalInput.value = currentTask?.goal || t("workflow.defaultGoal");
       planButton.click();
     },
+    secondaryAction: () => preflightButton.click(),
     steps
   };
   if (!hasContext) return {
-    state: t("quick.state.readContext"),
-    copy: t("quick.copy.readContext"),
-    primary: suggestedContextFiles.length ? t("quick.primary.readSelectedContext") : t("quick.primary.chooseContext"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
-    action: () => runContextGuideStep(),
+    state: t("workflow.state.context"),
+    copy: t("workflow.next.context"),
+    primary: suggestedContextFiles.length ? t("workflow.action.readContext") : t("workflow.action.chooseContext"),
+    secondary: t("workflow.action.rerunPreflight"),
+    action: runWorkflowContextAction,
+    secondaryAction: () => preflightButton.click(),
     steps
   };
   if (!hasPatch) return {
-    state: t("quick.state.canPatch"),
-    copy: t("quick.copy.canPatch"),
-    primary: t("quick.primary.generatePatch"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
-    action: () => proposePatchButton.click(),
+    state: t("workflow.state.patch"),
+    copy: t("workflow.next.patch"),
+    primary: t("workflow.action.patch"),
+    secondary: t("workflow.action.reviewContext"),
+    action: runWorkflowPatchAction,
+    secondaryAction: () => document.querySelector("[data-workflow-section='context']")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     steps
   };
   if (!hasActivePatch && !workspaceCanWrite()) return {
-    state: t("quick.state.needsDisposableCopy"),
-    copy: t("quick.copy.needsDisposableCopy"),
+    state: t("workflow.state.workspace"),
+    copy: t("workflow.next.workspace"),
     primary: disposableCopyPreview?.eligible ? t("workspace.button.create") : t("workspace.button.prepare"),
     secondary: t("workspace.button.refresh"),
-    secondaryDisabled: false,
     secondaryAction: () => refreshWorkspaces({ adoptActive: false }),
     action: runWorkspacePreparationAction,
     steps
   };
   if (!hasActivePatch) return {
-    state: t("quick.state.waitingApply"),
-    copy: t("quick.copy.waitingApply"),
-    primary: t("quick.primary.applyPatch"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
-    action: () => applyPatchButton.click(),
+    state: t("workflow.state.apply"),
+    copy: t("workflow.next.apply"),
+    primary: t("workflow.action.apply"),
+    secondary: t("workflow.action.reviewPatch"),
+    action: runWorkflowPatchAction,
+    secondaryAction: () => document.querySelector("[data-workflow-section='patch']")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     steps
   };
   if (!verified) return {
-    state: t("quick.state.waitingVerify"),
-    copy: t("quick.copy.waitingVerify"),
-    primary: t("quick.primary.runVerify"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
+    state: t("workflow.state.verify"),
+    copy: t("workflow.next.verify"),
+    primary: t("workflow.action.verify"),
+    secondary: t("workflow.action.reviewApplied"),
     action: () => runVerifyButton.click(),
+    secondaryAction: () => document.querySelector("[data-workflow-section='workspace']")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     steps
   };
   if (!completed) return {
-    state: t("quick.state.readyFinish"),
-    copy: t("quick.copy.readyFinish"),
-    primary: t("quick.primary.completeTask"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
+    state: t("workflow.state.complete"),
+    copy: t("workflow.next.complete"),
+    primary: t("workflow.action.complete"),
+    secondary: t("workflow.action.reviewVerify"),
     action: () => completeTaskButton.click(),
+    secondaryAction: () => document.querySelector("[data-workflow-section='verify']")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     steps
   };
   return {
-    state: t("quick.state.done"),
-    copy: t("quick.copy.done"),
-    primary: t("quick.primary.viewAudit"),
-    secondary: t("quick.secondary.refreshPreflight"),
-    secondaryDisabled: false,
+    state: t("workflow.state.done"),
+    copy: t("workflow.next.done"),
+    primary: t("workflow.action.audit"),
+    secondary: t("workflow.action.newTask"),
     action: () => setActiveView("audit"),
+    secondaryAction: () => { goalInput.focus(); goalInput.scrollIntoView({ behavior: "smooth", block: "center" }); },
     steps
   };
 }
 
-function renderQuickStart() {
-  if (!quickStartState || !quickStartCopy || !quickStartList || !quickStartPrimary || !quickStartSecondary) return;
-  const model = quickStartModel();
-  quickStartState.textContent = model.state;
-  quickStartCopy.textContent = model.copy;
-  quickStartPrimary.textContent = model.primary;
-  quickStartSecondary.textContent = model.secondary;
-  quickStartSecondary.disabled = Boolean(model.secondaryDisabled);
-  quickStartList.innerHTML = model.steps.map((step, index) => `
-    <li class="${step.done ? "done" : "pending"}">
-      <strong>${index + 1}. ${escapeHtml(step.label)}</strong>
-      <span>${escapeHtml(step.detail)}</span>
-    </li>`).join("");
-}
-
-function runQuickStartPrimary() {
-  quickStartModel().action();
+function renderWorkflow() {
+  if (!workflowSteps || !workflowState || !workflowNext || !workflowPrimary || !workflowSecondary) return;
+  const snapshot = buildWorkflowSnapshot();
+  const current = snapshot.steps.find((step) => !step.done) || snapshot.steps.at(-1);
+  workflowModel.currentStep = current.id;
+  workflowModel.primaryAction = snapshot.action;
+  workflowModel.secondaryAction = snapshot.secondaryAction;
+  workflowState.textContent = snapshot.state;
+  workflowNext.textContent = snapshot.copy;
+  workflowPrimary.textContent = snapshot.primary;
+  workflowSecondary.textContent = snapshot.secondary;
+  workflowPrimary.disabled = typeof snapshot.action !== "function";
+  workflowSecondary.disabled = typeof snapshot.secondaryAction !== "function";
+  renderWorkflowSteps(snapshot.steps, current.id);
+  const receiptMessage = renderPreflightReceipt();
+  const statusMessage = receiptMessage || snapshot.copy;
+  if (workflowStatus.dataset.message !== statusMessage) {
+    workflowStatus.dataset.message = statusMessage;
+    workflowStatus.textContent = statusMessage;
+  }
 }
 
 function runWorkspacePreparationAction() {
@@ -1995,19 +2189,28 @@ function setControlState(control, disabled, title = "") {
   control.title = disabled ? title : "";
 }
 
-function canRunGuideNextStep() {
-  const step = guideModel().find((item) => !item.done);
-  if (!step) return false;
-  if (step.id === "preflight") return Boolean(repoPath.value.trim() || repoProfile?.rootPath);
-  if (step.id === "plan") return Boolean(goalInput.value.trim() || currentTask?.goal);
-  if (step.id === "context") return Boolean(currentTask?.id && repoProfile?.rootPath);
-  if (step.id === "patch") {
-    const gate = currentTask?.patchProposal ? applyPatchGateStatus() : preflightPatchGateStatus();
-    return Boolean((currentTask?.contextFiles?.length || currentTask?.patchProposal) && !gate.blocksPatch);
+function renderPreflightReceipt() {
+  if (!preflightReceipt) return "";
+  const visible = workflowModel.demoRequested
+    && currentPreflight
+    && currentWorkspace?.kind === "built-in-demo";
+  preflightReceipt.hidden = !visible;
+  if (!visible) {
+    preflightReceipt.replaceChildren();
+    return "";
   }
-  if (step.id === "verify") return Boolean(repoProfile?.rootPath && currentPreflight && selectedVerifyCommand() && !workspaceCommandGateStatus().blocksCommand);
-  if (step.id === "complete") return Boolean(currentTask?.id);
-  return true;
+  const planReady = Boolean(currentTask?.plan);
+  const readCount = currentTask?.contextFiles?.length || 0;
+  const message = t("workflow.receipt.body", {
+    plan: planReady ? t("model.output.yes") : t("model.output.no"),
+    count: readCount,
+    writes: 0,
+    commands: 0
+  });
+  preflightReceipt.innerHTML = `
+    <strong>${escapeHtml(t("workflow.receipt.title"))}</strong>
+    <span>${escapeHtml(message)}</span>`;
+  return message;
 }
 
 function renderRepoSummary(profile) {
@@ -2291,7 +2494,7 @@ function applyModelPreset() {
   modelApiKey.value = "";
   updateModelPresetUi();
   renderModelCostHint();
-  renderGuide();
+  renderWorkflow();
   updateControls();
 }
 
@@ -2299,26 +2502,26 @@ function updateModelPresetUi() {
   const preset = MODEL_PRESETS[modelPreset.value] || MODEL_PRESETS.custom;
   modelType.disabled = modelPreset.value !== "custom" && modelPreset.value !== "mock";
   modelBaseUrl.disabled = modelPreset.value === "mock";
-  modelApiKey.placeholder = preset.apiKeyPlaceholder;
+  modelApiKey.placeholder = t(preset.apiKeyPlaceholderKey);
   modelName.placeholder = modelPreset.value === "openai" ? t("model.name.placeholder.openai") : modelPreset.value === "custom" ? t("model.name.placeholder") : preset.model || t("model.name.placeholder");
 }
 
 function renderModelCostHint() {
   if (!modelCostHint) return;
-  const guide = MODEL_COST_GUIDE[modelPreset.value] || MODEL_COST_GUIDE.custom;
-  modelCostHint.className = `model-cost-hint ${guide.badge}`;
+  const costProfile = MODEL_COST_PROFILES[modelPreset.value] || MODEL_COST_PROFILES.custom;
+  modelCostHint.className = `model-cost-hint ${costProfile.badge}`;
   modelCostHint.innerHTML = `
-    <strong>${escapeHtml(t(guide.titleKey))}</strong>
-    <span>${escapeHtml(t(guide.levelKey))}</span>
-    <p>${escapeHtml(t(guide.detailKey))}</p>
+    <strong>${escapeHtml(t(costProfile.titleKey))}</strong>
+    <span>${escapeHtml(t(costProfile.levelKey))}</span>
+    <p>${escapeHtml(t(costProfile.detailKey))}</p>
   `;
 }
 
 function modelUsageAdvice(presetValue) {
-  const guide = MODEL_COST_GUIDE[presetValue] || MODEL_COST_GUIDE.custom;
+  const costProfile = MODEL_COST_PROFILES[presetValue] || MODEL_COST_PROFILES.custom;
   if (presetValue === "deepseek-flash") return t("model.usage.flash");
   if (presetValue === "deepseek-pro") return t("model.usage.pro");
-  return t("model.usage.default", { detail: t(guide.detailKey) });
+  return t("model.usage.default", { detail: t(costProfile.detailKey) });
 }
 
 function inferModelPreset(config = {}) {
@@ -2389,11 +2592,14 @@ async function refreshMemory() {
     renderMemory(null);
     return;
   }
+  const target = captureWorkflowTarget(false);
   try {
     const payload = await request(`/api/memory?rootPath=${encodeURIComponent(repoProfile.rootPath)}`);
+    if (!workflowTargetIsCurrent(target)) return;
     currentMemory = payload.memory;
     renderMemory(currentMemory);
   } catch (error) {
+    if (!workflowTargetIsCurrent(target)) return;
     memoryState.textContent = t("memory.state.loadFailed");
     memoryOutput.textContent = friendlyErrorMessage(error);
   }
@@ -2407,31 +2613,33 @@ function renderMemory(memory) {
     return;
   }
 
-  const languages = memory.profile?.languages?.map((item) => `${item.name} (${item.count})`).join(", ") || "未知";
-  const frameworks = memory.profile?.frameworks?.join(", ") || "无";
-  const packageManagers = memory.profile?.packageManagers?.join(", ") || "无";
-  const commands = memory.commands?.length ? memory.commands.map((item) => `- ${item.name || "命令"}: ${item.command}`).join("\n") : "- 无";
+  const unknown = t("repo.unknown");
+  const none = t("repo.none");
+  const languages = memory.profile?.languages?.map((item) => `${item.name} (${item.count})`).join(", ") || unknown;
+  const frameworks = memory.profile?.frameworks?.join(", ") || none;
+  const packageManagers = memory.profile?.packageManagers?.join(", ") || none;
+  const commands = memory.commands?.length ? memory.commands.map((item) => `- ${item.name || t("repo.output.commands")}: ${item.command}`).join("\n") : `- ${none}`;
   const tasks = memory.taskSummaries?.length
-    ? memory.taskSummaries.slice(-6).reverse().map((item) => `- ${item.goal || item.taskId}: ${item.summary || item.status || "已完成"}`).join("\n")
-    : "- 无";
+    ? memory.taskSummaries.slice(-6).reverse().map((item) => `- ${item.goal || item.taskId}: ${item.summary || item.status || t("workflow.state.done")}`).join("\n")
+    : `- ${none}`;
   memoryState.textContent = memory.name || t("memory.state.loaded");
   memoryNotes.value = memory.notes || "";
   memoryOutput.textContent = [
-    `项目：${memory.name}`,
-    `路径：${memory.rootPath}`,
-    `文件：${memory.profile?.fileCount || 0}（跳过 ${memory.profile?.skippedCount || 0}）`,
-    `语言：${languages}`,
-    `框架：${frameworks}`,
-    `包管理器：${packageManagers}`,
-    `扫描时间：${memory.profile?.scannedAt || "未知"}`,
+    `${t("repo.output.project")}: ${memory.name}`,
+    `${t("repo.output.path")}: ${memory.rootPath}`,
+    `${t("repo.metric.files")}: ${memory.profile?.fileCount || 0} (${t("repo.metric.skipped")}: ${memory.profile?.skippedCount || 0})`,
+    `${t("repo.output.languages")}: ${languages}`,
+    `${t("repo.output.frameworks")}: ${frameworks}`,
+    `${t("memory.output.packageManagers")}: ${packageManagers}`,
+    `${t("memory.output.scannedAt")}: ${memory.profile?.scannedAt || unknown}`,
     "",
-    "命令：",
+    `${t("repo.output.commands")}:`,
     commands,
     "",
-    "关键文件：",
-    (memory.profile?.keyFiles || []).slice(0, 12).map((file) => `- ${file}`).join("\n") || "- 无",
+    `${t("repo.output.keyFiles")}:`,
+    (memory.profile?.keyFiles || []).slice(0, 12).map((file) => `- ${file}`).join("\n") || `- ${none}`,
     "",
-    "最近任务总结：",
+    `${t("memory.output.recentTasks")}:`,
     tasks
   ].join("\n");
 }
@@ -2442,7 +2650,7 @@ function renderTask(task) {
     taskSummary.textContent = t("task.summary.empty");
     reviewDraft.textContent = t("task.review.empty");
     patchState.textContent = t("patch.state.none");
-    renderGuide();
+    renderWorkflow();
     return;
   }
 
@@ -2482,7 +2690,7 @@ function renderTask(task) {
     `${t("task.summary.latestModelEvent")}: ${latestModelEventText}`
   ].join("\n");
   reviewDraft.textContent = task.reviewDraft || t("task.review.empty");
-  renderGuide();
+  renderWorkflow();
 }
 
 function renderPatchReview(proposal, task) {
@@ -2564,41 +2772,47 @@ function renderRevertPatchOptions(task) {
     : `<option value="">${escapeHtml(t("patch.revert.none"))}</option>`;
 }
 
-function preflightGuideDetail() {
-  if (!currentPreflight) return repoProfile ? t("guide.preflight.detail.scanned") : t("guide.preflight.detail.runSafety");
+function workflowPreflightDetail() {
+  if (!currentPreflight) return t("workflow.step.preflight.todo");
   const blockers = currentPreflight.nextGate?.blockers?.length || 0;
   const warnings = currentPreflight.nextGate?.warnings?.length || 0;
-  if (blockers) return t("guide.preflight.detail.blockers", { count: blockers });
-  if (warnings) return t("guide.preflight.detail.warnings", { count: warnings });
-  return t("guide.preflight.detail.passed");
+  if (blockers) return t("workflow.step.preflight.blockers", { count: blockers });
+  if (warnings) return t("workflow.step.preflight.warnings", { count: warnings });
+  return t("workflow.step.preflight.done");
 }
 
-function guideModel() {
+function buildWorkflowSteps() {
+  const hasPath = Boolean(repoPath.value.trim() || repoProfile?.rootPath);
+  const preflightBlockers = currentPreflight?.nextGate?.blockers?.length || 0;
+  const preflightWarnings = currentPreflight?.nextGate?.warnings?.length || 0;
+  const preflightReady = Boolean(currentPreflight) && preflightBlockers === 0 && preflightWarnings === 0;
   const activePatches = currentTask?.appliedPatches?.filter((patch) => !patch.revertedAt).length || 0;
+  const verified = taskHasCurrentSuccessfulVerification(currentTask);
   const patchGateStatus = currentTask?.patchProposal ? applyPatchGateStatus() : preflightPatchGateStatus();
   const commandGateStatus = workspaceCommandGateStatus();
   const contextDetail = currentTask?.contextFiles?.length
-    ? t("guide.context.detail.read", { count: currentTask.contextFiles.length })
+    ? t("workflow.step.context.done", { count: currentTask.contextFiles.length })
     : suggestedContextFiles.length
-      ? t("guide.context.detail.selected", { count: selectedContextFiles().length || suggestedContextFiles.length })
-      : t("guide.context.detail.choose");
-  const patchDone = activePatches > 0;
-  const patchDetail = patchDone
-    ? t("guide.patch.detail.applied", { count: activePatches })
-    : currentTask?.patchProposal
-      ? t("guide.patch.detail.reviewApply")
-      : t("guide.patch.detail.generate");
+      ? t("workflow.step.context.selected", { count: selectedContextFiles().length || suggestedContextFiles.length })
+      : t("workflow.step.context.todo");
+  const workspaceDetail = activePatches
+    ? t("workflow.step.workspace.applied", { count: activePatches })
+    : workspaceCanWrite()
+      ? t("workflow.step.workspace.apply")
+      : t("workflow.step.workspace.prepare");
   return [
-    { id: "preflight", title: t("guide.preflight.title"), detail: preflightGuideDetail(), hint: t("guide.preflight.hint"), blocked: !repoProfile && !repoPath.value.trim(), done: Boolean(currentPreflight || repoProfile), action: () => { setActiveView("workspace"); preflightButton.click(); } },
-    { id: "plan", title: t("guide.plan.title"), detail: currentTask?.plan ? t("guide.plan.detail.ready") : t("guide.plan.detail.generate"), hint: t("guide.plan.hint"), blocked: !currentTask?.plan && !goalInput.value.trim(), done: Boolean(currentTask?.plan), action: () => { setActiveView("workspace"); planButton.click(); } },
-    { id: "context", title: t("guide.context.title"), detail: contextDetail, hint: suggestedContextFiles.length ? t("guide.context.hint.readSelected", { count: selectedContextFiles().length || suggestedContextFiles.length }) : t("guide.context.hint.rank"), blocked: !currentTask?.id || !repoProfile?.rootPath, done: Boolean(currentTask?.contextFiles?.length), action: runContextGuideStep },
-    { id: "patch", title: t("guide.patch.title"), detail: patchGateStatus.blocksPatch ? patchGateStatus.title : patchDetail, hint: patchGateStatus.blocksPatch ? patchGateStatus.detail : currentTask?.patchProposal ? t("guide.patch.hint.reviewApply") : t("guide.patch.hint.generate"), blocked: patchGateStatus.blocksPatch || (!currentTask?.contextFiles?.length && !currentTask?.patchProposal), done: patchDone, action: runPatchGuideStep },
-    { id: "verify", title: t("guide.verify.title"), detail: currentTask?.verification ? t("guide.verify.detail.exit", { code: currentTask.verification.exitCode }) : commandGateStatus.blocksCommand ? commandGateStatus.detail : t("guide.verify.detail.runTests"), hint: commandGateStatus.blocksCommand ? commandGateStatus.detail : t("guide.verify.hint"), blocked: !repoProfile?.rootPath || !currentPreflight || !selectedVerifyCommand() || commandGateStatus.blocksCommand, done: Boolean(currentTask?.verification), action: () => runVerifyButton.click() },
-    { id: "complete", title: t("guide.complete.title"), detail: currentTask?.summary ? t("guide.complete.detail.done") : t("guide.complete.detail.summary"), hint: t("guide.complete.hint"), blocked: !currentTask?.id, done: Boolean(currentTask?.summary), action: () => completeTaskButton.click() }
+    { id: "project", title: t("workflow.step.project.title"), detail: hasPath ? t("workflow.step.project.done") : t("workflow.step.project.todo"), blocked: false, done: hasPath },
+    { id: "preflight", title: t("workflow.step.preflight.title"), detail: workflowPreflightDetail(), blocked: !hasPath || preflightBlockers > 0 || preflightWarnings > 0, done: preflightReady },
+    { id: "plan", title: t("workflow.step.plan.title"), detail: currentTask?.plan ? t("workflow.step.plan.done") : t("workflow.step.plan.todo"), blocked: !preflightReady, done: Boolean(currentTask?.plan) },
+    { id: "context", title: t("workflow.step.context.title"), detail: contextDetail, blocked: !currentTask?.plan, done: Boolean(currentTask?.contextFiles?.length) },
+    { id: "patch", title: t("workflow.step.patch.title"), detail: patchGateStatus.blocksPatch ? patchGateStatus.title : currentTask?.patchProposal ? t("workflow.step.patch.done") : t("workflow.step.patch.todo"), blocked: patchGateStatus.blocksPatch, done: Boolean(currentTask?.patchProposal) },
+    { id: "workspace", title: t("workflow.step.workspace.title"), detail: workspaceDetail, blocked: !currentTask?.patchProposal, done: activePatches > 0 },
+    { id: "verify", title: t("workflow.step.verify.title"), detail: currentTask?.verification ? verified ? t("workflow.step.verify.done", { code: currentTask.verification.exitCode }) : t("verify.state.failed") : commandGateStatus.blocksCommand ? commandGateStatus.detail : t("workflow.step.verify.todo"), blocked: !activePatches || commandGateStatus.blocksCommand, done: verified },
+    { id: "complete", title: t("workflow.step.complete.title"), detail: currentTask?.summary && verified ? t("workflow.step.complete.done") : t("workflow.step.complete.todo"), blocked: !verified, done: Boolean(currentTask?.summary) && verified }
   ];
 }
 
-function runContextGuideStep() {
+function runWorkflowContextAction() {
   setActiveView("workspace");
   if (!currentTask) {
     planButton.click();
@@ -2611,7 +2825,7 @@ function runContextGuideStep() {
   contextButton.click();
 }
 
-function runPatchGuideStep() {
+function runWorkflowPatchAction() {
   setActiveView("workspace");
   if (!currentTask?.patchProposal) {
     proposePatchButton.click();
@@ -2620,32 +2834,23 @@ function runPatchGuideStep() {
   applyPatchButton.click();
 }
 
-function renderGuide() {
-  if (!guideSteps) return;
-  const steps = guideModel();
-  const activeIndex = steps.findIndex((step) => !step.done);
-  const nextIndex = activeIndex === -1 ? steps.length - 1 : activeIndex;
-  const activeStep = steps[nextIndex];
-  guideState.textContent = activeIndex === -1 ? t("guide.state.complete") : activeStep.title;
-  guideSteps.innerHTML = steps.map((step, index) => `
-    <li class="${guideStepClass(step, index, nextIndex)}">
-      <strong>${index + 1}. ${escapeHtml(step.title)}</strong>
-      <span>${escapeHtml(step.detail)}</span>
-    </li>`).join("");
-  guideNextButton.textContent = activeIndex === -1 ? t("guide.button.complete") : t("guide.button.next", { title: steps[nextIndex].title });
-  if (nextStepHint) nextStepHint.textContent = activeIndex === -1 ? t("guide.next.complete") : activeStep.hint;
-  updateControls();
+function renderWorkflowSteps(steps, currentStep) {
+  const nodes = new Map([...workflowSteps.querySelectorAll("[data-workflow-step]")].map((node) => [node.dataset.workflowStep, node]));
+  for (const [index, step] of steps.entries()) {
+    const node = nodes.get(step.id);
+    if (!node) continue;
+    node.className = workflowStepClass(step, step.id === currentStep);
+    node.querySelector("strong").textContent = `${index + 1}. ${step.title}`;
+    node.querySelector("span").textContent = step.detail;
+    if (step.id === currentStep) node.setAttribute("aria-current", "step");
+    else node.removeAttribute("aria-current");
+  }
 }
 
-function guideStepClass(step, index, nextIndex) {
+function workflowStepClass(step, current) {
   if (step.done) return "done";
-  if (index === nextIndex) return step.blocked ? "active blocked" : "active";
+  if (current) return step.blocked ? "active blocked" : "active";
   return "pending";
-}
-
-function runGuideNextStep() {
-  const step = guideModel().find((item) => !item.done);
-  if (step) step.action();
 }
 
 async function refreshAudit() {
@@ -2697,7 +2902,7 @@ async function request(url, body) {
 }
 
 function friendlyErrorMessage(error) {
-  const message = String(error?.message || error || "未知错误");
+  const message = String(error?.message || error || t("error.unknown"));
   const codeMessage = `${error?.code || ""} ${message}`;
   const structuredRules = [
     [/WORKSPACE_ORIGINAL_READ_?ONLY|WORKSPACE_WRITE_FORBIDDEN/, t("error.workspaceOriginalReadonly")],

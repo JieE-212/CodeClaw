@@ -684,6 +684,24 @@ test("server authority, freshness, single-use concurrency, and failed-send repla
   assertPreviewConsumed(await approvePreview(server, failedPreview));
   assert.equal(fakeModel.requestCount, 1);
 
+  const completedPreview = (await request(server.baseUrl, "/api/model/preview", {
+    operation: "task-suggest",
+    taskId
+  })).payload.preview;
+  const beforeCompletion = await taskStore.get(taskId);
+  await taskStore.update(taskId, { status: "completed", summary: "done" }, { expectedRevision: beforeCompletion.revision });
+  const completedSend = await approvePreview(server, completedPreview);
+  assert.equal(completedSend.response.status, 409);
+  assert.equal(completedSend.payload.code, "TASK_ALREADY_COMPLETED");
+  assert.equal(fakeModel.requestCount, 1, "a completed task must fail before contacting the model provider");
+  const completedPreviewAttempt = await request(server.baseUrl, "/api/model/preview", {
+    operation: "patch-proposal",
+    taskId
+  });
+  assert.equal(completedPreviewAttempt.response.status, 409);
+  assert.equal(completedPreviewAttempt.payload.code, "TASK_ALREADY_COMPLETED");
+  assert.equal(fakeModel.requestCount, 1);
+
   const task = await taskStore.get(taskId);
   assert.equal(task.modelEvents.at(-1).status, "error");
   const persisted = await Promise.all(["model.json", "tasks.json", "audit.jsonl"].map((name) => (

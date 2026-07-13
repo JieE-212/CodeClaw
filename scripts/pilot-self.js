@@ -55,7 +55,6 @@ await withAutomationResources(async (scope) => {
   const search = await request("/api/tools/call", { tool: "search_code", args: { query: "MemoryStore" }, rootPath: scan.profile.rootPath, taskId: task.task.id });
   if (!search.result.some((item) => item.path.includes("memory-store"))) throw new Error("Pilot search did not find MemoryStore.");
   const notes = await request("/api/memory/notes", { rootPath: scan.profile.rootPath, notes: "Pilot self-run verified scan, context selection, search, and memory notes." });
-  const completed = await request("/api/tasks/complete", { taskId: task.task.id });
 
   const packageAfter = await fs.readFile(packageJsonPath, "utf8");
   const serverAfter = await fs.readFile(serverJsPath, "utf8");
@@ -71,7 +70,8 @@ await withAutomationResources(async (scope) => {
     contextCandidates: selected.map((item) => ({ path: item.path, reason: item.reason })),
     searchHits: search.result.map((item) => item.path).slice(0, 5),
     memoryNotesSaved: notes.memory.notes.length > 0,
-    reviewDraft: completed.task.reviewDraft.split("\n")[0],
+    taskStatus: search.task.status,
+    completionSkipped: "read-only pilot has no applied patch or verification",
     sourceFilesUnchanged: true
   }, null, 2));
 });

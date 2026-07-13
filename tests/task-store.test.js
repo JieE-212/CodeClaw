@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { TaskStore, buildTaskReviewDraft, summarizeTask, summarizeVerificationFailure } from "../packages/task-store/src/index.js";
+import { TaskStore, activePatchSetDigest, buildTaskReviewDraft, summarizeTask, summarizeVerificationFailure } from "../packages/task-store/src/index.js";
 
 const temporaryRoots = [];
 
@@ -124,14 +124,98 @@ test("TaskStore can revert a specific applied patch", async () => {
   assert.equal(reverted.appliedPatches[1].revertedAt, null);
 });
 
-test("TaskStore keeps completed status when reverting after completion", async () => {
+test("TaskStore reopens a completed task when a patch is reverted", async () => {
   const store = await makeStore();
   const task = await store.create({ goal: "patch", rootPath: "C:/repo-a" });
   await store.recordAppliedPatch(task.id, { path: "src/a.js", previousContent: "a1", nextContent: "a2" });
   await store.complete(task.id, "done");
   const reverted = await store.markPatchReverted(task.id, 0);
-  assert.equal(reverted.status, "completed");
+  assert.equal(reverted.status, "running");
+  assert.equal(reverted.verification, null);
+  assert.equal(reverted.summary, "");
+  assert.equal(reverted.reviewDraft, "");
   assert.ok(reverted.appliedPatches[0].revertedAt);
+});
+
+test("TaskStore invalidates stale verification and completion when a patch is applied", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "patch after verification", rootPath: "C:/repo-a" });
+  const verified = await store.setVerification(task.id, { exitCode: 0, timedOut: false });
+  assert.match(verified.verification.time, /^\d{4}-\d{2}-\d{2}T/);
+  await store.update(task.id, { summary: "old summary", reviewDraft: "old review" });
+
+  const applied = await store.recordAppliedPatch(task.id, { path: "src/a.js", previousContent: "a1", nextContent: "a2" });
+  assert.equal(applied.status, "patched");
+  assert.equal(applied.verification, null);
+  assert.equal(applied.failureSummary, "");
+  assert.equal(applied.summary, "");
+  assert.equal(applied.reviewDraft, "");
+  assert.equal(applied.verificationHistory.length, 1);
+});
+
+test("TaskStore rejects a verification result captured for an older patch set", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "bind verification", rootPath: "C:/repo-a" });
+  const first = await store.recordAppliedPatch(task.id, { path: "src/a.js", previousContent: "a1", nextContent: "a2" });
+  const firstDigest = activePatchSetDigest(first);
+  assert.match(firstDigest, /^[a-f0-9]{64}$/);
+  const second = await store.recordAppliedPatch(task.id, { path: "src/a.js", previousContent: "a2", nextContent: "a3" });
+  assert.notEqual(activePatchSetDigest(second), firstDigest);
+
+  await assert.rejects(
+    store.setVerification(task.id, { exitCode: 0, timedOut: false }, { expectedPatchSetDigest: firstDigest }),
+    (error) => error.code === "TASK_VERIFY_PATCH_CHANGED" && error.status === 409
+  );
+  assert.equal((await store.get(task.id)).verification, null);
+});
+
+test("TaskStore completion guard and concurrent Revert cannot leave a completed stale task", async () => {
+  const root = await makeTemporaryRoot("codeclaw-task-complete-race-");
+  const storagePath = path.join(root, "tasks.json");
+  const completingStore = new TaskStore({ storagePath });
+  const revertingStore = new TaskStore({ storagePath });
+  const task = await completingStore.create({ goal: "complete or revert", rootPath: "C:/repo-a" });
+  await completingStore.recordAppliedPatch(task.id, { path: "src/a.js", previousContent: "a1", nextContent: "a2" });
+  await completingStore.setVerification(task.id, { exitCode: 0, timedOut: false });
+
+  const readyAtCommit = ({ currentTask }) => {
+    const digest = activePatchSetDigest(currentTask);
+    if (!digest || currentTask.verification?.patchSetDigest !== digest) throw new Error("task is no longer ready");
+  };
+  await Promise.allSettled([
+    completingStore.complete(task.id, "done", "review", { beforeCommit: readyAtCommit }),
+    revertingStore.markPatchReverted(task.id, 0)
+  ]);
+
+  const finalTask = await completingStore.get(task.id);
+  assert.equal(finalTask.status, "running");
+  assert.equal(finalTask.verification, null);
+  assert.equal(finalTask.summary, "");
+  assert.ok(finalTask.appliedPatches[0].revertedAt);
+});
+
+test("TaskStore keeps completed tasks terminal except for explicit Revert", async () => {
+  const store = await makeStore();
+  const task = await store.create({ goal: "terminal task", rootPath: "C:/repo-a" });
+  await store.recordAppliedPatch(task.id, { path: "src/a.js", previousContent: "a1", nextContent: "a2" });
+  await store.setVerification(task.id, { exitCode: 0, timedOut: false });
+  await store.complete(task.id, "done", "review");
+
+  const inspected = await store.appendToolCall(task.id, { tool: "read_file", blocked: false });
+  assert.equal(inspected.status, "completed");
+  assert.equal(inspected.summary, "done");
+  for (const operation of [
+    () => store.setPlan(task.id, { title: "replacement" }),
+    () => store.setVerification(task.id, { exitCode: 0, timedOut: false }),
+    () => store.setPatchProposal(task.id, { applicable: false }),
+    () => store.recordAppliedPatch(task.id, { path: "src/b.js", previousContent: "b1", nextContent: "b2" })
+  ]) {
+    await assert.rejects(operation, (error) => error.code === "TASK_ALREADY_COMPLETED" && error.status === 409);
+  }
+
+  const finalTask = await store.get(task.id);
+  assert.equal(finalTask.status, "completed");
+  assert.equal(finalTask.summary, "done");
 });
 
 test("TaskStore serializes concurrent read-modify-write updates", async () => {

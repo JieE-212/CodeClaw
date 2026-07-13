@@ -56,3 +56,53 @@ test("MemoryStore appends task summaries and deduplicates task id", async () => 
   assert.equal(memory.taskSummaries[0].summary, "updated");
   assert.equal(memory.taskSummaries[0].goal, "first again");
 });
+
+test("MemoryStore serializes notes and summary removal across instances", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-memory-race-remove-"));
+  const storagePath = path.join(root, "memory.json");
+  const notesStore = new MemoryStore({ storagePath });
+  const revertStore = new MemoryStore({ storagePath });
+  await notesStore.appendTaskSummary("C:/repo-a", { id: "task-1", status: "completed" }, "done");
+
+  await Promise.all([
+    notesStore.updateNotes("C:/repo-a", "keep this note"),
+    revertStore.removeTaskSummary("C:/repo-a", "task-1")
+  ]);
+
+  const memory = await notesStore.get("C:/repo-a");
+  assert.equal(memory.notes, "keep this note");
+  assert.deepEqual(memory.taskSummaries, []);
+});
+
+test("MemoryStore serializes a new completion summary and notes across instances", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-memory-race-append-"));
+  const storagePath = path.join(root, "memory.json");
+  const summaryStore = new MemoryStore({ storagePath });
+  const notesStore = new MemoryStore({ storagePath });
+  await summaryStore.ensure("C:/repo-a");
+
+  await Promise.all([
+    summaryStore.appendTaskSummary("C:/repo-a", { id: "task-2", goal: "finish", status: "completed" }, "done"),
+    notesStore.updateNotes("C:/repo-a", "preserve me")
+  ]);
+
+  const memory = await summaryStore.get("C:/repo-a");
+  assert.equal(memory.notes, "preserve me");
+  assert.equal(memory.taskSummaries.length, 1);
+  assert.equal(memory.taskSummaries[0].taskId, "task-2");
+});
+
+test("MemoryStore startup reconciliation removes summaries for reopened tasks", async () => {
+  const store = await makeStore();
+  await store.appendTaskSummary("C:/repo-a", { id: "task-running", status: "completed" }, "stale");
+  await store.appendTaskSummary("C:/repo-a", { id: "task-complete", status: "completed" }, "keep");
+
+  const result = await store.reconcileTaskSummaries([
+    { id: "task-running", status: "running" },
+    { id: "task-complete", status: "completed" }
+  ]);
+
+  assert.equal(result.removed, 1);
+  const memory = await store.get("C:/repo-a");
+  assert.deepEqual(memory.taskSummaries.map((summary) => summary.taskId), ["task-complete"]);
+});

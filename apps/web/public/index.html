@@ -6,345 +6,191 @@
     <title>CodeClaw</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body data-experience-mode="beginner">
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand-block">
-          <div class="brand-mark">CC</div>
-          <div><h1>CodeClaw</h1><p data-i18n="brand.tagline">本地优先 AI 开发工作台</p></div>
+          <div class="brand-mark" aria-hidden="true">CC</div>
+          <div><h1>CodeClaw</h1><p data-i18n="brand.tagline">Local-first AI development workspace</p></div>
         </div>
-        <nav class="nav-list" aria-label="主导航">
-          <button class="nav-item active" data-nav-view="workspace" data-i18n="nav.workspace" type="button">工作台</button>
-          <button class="nav-item" data-nav-view="memory" data-i18n="nav.memory" type="button">记忆</button>
-          <button class="nav-item" data-nav-view="audit" data-i18n="nav.audit" type="button">审计</button>
-          <button class="nav-item" data-nav-view="settings" data-i18n="nav.settings" type="button">设置</button>
+        <nav class="nav-list" data-i18n-aria-label="nav.label" aria-label="Main navigation">
+          <button class="nav-item active" data-nav-view="workspace" data-i18n="nav.workspace" type="button" aria-current="page">Workspace</button>
+          <button class="nav-item" data-nav-view="memory" data-i18n="nav.memory" type="button">Memory</button>
+          <button class="nav-item" data-nav-view="audit" data-i18n="nav.audit" type="button">Audit</button>
+          <button class="nav-item" data-nav-view="settings" data-i18n="nav.settings" type="button">Settings</button>
         </nav>
       </aside>
-      <main class="workspace">
-        <section class="topbar">
-          <div><p class="eyebrow" id="viewEyebrow">本地优先开发助手</p><h2 id="viewTitle">先读懂仓库、规划任务，再安全修改代码。</h2></div>
+
+      <main class="workspace" id="mainContent">
+        <section class="topbar" aria-labelledby="viewTitle">
+          <div><p class="eyebrow" id="viewEyebrow">Local-first development assistant</p><h2 id="viewTitle">Read, plan, review, then change code safely.</h2></div>
           <div class="topbar-actions">
-            <label class="language-switch" for="languageSelect"><span data-i18n="language.label">语言</span><select id="languageSelect" aria-label="Language"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="ru">Русский</option></select></label>
-            <div class="status-pill" id="healthStatus">正在连接</div>
+            <label class="language-switch" for="languageSelect"><span data-i18n="language.label">Language</span><select id="languageSelect" data-i18n-aria-label="language.label" aria-label="Language"><option value="en" data-i18n="language.english">English</option><option value="zh-CN" data-i18n="language.chinese">简体中文</option><option value="ru" data-i18n="language.russian">Русский</option></select></label>
+            <div class="status-pill" id="healthStatus">Connecting</div>
           </div>
         </section>
-        <section class="trust-strip" data-view="workspace">
-          <div><strong data-i18n="trust.local.title">本机运行</strong><span data-i18n="trust.local.body">扫描和 Mock 留在本机；在线模型请求可能发送目标、项目元数据、文件路径和所选上下文。</span></div>
-          <div><strong data-i18n="trust.preflight.title">先只读预检</strong><span data-i18n="trust.preflight.body">真实项目先读结构和上下文，不写文件。</span></div>
-          <div><strong data-i18n="trust.confirm.title">写入前确认</strong><span data-i18n="trust.confirm.body">Apply 和运行命令前都会再次确认。</span></div>
+
+        <section class="trust-strip" data-view="workspace" aria-label="Safety summary" data-i18n-aria-label="trust.label">
+          <div><strong data-i18n="trust.local.title">Runs locally</strong><span data-i18n="trust.local.body">Scanning and Mock stay local.</span></div>
+          <div><strong data-i18n="trust.preflight.title">Read-only first</strong><span data-i18n="trust.preflight.body">Real projects are inspected before any write.</span></div>
+          <div><strong data-i18n="trust.confirm.title">Confirm before writes</strong><span data-i18n="trust.confirm.body">Apply and project commands require separate confirmation.</span></div>
         </section>
+
         <section class="session-recovery" id="sessionRecovery" aria-live="polite" hidden>
-          <div>
-            <strong id="sessionRecoveryTitle"></strong>
-            <span id="sessionRecoveryBody"></span>
-          </div>
-          <div class="session-recovery-actions">
-            <button id="continueSessionButton" type="button"></button>
-            <button class="secondary" id="startFreshButton" type="button"></button>
-          </div>
+          <div><strong id="sessionRecoveryTitle"></strong><span id="sessionRecoveryBody"></span></div>
+          <div class="session-recovery-actions"><button id="continueSessionButton" type="button"></button><button class="secondary" id="startFreshButton" type="button"></button></div>
         </section>
+
         <section class="grid">
-          <div class="panel guide-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.guide">任务引导</h3><span id="guideState">开始</span></div>
-            <p class="panel-purpose" data-i18n="purpose.guide">显示当前进度，并只推荐一个安全的下一步。</p>
-            <ol class="guide-steps" id="guideSteps"></ol>
-            <div class="next-step" id="nextStepHint">输入项目路径，或点击 Demo 开始。</div>
-            <div class="action-row"><button id="guideNextButton" type="button">下一步</button></div>
-          </div>
-          <div class="panel quick-start-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.quickStart">快速开始</h3><span id="quickStartState">待开始</span></div>
-            <p class="panel-purpose" data-i18n="purpose.quickStart">第一次使用可从 Demo 开始；这里会说明每一步是否已完成。</p>
-            <div class="quick-start-copy" id="quickStartCopy">从 Demo 开始，或填入你自己的项目路径。CodeClaw 会先做只读预检，再允许进入补丁流程。</div>
-            <ol class="quick-start-list" id="quickStartList"></ol>
-            <div class="action-row">
-              <button id="quickStartPrimary" type="button">使用 Demo 开始</button>
-              <button class="secondary" id="quickStartSecondary" type="button">运行预检</button>
+          <section class="panel workflow-panel" id="workflowPanel" data-view="workspace" data-ui-marker="workflow-panel" aria-labelledby="workflowTitle" aria-describedby="workflowPurpose">
+            <div class="panel-header"><h3 id="workflowTitle" data-i18n="workflow.title">Your CodeClaw workflow</h3><span id="workflowState" data-i18n="workflow.state.ready">Ready</span></div>
+            <p class="panel-purpose" id="workflowPurpose" data-module-purpose data-i18n="workflow.purpose">One path from project selection to verified completion.</p>
+            <fieldset class="workflow-mode" id="workflowMode" data-ui-marker="workflow-mode">
+              <legend data-i18n="workflow.mode.legend">How much detail should the page show?</legend>
+              <label for="modeBeginner"><input id="modeBeginner" name="experienceMode" type="radio" value="beginner" checked /><span><strong data-i18n="workflow.mode.beginner">Beginner</strong><small data-i18n="workflow.mode.beginner.detail">Show the safest next action and essential explanations.</small></span></label>
+              <label for="modeAdvanced"><input id="modeAdvanced" name="experienceMode" type="radio" value="advanced" /><span><strong data-i18n="workflow.mode.advanced">Advanced</strong><small data-i18n="workflow.mode.advanced.detail">Also show lower-level inspection and configuration controls.</small></span></label>
+            </fieldset>
+            <ol class="workflow-steps" id="workflowSteps" aria-label="Workflow progress" data-i18n-aria-label="workflow.steps.label">
+              <li data-workflow-step="project" aria-current="step"><strong data-i18n="workflow.step.project.title">Project</strong><span data-i18n="workflow.step.project.todo">Choose Demo or a project folder.</span></li>
+              <li data-workflow-step="preflight"><strong data-i18n="workflow.step.preflight.title">Read-only preflight</strong><span data-i18n="workflow.step.preflight.todo">Not run.</span></li>
+              <li data-workflow-step="plan"><strong data-i18n="workflow.step.plan.title">Plan</strong><span data-i18n="workflow.step.plan.todo">No plan yet.</span></li>
+              <li data-workflow-step="context"><strong data-i18n="workflow.step.context.title">Context</strong><span data-i18n="workflow.step.context.todo">No files read yet.</span></li>
+              <li data-workflow-step="patch"><strong data-i18n="workflow.step.patch.title">Patch draft</strong><span data-i18n="workflow.step.patch.todo">No draft yet.</span></li>
+              <li data-workflow-step="workspace"><strong data-i18n="workflow.step.workspace.title">Safe workspace and Apply</strong><span data-i18n="workflow.step.workspace.prepare">Prepare a writable Demo or copy.</span></li>
+              <li data-workflow-step="verify"><strong data-i18n="workflow.step.verify.title">Verify</strong><span data-i18n="workflow.step.verify.todo">Not verified.</span></li>
+              <li data-workflow-step="complete"><strong data-i18n="workflow.step.complete.title">Complete</strong><span data-i18n="workflow.step.complete.todo">Not complete.</span></li>
+            </ol>
+            <div class="workflow-next" id="workflowNext"></div>
+            <div class="action-row workflow-actions"><button id="workflowPrimary" data-i18n="workflow.action.demo" type="button">Use Demo</button><button class="secondary" id="workflowSecondary" data-i18n="workflow.action.ownProject" type="button">Use my project</button></div>
+            <p class="workflow-status" id="workflowStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+            <div class="workflow-boundaries" aria-labelledby="workflowBoundariesTitle">
+              <h4 id="workflowBoundariesTitle" data-i18n="workflow.boundaries.title">What each action can affect</h4>
+              <article data-boundary="read"><strong data-i18n="workflow.boundary.read.title">Reads</strong><span data-i18n="workflow.boundary.read.body">Preflight reads project structure and selected relevant files.</span></article>
+              <article data-boundary="project-write"><strong data-i18n="workflow.boundary.write.title">Project file writes</strong><span data-i18n="workflow.boundary.write.body">Only Apply and Revert can write project files, only in an active server-verified Demo or disposable copy, and only after separate confirmation.</span></article>
+              <article data-boundary="network"><strong data-i18n="workflow.boundary.network.title">Network</strong><span data-i18n="workflow.boundary.network.body">Mock stays local. Online-model requests open the exact outbound review before sending.</span></article>
+              <article data-boundary="command"><strong data-i18n="workflow.boundary.command.title">Project commands</strong><span data-i18n="workflow.boundary.command.body">Verify shows the full detected command and asks again before running it.</span></article>
+              <article data-boundary="local-state"><strong data-i18n="workflow.boundary.state.title">Local CodeClaw state</strong><span data-i18n="workflow.boundary.state.body">Plans, minimized model events, patch drafts, audit events, and project memory stay in local CodeClaw state.</span></article>
             </div>
-          </div>
-          <details class="panel trial-host-panel" data-view="workspace" data-ui-marker="trial-operator-guide">
-            <summary class="trial-host-summary">
-              <span><strong data-i18n="panel.trialHost">Trial host checklist</strong><small data-i18n="trialHost.state.pending">Paused until a human tester is available</small></span>
-              <span data-i18n="trialHost.disclosure">主持人专用：展开清单和命令</span>
-            </summary>
-            <div class="trial-host-content">
-            <p class="trial-host-note" data-i18n="trialHost.state.detail">There is no completed real tester session yet. Keep tester-2 paused and use synthetic rehearsal only while waiting.</p>
-            <div class="trial-host-grid">
-              <fieldset class="trial-checklist waiting">
-                <legend data-i18n="trialHost.waiting">While waiting</legend>
-                <label><input type="checkbox" /><span data-i18n="trialHost.waiting.pause">Keep tester-2 paused until a real person is scheduled.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.waiting.standby">Check standby without creating tester data.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.waiting.rehearsal">Use tester-rehearsal-* only; rehearsal is never real feedback.</span></label>
-              </fieldset>
-              <fieldset class="trial-checklist">
-                <legend data-i18n="trialHost.before">Before the call</legend>
-                <label><input type="checkbox" /><span data-i18n="trialHost.before.standby">Rerun standby and read every warning before hosting.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.before.consent">Tester consent and privacy rules accepted.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.before.scope">Scope is Demo plus real-read-only only.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.before.records">No real names, contacts, screenshots, logs, secrets, or private repo names in notes.</span></label>
-              </fieldset>
-              <fieldset class="trial-checklist">
-                <legend data-i18n="trialHost.during">During the call</legend>
-                <label><input type="checkbox" /><span data-i18n="trialHost.during.open">Keep HOST_RUNBOOK.md, LIVE_SESSION_CAPTURE.md, and the three record templates open.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.during.demo">Start with Demo and let the tester think aloud.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.during.readonly">Run real-project read-only preflight only.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.during.stop">Stop before Apply on any real project.</span></label>
-              </fieldset>
-              <fieldset class="trial-checklist after">
-                <legend data-i18n="trialHost.after">Immediately after</legend>
-                <label><input type="checkbox" /><span data-i18n="trialHost.after.friction">Record the first stuck moment and trust concern.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.after.go">Record whether this build should continue, fix first, or stop.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.after.local">Keep raw tester records local-only.</span></label>
-                <label><input type="checkbox" /><span data-i18n="trialHost.after.commands">Draft confirmed notes, fill the final records, then run after-live.</span></label>
-              </fieldset>
+            <div class="preflight-receipt" id="preflightReceipt" hidden></div>
+          </section>
+
+          <section class="panel repo-panel" data-view="workspace" data-workflow-section="project" aria-labelledby="repoTitle" aria-describedby="repoPurpose">
+            <div class="panel-header"><h3 id="repoTitle" data-i18n="panel.repo">Project</h3><span id="scanState" data-i18n="scan.state.notScanned">Not scanned</span></div>
+            <p class="panel-purpose" id="repoPurpose" data-module-purpose data-i18n="purpose.repo">Choose Demo or a local project folder.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <div class="system-check" id="systemCheck">Checking the local environment.</div>
+            <label class="field-label" for="repoPath" data-i18n="field.projectPath">Project folder path</label>
+            <div class="input-row"><input id="repoPath" type="text" data-i18n-placeholder="path.placeholder" placeholder="Paste a folder path, e.g. C:\Users\you\project" autocomplete="off" aria-describedby="pathHelperCopy" /><button id="examplePathButton" class="secondary" data-i18n="button.example" type="button">Example</button><button id="demoButton" class="secondary" data-ui-marker="demo-readonly-preflight" data-i18n="button.demoPreflight" type="button" aria-describedby="demoButtonDescription">Demo: run read-only preflight</button><button id="scanButton" data-i18n="button.scan" type="button">Scan</button></div>
+            <p class="control-explanation" id="demoButtonDescription" data-i18n="demo.preflight.description">Demo immediately runs read-only preflight. Its receipt reports the automatic plan, files read, zero project writes, and zero project commands.</p>
+            <div class="path-helper" id="pathHelper">
+              <div class="path-helper-copy" id="pathHelperCopy" data-i18n="path.helper.default">Paste a local project folder, not a single file.</div>
+              <div class="path-mode" id="pathMode"></div>
+              <ul class="path-tips" data-i18n-aria-label="path.tips.label" aria-label="Project path tips"><li data-i18n="path.tip.folder">Paste a folder path.</li><li data-i18n="path.tip.example">Example: C:\Users\you\project</li><li data-i18n="path.tip.protected">Avoid protected system folders.</li><li data-i18n="path.tip.demo">Start with Demo if unsure.</li></ul>
             </div>
-            <section class="trial-command-guide" aria-labelledby="trialCommandTitle">
-              <div class="trial-command-heading">
-                <div>
-                  <h4 id="trialCommandTitle" data-i18n="trialHost.commands.title">Operator commands</h4>
-                  <p data-i18n="trialHost.commands.detail">Run these from the CodeClaw project root at the stage shown.</p>
-                </div>
-                <span class="trial-command-status" id="trialCommandStatus" aria-live="polite"></span>
+            <div class="recent-repos" id="recentRepos"></div><div class="repo-summary" id="repoSummary"></div>
+          </section>
+
+          <section class="panel preflight-panel" data-view="workspace" data-workflow-section="preflight" aria-labelledby="preflightTitle" aria-describedby="preflightPurpose">
+            <div class="panel-header"><h3 id="preflightTitle" data-i18n="panel.preflight">Read-only preflight</h3><span id="preflightState" data-i18n="preflight.status.notRun">Not run</span></div>
+            <p class="panel-purpose" id="preflightPurpose" data-module-purpose data-i18n="purpose.preflight">Reads structure and selected context; writes no project files and runs no project commands.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <div class="action-row"><button id="preflightButton" data-i18n="button.runPreflight" type="button">Run preflight</button></div><div class="preflight-output" id="preflightOutput" data-i18n="preflight.default">Run read-only preflight before continuing.</div>
+          </section>
+
+          <section class="panel task-panel" data-view="workspace" data-workflow-section="plan" aria-labelledby="goalTitle" aria-describedby="goalPurpose">
+            <div class="panel-header"><h3 id="goalTitle" data-i18n="panel.taskGoal">Goal and plan</h3><span data-i18n="state.planningMode">Planning</span></div>
+            <p class="panel-purpose" id="goalPurpose" data-module-purpose data-i18n="purpose.goal">Describe the outcome; a plan explains the intended steps without claiming they ran.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <label class="field-label" for="goalInput" data-i18n="field.goal">Task goal</label><textarea id="goalInput" rows="5" data-i18n-placeholder="goal.placeholder" placeholder="For example: fix the failing test and explain the change."></textarea>
+            <div class="action-row"><button id="planButton" data-i18n="button.generatePlan" type="button">Generate plan</button><button class="secondary" id="clearButton" data-i18n="button.clear" type="button">Clear</button></div>
+          </section>
+
+          <section class="panel model-panel" data-view="workspace settings" data-workflow-section="context" aria-labelledby="modelTitle" aria-describedby="modelPurpose">
+            <div class="panel-header"><h3 id="modelTitle" data-i18n="panel.modelContext">Context and model</h3><span id="modelState">Mock</span></div>
+            <p class="panel-purpose" id="modelPurpose" data-module-purpose data-i18n="purpose.model">Choose and read context locally. Online requests always open the exact outbound review.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <div class="model-settings" data-experience="advanced">
+              <div class="model-form">
+                <label for="modelPreset" data-i18n="model.preset.label">Model preset</label><select id="modelPreset"><option value="mock" data-i18n="model.preset.mock">Mock local demo</option><option value="dashscope" data-i18n="model.preset.dashscope">DashScope / Qwen</option><option value="deepseek-pro" data-i18n="model.preset.deepseekPro">DeepSeek V4 Pro</option><option value="deepseek-flash" data-i18n="model.preset.deepseekFlash">DeepSeek V4 Flash</option><option value="openai" data-i18n="model.preset.openai">OpenAI API</option><option value="custom" data-i18n="model.preset.custom">Custom compatible endpoint</option></select>
+                <label for="modelType" data-i18n="model.type.label">Provider type</label><select id="modelType"><option value="mock" data-i18n="model.type.mock">mock</option><option value="openai-compatible" data-i18n="model.type.compatible">openai-compatible</option></select>
+                <label for="modelBaseUrl" data-i18n="model.baseUrl.label">Base URL</label><input id="modelBaseUrl" type="text" data-i18n-placeholder="model.baseUrl.placeholder" placeholder="Base URL, e.g. http://localhost:11434/v1" />
+                <label for="modelName" data-i18n="model.name.label">Model name</label><input id="modelName" type="text" data-i18n-placeholder="model.name.placeholder" placeholder="Model name" />
+                <label for="modelApiKey" data-i18n="model.apiKey.label">API key</label><input id="modelApiKey" type="password" data-i18n-placeholder="model.apiKey.placeholder" placeholder="API key" autocomplete="off" spellcheck="false" autocapitalize="none" />
+                <button id="saveModelButton" data-i18n="button.save" type="button">Save model</button>
               </div>
-              <div class="trial-command-list" id="trialCommandList">
-                <div class="trial-command-row">
-                  <div class="trial-command-copy">
-                    <strong data-i18n="trialHost.command.standby.title">Check tester-2 standby</strong>
-                    <span data-i18n="trialHost.command.standby.detail">Run while waiting and again before the real call.</span>
-                    <code>npm.cmd run trial:first-live-standby -- --tester tester-2</code>
-                  </div>
-                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.standby.title" data-i18n="trialHost.command.copy">Copy</button>
-                </div>
-                <div class="trial-command-row">
-                  <div class="trial-command-copy">
-                    <strong data-i18n="trialHost.command.rehearsal.title">Rehearse the post-call flow</strong>
-                    <span data-i18n="trialHost.command.rehearsal.detail">Safe while waiting. Synthetic only, never real feedback.</span>
-                    <code>npm.cmd run trial:post-call-rehearsal -- --force</code>
-                  </div>
-                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.rehearsal.title" data-i18n="trialHost.command.copy">Copy</button>
-                </div>
-                <div class="trial-command-row">
-                  <div class="trial-command-copy">
-                    <strong data-i18n="trialHost.command.draft.title">Draft confirmed notes</strong>
-                    <span data-i18n="trialHost.command.draft.detail">Run after the call, then review gaps before editing final records.</span>
-                    <code>npm.cmd run trial:record-draft -- --session dist\trial-session-packs\tester-2</code>
-                  </div>
-                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.draft.title" data-i18n="trialHost.command.copy">Copy</button>
-                </div>
-                <div class="trial-command-row">
-                  <div class="trial-command-copy">
-                    <strong data-i18n="trialHost.command.afterLive.title">Close and package the session</strong>
-                    <span data-i18n="trialHost.command.afterLive.detail">Run only after the confirmed final records are filled.</span>
-                    <code>npm.cmd run trial:after-live -- --session dist\trial-session-packs\tester-2 --tester tester-2 --force</code>
-                  </div>
-                  <button class="secondary trial-copy-button" type="button" data-trial-command data-command-label-key="trialHost.command.afterLive.title" data-i18n="trialHost.command.copy">Copy</button>
-                </div>
-              </div>
-            </section>
+              <div class="model-cost-hint" id="modelCostHint"></div>
             </div>
-          </details>
-          <div class="panel repo-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.repo">项目仓库</h3><span id="scanState">未扫描</span></div>
-            <p class="panel-purpose" data-i18n="purpose.repo">选择 Demo 或本地项目文件夹。扫描只识别结构；预检才会读取选中的上下文。</p>
-            <div class="system-check" id="systemCheck">正在检查本地环境。</div>
-            <label class="field-label" for="repoPath" data-i18n="field.projectPath">项目路径</label>
-            <div class="input-row"><input id="repoPath" type="text" placeholder="Paste a folder path, e.g. C:\Users\you\project" data-i18n-placeholder="path.placeholder" autocomplete="off" /><button id="examplePathButton" class="secondary" data-i18n="button.example" type="button">示例</button><button id="demoButton" class="secondary" type="button">Demo</button><button id="scanButton" data-i18n="button.scan" type="button">扫描</button></div>
-            <div class="path-helper" id="pathHelper" data-ui-marker="real-project-path-helper">
-              <div class="path-helper-copy" id="pathHelperCopy" data-i18n="path.helper.default">粘贴本地项目文件夹路径，不要粘贴单个文件。首次不确定时先用 Demo。</div>
-              <div class="path-mode" id="pathMode" data-ui-marker="trial-friction-path-mode"></div>
-              <ul class="path-tips" aria-label="项目路径提示">
-                <li data-i18n="path.tip.folder">粘贴文件夹路径，不是文件路径。</li>
-                <li data-i18n="path.tip.example">示例：C:\Users\you\project</li>
-                <li data-i18n="path.tip.protected">避免 Windows、Program Files 等受保护系统目录。</li>
-                <li data-i18n="path.tip.demo">不确定就先用 Demo，真实项目会先只读预检。</li>
-              </ul>
-            </div>
-            <div class="recent-repos" id="recentRepos"></div>
-            <div class="repo-summary" id="repoSummary"></div>
-          </div>
-          <div class="panel preflight-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.preflight">只读预检</h3><span id="preflightState">未运行</span></div>
-            <p class="panel-purpose" data-i18n="purpose.preflight">读取项目结构和少量相关文件，检查能否安全继续；不会写文件或运行项目命令。</p>
-            <div class="action-row"><button id="preflightButton" data-i18n="button.runPreflight" type="button">运行预检</button></div>
-            <div class="preflight-output" id="preflightOutput" data-i18n="preflight.default">在真实项目上继续前，先运行只读预检。它只读取上下文，不会写入文件。</div>
-          </div>
-          <div class="panel workspace-safety-panel" data-view="workspace" data-ui-marker="server-authoritative-workspace">
-            <div class="panel-header"><h3 data-i18n="panel.workspaceSafety">安全工作区</h3><span id="workspaceState" data-i18n="workspace.state.unverified">待服务端验证</span></div>
-            <p class="panel-purpose" data-i18n="purpose.workspaceSafety">查看当前工作区的服务端权限；预览、创建、激活或删除由 CodeClaw 管理的可丢弃副本。</p>
+            <div class="action-row"><button id="suggestButton" data-i18n="button.suggest" type="button">Suggest</button><button id="contextButton" data-i18n="button.chooseContext" type="button">Choose context</button><button id="readContextButton" data-i18n="button.readSelected" type="button">Read selected</button></div>
+            <div class="context-candidates" id="contextCandidates"></div><pre class="model-output" id="modelOutput" data-i18n="model.output.ready">Mock model ready.</pre>
+          </section>
+
+          <section class="panel patch-panel" data-view="workspace" data-workflow-section="patch" aria-labelledby="patchTitle" aria-describedby="patchPurpose">
+            <div class="panel-header"><h3 id="patchTitle" data-i18n="panel.patch">Patch draft</h3><span id="patchState" data-i18n="patch.state.none">No patch</span></div>
+            <p class="panel-purpose" id="patchPurpose" data-module-purpose data-i18n="purpose.patch">Generate and review a change draft first. Drafting does not write files; Apply writes the reviewed change, while Revert writes previous content back. Both are limited to an active verified Demo/copy and require confirmation.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <div class="action-row"><button id="proposePatchButton" data-i18n="button.generatePatch" type="button">Generate patch draft</button><button id="applyPatchButton" data-i18n="button.apply" type="button">Apply (writes files)</button><label class="visually-hidden" for="revertPatchSelect" data-i18n="patch.revert.label">Patch to revert</label><select id="revertPatchSelect" data-i18n-aria-label="patch.revert.label" aria-label="Patch to revert"></select><button class="secondary" id="revertPatchButton" data-i18n="button.revert" type="button">Revert</button></div>
+            <div class="boundary-note write-boundary"><strong data-i18n="applyBoundary.title">Write boundary</strong><span data-i18n="applyBoundary.body">No project write begins before approval.</span></div><div class="patch-gate" id="patchGate"></div><div class="apply-review" id="applyReview"></div><div class="patch-output" id="patchOutput" data-i18n="patch.output.readContextFirst">Read context before generating a patch.</div>
+          </section>
+
+          <section class="panel workspace-safety-panel" data-view="workspace" data-workflow-section="workspace" data-ui-marker="server-authoritative-workspace" aria-labelledby="workspaceSafetyTitle" aria-describedby="workspaceSafetyPurpose">
+            <div class="panel-header"><h3 id="workspaceSafetyTitle" data-i18n="panel.workspaceSafety">Safe workspace and Apply</h3><span id="workspaceState" data-i18n="workspace.state.unverified">Awaiting server verification</span></div>
+            <p class="panel-purpose" id="workspaceSafetyPurpose" data-module-purpose data-i18n="purpose.workspaceSafety">Original projects stay read-only; writes require Demo or an activated CodeClaw disposable copy.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
             <div class="workspace-capability empty" id="workspaceCapability" aria-live="polite"></div>
-            <div class="boundary-note workspace-disclosure">
-              <strong data-i18n="workspace.disclosure.title">副本仍包含源码</strong>
-              <span data-i18n="workspace.disclosure.body">可丢弃副本不是匿名化副本，也不代表适合上传或分享。CodeClaw 会排除已知秘密文件、忽略项、生成目录和链接，但仍请检查预览。</span>
-            </div>
-            <div class="action-row workspace-copy-actions">
-              <button id="previewCopyButton" data-i18n="workspace.button.preview" type="button">预览可丢弃副本</button>
-              <button id="createCopyButton" data-i18n="workspace.button.create" type="button">创建副本（复制源码）</button>
-              <button class="secondary" id="refreshWorkspacesButton" data-i18n="workspace.button.refresh" type="button">刷新工作区列表</button>
-            </div>
-            <div class="copy-preview empty" id="copyPreview" aria-live="polite"></div>
-            <details class="workspace-list-disclosure" open>
-              <summary data-i18n="workspace.list.title">已登记工作区</summary>
-              <div class="workspace-list" id="workspaceList"></div>
-            </details>
-          </div>
-          <div class="panel task-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.taskGoal">任务目标</h3><span data-i18n="state.planningMode">规划模式</span></div>
-            <p class="panel-purpose" data-i18n="purpose.goal">用一句话说明希望 CodeClaw 完成什么，计划会围绕这个目标生成。</p>
-            <textarea id="goalInput" rows="5" placeholder="例如：修复当前失败的测试，并解释改动。" data-i18n-placeholder="goal.placeholder"></textarea>
-            <div class="action-row"><button id="planButton" data-i18n="button.generatePlan" type="button">生成计划</button><button class="secondary" id="clearButton" data-i18n="button.clear" type="button">清空</button></div>
-          </div>
-          <div class="panel current-task-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.currentTask">当前任务</h3><span id="taskState" data-i18n="task.state.none">无任务</span></div>
-            <p class="panel-purpose" data-i18n="purpose.currentTask">集中显示当前任务已读取、已建议、已写入和已验证的状态。</p>
-            <div id="taskSummary" class="task-summary" data-i18n="task.summary.empty">生成计划后会创建任务。</div>
-            <pre class="review-draft" id="reviewDraft" data-i18n="task.review.empty">完成任务后会生成 Review 草稿。</pre>
-            <div class="action-row"><button class="secondary" id="completeTaskButton" data-i18n="button.completeTask" type="button">完成任务</button></div>
-          </div>
-          <div class="panel memory-panel" data-view="memory">
-            <div class="panel-header"><h3 data-i18n="panel.memory">项目记忆</h3><span id="memoryState" data-i18n="memory.state.noProject">无项目</span></div>
-            <p class="panel-purpose" data-i18n="purpose.memory">保存本机上的项目概况和备注，方便下次继续；恢复前会先征求你的选择。</p>
-            <pre class="memory-output" id="memoryOutput" data-i18n="memory.output.empty">扫描项目后会加载项目记忆。</pre>
-            <label class="field-label" for="memoryNotes" data-i18n="field.memoryNotes">项目备注</label>
-            <textarea id="memoryNotes" class="memory-notes" rows="5" placeholder="架构说明、偏好、注意事项或项目约定。" data-i18n-placeholder="memory.notes.placeholder"></textarea>
-            <div class="action-row"><button id="saveMemoryButton" data-i18n="button.saveNotes" type="button">保存备注</button><button class="secondary" id="refreshMemoryButton" data-i18n="button.refresh" type="button">刷新</button></div>
-          </div>
-          <div class="panel model-panel" data-view="workspace settings">
-            <div class="panel-header"><h3 data-i18n="panel.model">模型</h3><span id="modelState">Mock</span></div>
-            <p class="panel-purpose" data-i18n="purpose.model">Mock 仅本地演示；在线模型请求可能发送目标、项目元数据、候选路径和所选上下文内容。</p>
-            <div class="model-form">
-              <select id="modelPreset" aria-label="模型预设" data-i18n-aria-label="model.preset.label">
-                <option value="mock" data-i18n="model.preset.mock">mock 本地演示</option>
-                <option value="dashscope">DashScope / Qwen</option>
-                <option value="deepseek-pro">DeepSeek V4 Pro</option>
-                <option value="deepseek-flash">DeepSeek V4 Flash</option>
-                <option value="openai">OpenAI API</option>
-                <option value="custom" data-i18n="model.preset.custom">自定义兼容接口</option>
-              </select>
-              <select id="modelType" aria-label="模型供应商" data-i18n-aria-label="model.type.label">
-                <option value="mock">mock</option>
-                <option value="openai-compatible">openai-compatible</option>
-              </select>
-              <input id="modelBaseUrl" type="text" placeholder="Base URL, e.g. http://localhost:11434/v1" />
-              <input id="modelName" type="text" placeholder="模型名称" data-i18n-placeholder="model.name.placeholder" />
-              <input id="modelApiKey" type="password" placeholder="API key" autocomplete="off" spellcheck="false" autocapitalize="none" />
-              <button id="saveModelButton" data-i18n="button.save" type="button">保存</button>
-              <button id="suggestButton" data-i18n="button.suggest" type="button">建议</button>
-              <button id="contextButton" data-i18n="button.chooseContext" type="button">选上下文</button>
-              <button id="readContextButton" data-i18n="button.readSelected" type="button">读取选中</button>
-            </div>
-            <div class="model-cost-hint" id="modelCostHint"></div>
-            <div class="context-candidates" id="contextCandidates"></div>
-            <pre class="model-output" id="modelOutput" data-i18n="model.output.ready">Mock 模型已就绪。</pre>
-          </div>
-          <div class="panel patch-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.patch">补丁草案</h3><span id="patchState" data-i18n="patch.state.none">无补丁</span></div>
-            <p class="panel-purpose" data-i18n="purpose.patch">先生成并审阅改动草案。生成草案不写文件；只有“应用（写入文件）”会修改项目。</p>
-            <div class="action-row">
-              <button id="proposePatchButton" data-i18n="button.generatePatch" type="button">生成补丁</button>
-              <button id="applyPatchButton" data-i18n="button.apply" type="button">应用（写入文件）</button>
-              <select id="revertPatchSelect" aria-label="要回滚的补丁" data-i18n-aria-label="patch.revert.label"></select>
-              <button class="secondary" id="revertPatchButton" data-i18n="button.revert" type="button">回滚</button>
-            </div>
-            <div class="boundary-note write-boundary">
-              <strong data-i18n="applyBoundary.title">写入边界</strong>
-              <span data-i18n="applyBoundary.body">应用会改动下方列出的本地文件。确认对话框出现前不会写入；请先审阅差异并准备可回滚副本或分支。</span>
-            </div>
-            <div class="patch-gate" id="patchGate"></div>
-            <div class="apply-review" id="applyReview" data-ui-marker="dry-run-apply-review"></div>
-            <div class="patch-output" id="patchOutput" data-i18n="patch.output.readContextFirst">生成补丁前，请先读取上下文文件。</div>
-          </div>
-          <div class="panel tools-panel" data-view="settings">
-            <div class="panel-header"><h3 data-i18n="panel.tools">工具调用</h3><span id="toolState" data-i18n="tool.state.waitingProject">等待项目</span></div>
-            <p class="panel-purpose" data-i18n="purpose.tools">高级入口：直接读取、搜索或查看 Git 状态；写入类工具仍需单独确认。</p>
-            <div class="tool-form">
-              <select id="toolSelect" aria-label="工具" data-i18n-aria-label="tool.label">
-                <option value="list_files">list_files</option>
-                <option value="read_file">read_file</option>
-                <option value="search_code">search_code</option>
-                <option value="git_status">git_status</option>
-                <option value="git_diff">git_diff</option>
-              </select>
-              <input id="toolArg" type="text" placeholder="路径或搜索词" data-i18n-placeholder="tool.arg.placeholder" />
-              <button id="callToolButton" data-i18n="button.call" type="button">调用</button>
-            </div>
-            <pre class="tool-output" id="toolOutput" data-i18n="tool.output.scanFirst">扫描项目后可以调用工具。</pre>
-          </div>
-          <div class="panel verify-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.verify">验证</h3><span id="verifyState" data-i18n="verify.state.noCommand">无命令</span></div>
-            <p class="panel-purpose" data-i18n="purpose.verify">用项目自己提供的测试或检查命令验证改动；运行前会显示完整命令并再次确认。</p>
-            <div class="verify-form">
-              <select id="verifyCommandSelect" aria-label="验证命令" data-i18n-aria-label="verify.command.label"></select>
-              <button id="runVerifyButton" data-i18n="button.run" type="button">运行命令</button>
-              <button class="secondary" id="fixFailureButton" data-i18n="button.fixFailure" type="button">修复失败</button>
-            </div>
-            <div class="boundary-note command-boundary" id="verifyBoundary" aria-live="polite"></div>
-            <pre class="verify-output" id="verifyOutput" data-i18n="verify.output.scanFirst">扫描项目后会加载可运行命令。</pre>
-          </div>
-          <div class="panel timeline-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.timeline">任务时间线</h3><span id="planIntent" data-i18n="state.waiting">等待中</span></div>
-            <p class="panel-purpose" data-i18n="purpose.timeline">把计划拆成可检查的步骤；这是计划说明，不代表步骤已经执行。</p>
-            <ol class="timeline" id="timeline"></ol>
-          </div>
-          <div class="panel context-panel" data-view="workspace">
-            <div class="panel-header"><h3 data-i18n="panel.context">项目上下文</h3><span data-i18n="state.scanResults">扫描结果</span></div>
-            <p class="panel-purpose" data-i18n="purpose.context">显示 CodeClaw 已识别的项目结构、关键文件和可用命令，便于核对它读到了什么。</p>
-            <pre id="contextOutput" data-i18n="context.output.start">选择本地项目后开始。</pre>
-          </div>
-          <div class="panel audit-panel" data-view="audit">
-            <div class="panel-header"><h3 data-i18n="panel.audit">审计日志</h3><span id="auditState" data-i18n="audit.state.none">无事件</span></div>
-            <p class="panel-purpose" data-i18n="purpose.audit">按时间查看 CodeClaw 读取、建议、阻止、写入或运行过的操作。</p>
-            <ol class="audit-list" id="auditList"></ol>
-          </div>
+            <div class="boundary-note workspace-disclosure"><strong data-i18n="workspace.disclosure.title">Copies still contain source</strong><span data-i18n="workspace.disclosure.body">A disposable copy is not anonymized.</span></div>
+            <div class="action-row workspace-copy-actions"><button id="previewCopyButton" data-i18n="workspace.button.preview" type="button">Preview copy</button><button id="createCopyButton" data-i18n="workspace.button.create" type="button">Create copy</button><button class="secondary" id="refreshWorkspacesButton" data-i18n="workspace.button.refresh" type="button">Refresh workspaces</button></div>
+            <div class="copy-preview empty" id="copyPreview" aria-live="polite"></div><details class="workspace-list-disclosure" open><summary data-i18n="workspace.list.title">Registered workspaces</summary><div class="workspace-list" id="workspaceList"></div></details>
+          </section>
+
+          <section class="panel verify-panel" data-view="workspace" data-workflow-section="verify" aria-labelledby="verifyTitle" aria-describedby="verifyPurpose">
+            <div class="panel-header"><h3 id="verifyTitle" data-i18n="panel.verify">Verify</h3><span id="verifyState" data-i18n="verify.state.noCommand">No command</span></div>
+            <p class="panel-purpose" id="verifyPurpose" data-module-purpose data-i18n="purpose.verify">Shows the full detected project command and asks again before it runs.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <div class="verify-form"><label for="verifyCommandSelect" data-i18n="verify.command.label">Verification command</label><select id="verifyCommandSelect"></select><button id="runVerifyButton" data-i18n="button.run" type="button">Run command</button><button class="secondary" id="fixFailureButton" data-i18n="button.fixFailure" type="button">Suggest a fix</button></div>
+            <div class="boundary-note command-boundary" id="verifyBoundary" aria-live="polite"></div><pre class="verify-output" id="verifyOutput" data-i18n="verify.output.scanFirst">Scan a project to load commands.</pre>
+          </section>
+
+          <section class="panel current-task-panel" data-view="workspace" data-workflow-section="complete" aria-labelledby="currentTaskTitle" aria-describedby="currentTaskPurpose">
+            <div class="panel-header"><h3 id="currentTaskTitle" data-i18n="panel.currentTask">Complete and review</h3><span id="taskState" data-i18n="task.state.none">No task</span></div>
+            <p class="panel-purpose" id="currentTaskPurpose" data-module-purpose data-i18n="purpose.currentTask">Summarizes what was read, drafted, written, and verified before completion.</p>
+            <ul class="module-impact" data-i18n-aria-label="workflow.impact.label" aria-label="Module effects"><li data-boundary="read" data-i18n="workflow.impact.read">Read: see this module description.</li><li data-boundary="project-write" data-i18n="workflow.impact.write">Project write: only a confirmed Apply or Revert can write an active server-verified Demo or disposable copy.</li><li data-boundary="network" data-i18n="workflow.impact.network">Network: online model actions open outbound review.</li><li data-boundary="command" data-i18n="workflow.impact.command">Command: only Verify can run a confirmed project command.</li><li data-boundary="local-state" data-i18n="workflow.impact.state">Local state: progress and audit metadata stay on this device.</li></ul>
+            <div id="taskSummary" class="task-summary" data-i18n="task.summary.empty">A task appears after planning.</div><pre class="review-draft" id="reviewDraft" data-i18n="task.review.empty">A review draft appears after completion.</pre><div class="action-row"><button class="secondary" id="completeTaskButton" data-i18n="button.completeTask" type="button">Complete task</button></div>
+          </section>
+
+          <section class="panel timeline-panel" data-view="workspace" aria-labelledby="timelineTitle" aria-describedby="timelinePurpose">
+            <div class="panel-header"><h3 id="timelineTitle" data-i18n="panel.timeline">Plan details</h3><span id="planIntent" data-i18n="state.waiting">Waiting</span></div><p class="panel-purpose" id="timelinePurpose" data-module-purpose data-i18n="purpose.timeline">Planned steps are explanations, not proof of execution.</p><ol class="timeline" id="timeline"></ol>
+          </section>
+
+          <section class="panel context-panel" data-view="workspace" data-experience="advanced" aria-labelledby="contextTitle" aria-describedby="contextPurpose">
+            <div class="panel-header"><h3 id="contextTitle" data-i18n="panel.context">Detected project context</h3><span data-i18n="state.scanResults">Scan results</span></div><p class="panel-purpose" id="contextPurpose" data-module-purpose data-i18n="purpose.context">Inspect the raw detected structure, key files, and commands.</p><pre id="contextOutput" data-i18n="context.output.start">Choose a project to begin.</pre>
+          </section>
+
+          <section class="panel tools-panel" data-view="settings" data-experience="advanced" aria-labelledby="toolsTitle" aria-describedby="toolsPurpose">
+            <div class="panel-header"><h3 id="toolsTitle" data-i18n="panel.tools">Lower-level tools</h3><span id="toolState" data-i18n="tool.state.waitingProject">Waiting for project</span></div><p class="panel-purpose" id="toolsPurpose" data-module-purpose data-i18n="purpose.tools">Read-only advanced controls for reading, searching, and checking Git. Project file writes use only the reviewed, transaction-protected Apply or Revert actions in an active verified Demo/copy.</p>
+            <div class="tool-form"><label for="toolSelect" data-i18n="tool.label">Tool</label><select id="toolSelect"><option value="list_files" data-i18n="tool.option.listFiles">List files</option><option value="read_file" data-i18n="tool.option.readFile">Read file</option><option value="search_code" data-i18n="tool.option.searchCode">Search code</option><option value="git_status" data-i18n="tool.option.gitStatus">Git status</option><option value="git_diff" data-i18n="tool.option.gitDiff">Git diff</option></select><label for="toolArg" data-i18n="tool.arg.label">Path or search term</label><input id="toolArg" type="text" data-i18n-placeholder="tool.arg.placeholder" placeholder="Path or search term" /><button id="callToolButton" data-i18n="button.call" type="button">Call</button></div><pre class="tool-output" id="toolOutput" data-i18n="tool.output.scanFirst">Scan a project before calling tools.</pre>
+          </section>
+
+          <section class="panel memory-panel" data-view="memory" aria-labelledby="memoryTitle" aria-describedby="memoryPurpose">
+            <div class="panel-header"><h3 id="memoryTitle" data-i18n="panel.memory">Project memory</h3><span id="memoryState" data-i18n="memory.state.noProject">No project</span></div><p class="panel-purpose" id="memoryPurpose" data-module-purpose data-i18n="purpose.memory">Local project facts and notes for later use.</p><pre class="memory-output" id="memoryOutput" data-i18n="memory.output.empty">Scan a project to load memory.</pre><label class="field-label" for="memoryNotes" data-i18n="field.memoryNotes">Project notes</label><textarea id="memoryNotes" class="memory-notes" rows="5" data-i18n-placeholder="memory.notes.placeholder"></textarea><div class="action-row"><button id="saveMemoryButton" data-i18n="button.saveNotes" type="button">Save notes</button><button class="secondary" id="refreshMemoryButton" data-i18n="button.refresh" type="button">Refresh</button></div>
+          </section>
+
+          <section class="panel audit-panel" data-view="audit" aria-labelledby="auditTitle" aria-describedby="auditPurpose">
+            <div class="panel-header"><h3 id="auditTitle" data-i18n="panel.audit">Audit log</h3><span id="auditState" data-i18n="audit.state.none">No events</span></div><p class="panel-purpose" id="auditPurpose" data-module-purpose data-i18n="purpose.audit">Time-ordered local records of reads, suggestions, blocks, writes, and commands.</p><ol class="audit-list" id="auditList"></ol>
+          </section>
         </section>
       </main>
     </div>
+
     <dialog class="model-review-dialog" id="modelOutboundReview" aria-labelledby="modelReviewTitle" aria-describedby="modelReviewWarning" data-ui-marker="model-outbound-review">
       <div class="model-review-shell">
-        <header class="model-review-header">
-          <div>
-            <p data-i18n="model.review.eyebrow">Outbound model request</p>
-            <h2 id="modelReviewTitle" data-i18n="model.review.title">Review before sending</h2>
-          </div>
-          <button class="secondary model-review-close" id="modelReviewClose" type="button" data-i18n-aria-label="model.review.close" aria-label="Close review">×</button>
-        </header>
+        <header class="model-review-header"><div><p data-i18n="model.review.eyebrow">Outbound model request</p><h2 id="modelReviewTitle" data-i18n="model.review.title">Review before sending</h2></div><button class="secondary model-review-close" id="modelReviewClose" type="button" data-i18n-aria-label="model.review.close" aria-label="Close review">×</button></header>
         <div class="model-review-scroll">
-          <div class="model-review-warning" id="modelReviewWarning" role="note">
-            <strong data-i18n="model.review.warning.title">Source-code disclosure</strong>
-            <span data-i18n="model.review.warning.body">This request may still contain source code. It has not been anonymized, and this review does not mean it is suitable to upload or share.</span>
-          </div>
-          <section class="model-review-section" aria-labelledby="modelReviewTargetTitle">
-            <h3 id="modelReviewTargetTitle" data-i18n="model.review.target.title">Where this request goes</h3>
-            <dl class="model-review-target">
-              <div><dt data-i18n="model.review.operation">Operation</dt><dd id="modelReviewOperation"></dd></div>
-              <div><dt data-i18n="model.review.provider">Provider / model</dt><dd id="modelReviewProvider"></dd></div>
-              <div><dt data-i18n="model.review.channel">Channel</dt><dd id="modelReviewChannel"></dd></div>
-              <div><dt data-i18n="model.review.leavesDevice">Leaves this device</dt><dd id="modelReviewLeavesDevice"></dd></div>
-              <div class="model-review-wide"><dt data-i18n="model.review.endpoint">Endpoint</dt><dd><code id="modelReviewEndpoint"></code></dd></div>
-              <div class="model-review-wide"><dt data-i18n="model.review.expires">Approval expires</dt><dd id="modelReviewExpires"></dd></div>
-            </dl>
-          </section>
-          <section class="model-review-section" aria-labelledby="modelReviewRequestTitle">
-            <h3 id="modelReviewRequestTitle" data-i18n="model.review.request.title">Exact request</h3>
-            <div class="model-review-metrics">
-              <div><span data-i18n="model.review.bytes">UTF-8 bytes</span><strong id="modelReviewBytes"></strong></div>
-              <div><span data-i18n="model.review.sha">SHA-256</span><code id="modelReviewSha"></code></div>
-            </div>
-            <p class="model-review-explanation" data-i18n="model.review.body.explanation">The body below is the exact UTF-8 request prepared by the server. Approving sends these reviewed bytes without rebuilding the request.</p>
-            <p class="model-review-control-warning" id="modelReviewControlWarning" role="note" hidden></p>
-            <pre class="model-review-body" id="modelReviewBody" tabindex="0" data-i18n-aria-label="model.review.body.label" aria-label="Exact UTF-8 request body"></pre>
-          </section>
-          <section class="model-review-section" aria-labelledby="modelReviewFilesTitle">
-            <h3 id="modelReviewFilesTitle" data-i18n="model.review.files.title">Files represented in this request</h3>
-            <p class="model-review-explanation" id="modelReviewDataClasses"></p>
-            <div class="model-review-files" id="modelReviewFiles"></div>
-          </section>
+          <div class="model-review-warning" id="modelReviewWarning" role="note"><strong data-i18n="model.review.warning.title">Source-code disclosure</strong><span data-i18n="model.review.warning.body">This request may contain source code and is not anonymized.</span></div>
+          <section class="model-review-section" aria-labelledby="modelReviewTargetTitle"><h3 id="modelReviewTargetTitle" data-i18n="model.review.target.title">Where this request goes</h3><dl class="model-review-target"><div><dt data-i18n="model.review.operation">Operation</dt><dd id="modelReviewOperation"></dd></div><div><dt data-i18n="model.review.provider">Provider / model</dt><dd id="modelReviewProvider"></dd></div><div><dt data-i18n="model.review.channel">Channel</dt><dd id="modelReviewChannel"></dd></div><div><dt data-i18n="model.review.leavesDevice">Leaves this device</dt><dd id="modelReviewLeavesDevice"></dd></div><div class="model-review-wide"><dt data-i18n="model.review.endpoint">Endpoint</dt><dd><code id="modelReviewEndpoint"></code></dd></div><div class="model-review-wide"><dt data-i18n="model.review.expires">Approval expires</dt><dd id="modelReviewExpires"></dd></div></dl></section>
+          <section class="model-review-section" aria-labelledby="modelReviewRequestTitle"><h3 id="modelReviewRequestTitle" data-i18n="model.review.request.title">Exact request</h3><div class="model-review-metrics"><div><span data-i18n="model.review.bytes">UTF-8 bytes</span><strong id="modelReviewBytes"></strong></div><div><span data-i18n="model.review.sha">SHA-256</span><code id="modelReviewSha"></code></div></div><p class="model-review-explanation" data-i18n="model.review.body.explanation">The safety view represents the exact prepared request.</p><p class="model-review-control-warning" id="modelReviewControlWarning" role="note" hidden></p><pre class="model-review-body" id="modelReviewBody" tabindex="0" data-i18n-aria-label="model.review.body.label" aria-label="Exact UTF-8 request body"></pre></section>
+          <section class="model-review-section" aria-labelledby="modelReviewFilesTitle"><h3 id="modelReviewFilesTitle" data-i18n="model.review.files.title">Files represented in this request</h3><p class="model-review-explanation" id="modelReviewDataClasses"></p><div class="model-review-files" id="modelReviewFiles"></div></section>
         </div>
-        <footer class="model-review-footer">
-          <p id="modelReviewStatus" role="status" aria-live="polite"></p>
-          <div>
-            <button class="secondary" id="modelReviewCancel" type="button" data-i18n="model.review.cancel">Cancel — do not send</button>
-            <button id="modelReviewApprove" type="button" data-i18n="model.review.approve">Approve and send</button>
-          </div>
-        </footer>
+        <footer class="model-review-footer"><p id="modelReviewStatus" aria-live="polite"></p><div><button class="secondary" id="modelReviewCancel" type="button" data-i18n="model.review.cancel">Cancel — do not send</button><button id="modelReviewApprove" type="button" data-i18n="model.review.approve">Approve and send</button></div></footer>
       </div>
     </dialog>
     <script src="/app.js" type="module"></script>

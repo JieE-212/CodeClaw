@@ -137,14 +137,14 @@ async function inspectUi() {
   const [html, appJs, i18nJs] = await Promise.all([text("/"), text("/app.js"), text("/i18n.js")]);
   return {
     i18nPresent: html.includes("languageSelect") && appJs.includes("initI18n") && i18nJs.includes("SUPPORTED_LANGUAGES") && i18nJs.includes("zh-CN") && i18nJs.includes("ru"),
-    quickStartVisible: html.includes("panel.quickStart") && html.includes("quickStartPrimary"),
+    workflowVisible: html.includes('id="workflowPanel"') && html.includes('id="workflowPrimary"') && appJs.includes("const workflowModel"),
     trustStripVisible: html.includes("trust.local.title") && html.includes("trust.preflight.title") && html.includes("trust.confirm.title"),
     demoVisible: html.includes("Demo"),
-    pathInputTipsVisible: html.includes("real-project-path-helper") && html.includes("examplePathButton") && appJs.includes("PATH_IS_FILE"),
-    pathModeVisible: html.includes("trial-friction-path-mode") && i18nJs.includes("path.mode.demo.title") && i18nJs.includes("path.mode.real.title"),
-    readOnlyPreflightCopy: html.includes("preflight.default") && i18nJs.includes("preflight.default"),
+    pathInputTipsVisible: html.includes('id="repoPath"') && html.includes('id="pathHelper"') && html.includes("examplePathButton") && appJs.includes("PATH_IS_FILE"),
+    projectChoiceVisible: html.includes('data-workflow-step="project"') && html.includes('data-ui-marker="demo-readonly-preflight"'),
+    readOnlyPreflightCopy: html.includes('data-workflow-step="preflight"') && html.includes('data-boundary="read"'),
     patchGatePresent: html.includes("patchGate") && appJs.includes("preflightPatchGateStatus"),
-    applyReviewPresent: html.includes("dry-run-apply-review") && appJs.includes("function renderApplyReview") && i18nJs.includes("applyReview.writeWarning.title"),
+    applyReviewPresent: html.includes('id="applyReview"') && appJs.includes("function renderApplyReview") && i18nJs.includes("applyReview.writeWarning.title"),
     modelCostCopyPresent: i18nJs.includes("model.cost.flash.detail") && i18nJs.includes("model.cost.pro.detail"),
     humanObservationTemplatePresent: await fileExists(path.join(appRoot, "docs", "HUMAN_TRIAL_OBSERVATION.md"))
   };
@@ -217,13 +217,13 @@ async function runFailurePathTrial(demo) {
 
   const unconfirmedApply = await request("/api/tasks/apply-patch", { taskId: demo.taskId });
   const unconfirmedVerify = demo.verifyCommand
-    ? await request("/api/tools/call", {
+    ? await expectApiFailure("/api/tools/call", {
       tool: "run_command",
       args: { command: demo.verifyCommand },
       rootPath: demo.rootPath,
       taskId: demo.taskId
-    })
-    : { blocked: false, message: "No demo verification command detected." };
+    }, "TASK_VERIFY_PATCH_REQUIRED")
+    : { ok: false, code: "", message: "No demo verification command detected." };
   const latest = await request(`/api/tasks/latest?rootPath=${encodeURIComponent(demo.rootPath)}`);
 
   return {
@@ -242,7 +242,8 @@ async function runFailurePathTrial(demo) {
       appliedPatchesAfter: latest.task?.appliedPatches?.filter((item) => !item.revertedAt).length || 0
     },
     unconfirmedVerify: {
-      blocked: Boolean(unconfirmedVerify.blocked),
+      blocked: Boolean(unconfirmedVerify.ok),
+      code: unconfirmedVerify.code || "",
       message: unconfirmedVerify.message || "",
       approved: false
     }
@@ -252,10 +253,10 @@ async function runFailurePathTrial(demo) {
 function findingsFor({ ui, demo, real, failurePaths }) {
   const findings = [];
   if (!ui.i18nPresent) findings.push("Language switching and base i18n dictionaries are missing.");
-  if (!ui.quickStartVisible) findings.push("Quick Start is not obvious enough for a first-time user.");
+  if (!ui.workflowVisible) findings.push("The guided workflow is not obvious enough for a first-time user.");
   if (!ui.trustStripVisible) findings.push("The first screen does not clearly summarize local-only, read-only-first, and confirmation-before-write safety promises.");
   if (!ui.pathInputTipsVisible) findings.push("Real-project path input tips or example controls are missing from the first screen.");
-  if (!ui.pathModeVisible) findings.push("Demo vs real-project path mode is not explicitly visible.");
+  if (!ui.projectChoiceVisible) findings.push("Demo vs real-project choice is not explicitly visible.");
   if (!ui.readOnlyPreflightCopy) findings.push("Read-only safety copy is not visible enough before project selection.");
   if (!ui.applyReviewPresent) findings.push("Apply review panel is missing before the patch write confirmation.");
   if (!ui.humanObservationTemplatePresent) findings.push("Human trial observation checklist is missing from docs.");
@@ -281,7 +282,7 @@ function frictionAuditFor({ ui, demo, real, failurePaths }) {
   return [
     {
       area: "startup",
-      status: ui.trustStripVisible && ui.quickStartVisible ? "pass" : "watch",
+      status: ui.trustStripVisible && ui.workflowVisible ? "pass" : "watch",
       observe: "Can a tester launch, see service status, and identify the first action without host help?"
     },
     {
@@ -291,7 +292,7 @@ function frictionAuditFor({ ui, demo, real, failurePaths }) {
     },
     {
       area: "demo-vs-real",
-      status: ui.pathModeVisible && ui.demoVisible ? "pass" : "watch",
+      status: ui.projectChoiceVisible && ui.demoVisible ? "pass" : "watch",
       observe: "Can the tester tell whether they are using Demo, an example path, or a real project?"
     },
     {
@@ -334,10 +335,10 @@ function renderMarkdown(report) {
     "",
     `- Overall: ${report.ok ? "Pass" : "Fail"}`,
     `- UI i18n present: ${yes(report.ui.i18nPresent)}`,
-    `- UI Quick Start visible: ${yes(report.ui.quickStartVisible)}`,
+    `- UI guided workflow visible: ${yes(report.ui.workflowVisible)}`,
     `- UI safety strip visible: ${yes(report.ui.trustStripVisible)}`,
     `- UI path tips visible: ${yes(report.ui.pathInputTipsVisible)}`,
-    `- UI path mode visible: ${yes(report.ui.pathModeVisible)}`,
+    `- UI project choice visible: ${yes(report.ui.projectChoiceVisible)}`,
     `- UI read-only copy visible: ${yes(report.ui.readOnlyPreflightCopy)}`,
     `- UI apply review visible: ${yes(report.ui.applyReviewPresent)}`,
     `- Human observation checklist present: ${yes(report.ui.humanObservationTemplatePresent)}`,

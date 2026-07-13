@@ -10,7 +10,7 @@ import { createTaskPlan } from "../../packages/agent-core/src/index.js";
 import { classifyToolCall } from "../../packages/permission-engine/src/index.js";
 import { ToolRegistry, hashContent } from "../../packages/tool-registry/src/index.js";
 import { AuditLog, summarizeToolResult } from "../../packages/audit-log/src/index.js";
-import { TaskStore, appliedPatchIdentity, buildTaskReviewDraft, patchProposalDigest, summarizeTask } from "../../packages/task-store/src/index.js";
+import { TaskStore, activePatchSetDigest, appliedPatchIdentity, buildTaskReviewDraft, patchProposalDigest, summarizeTask } from "../../packages/task-store/src/index.js";
 import { MemoryStore } from "../../packages/memory-store/src/index.js";
 import { MODEL_OPERATIONS, ModelProvider, publicModelConfig, sanitizeModelConfig, selectContextFiles } from "../../packages/model-provider/src/index.js";
 import { buildOpenAICompatibleEndpoint } from "../../packages/model-provider/src/safe-transport.js";
@@ -130,6 +130,7 @@ await startServer();
 
 async function startServer() {
   await taskStore.initialize();
+  await memoryStore.reconcileTaskSummaries(await taskStore.readAll());
   await auditLog.redactLegacyModelData();
   await loadModelConfig();
   patchRecoveryStatus = await recoverPatchTransactions({
@@ -143,6 +144,7 @@ async function startServer() {
       { timeoutMs: 1000 }
     )
   });
+  await memoryStore.reconcileTaskSummaries(await taskStore.readAll());
   await workspaceCapabilityStore.initialize();
   server.listen(port, "127.0.0.1", () => {
     console.log(`CodeClaw workspace running at http://127.0.0.1:${port}`);
@@ -543,6 +545,7 @@ async function previewModelOperation(request, response) {
   }
 
   const task = await taskStore.get(body.taskId);
+  assertTaskOpenForMutation(task, "run another model operation");
   const binding = await assertTaskWorkspaceCurrent(task, `preview model operation ${operation}`);
   const initialManifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
   assertModelManifestEligible(initialManifest);
@@ -606,6 +609,7 @@ async function sendModelOperation(request, response) {
   try {
     assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED");
     let task = await taskStore.get(record.taskId);
+    assertTaskOpenForMutation(task, "send another model operation");
     assertTaskRevision(task, record.taskRevision, "MODEL_TASK_CHANGED");
     const binding = await assertTaskWorkspaceCurrent(task, `send model operation ${record.operation}`);
     if (binding.workspace.id !== record.workspaceId || task.rootIdentity !== record.rootIdentity) {
@@ -1063,17 +1067,62 @@ async function completeTask(request, response) {
   const body = await readJson(request);
   assertOnlyRequestFields(body, ["taskId"], "TASK_COMPLETE_FIELDS_INVALID");
   const existing = await taskStore.get(body.taskId);
-  const summary = summarizeTask(existing);
-  const reviewDraft = buildTaskReviewDraft(existing, summary);
-  const task = await taskStore.complete(body.taskId, summary, reviewDraft);
-  const memory = task.rootPath ? await memoryStore.appendTaskSummary(task.rootPath, task, summary) : null;
-  await recordAudit({ type: "task.complete", title: "Task completed", detail: summary, rootPath: task.rootPath, metadata: { taskId: task.id } });
-  return json(response, { ok: true, task, memory });
+  return serializePatchOperation(existing.rootPath, async () => {
+    let current = await taskStore.get(body.taskId);
+    await assertTaskWorkspaceCurrent(current, "complete a task");
+    await ensurePatchRecoveryReady(current.rootPath, current.rootIdentity);
+    current = await taskStore.get(body.taskId);
+    await assertTaskWorkspaceCurrent(current, "complete a task");
+    assertTaskReadyToComplete(current);
+    await assertActivePatchesCurrent(current, "TASK_COMPLETE_PATCH_CHANGED", "An applied file changed after verification. Verify the current patch again before completing the task.");
+    const summary = summarizeTask(current);
+    const reviewDraft = buildTaskReviewDraft(current, summary);
+    const task = await taskStore.complete(body.taskId, summary, reviewDraft, {
+      expectedRevision: current.revision,
+      beforeCommit: ({ currentTask }) => assertTaskReadyToComplete(currentTask)
+    });
+    const memory = task.rootPath ? await memoryStore.appendTaskSummary(task.rootPath, task, summary) : null;
+    await recordAudit({ type: "task.complete", title: "Task completed", detail: summary, rootPath: task.rootPath, metadata: { taskId: task.id } });
+    return json(response, { ok: true, task, memory });
+  });
+}
+
+function assertTaskReadyToComplete(task) {
+  if (task?.status === "completed") {
+    throw patchOperationError("TASK_ALREADY_COMPLETED", "This task is already completed. Create a new task for additional changes.", 409);
+  }
+  const activePatches = (task?.appliedPatches || []).filter((patch) => !patch.revertedAt);
+  if (!activePatches.length) {
+    throw patchOperationError("TASK_COMPLETE_PATCH_REQUIRED", "Apply a reviewed patch before completing the task.", 409);
+  }
+  const verification = task?.verification;
+  if (!verification || verification.exitCode !== 0 || verification.timedOut) {
+    throw patchOperationError("TASK_COMPLETE_VERIFICATION_REQUIRED", "Run a successful verification after applying the patch before completing the task.", 409);
+  }
+  const patchSetDigest = activePatchSetDigest(task);
+  if (!patchSetDigest || verification.patchSetDigest !== patchSetDigest) {
+    throw patchOperationError("TASK_COMPLETE_VERIFICATION_STALE", "The saved verification does not belong to the current applied patch set. Run verification again before completing the task.", 409);
+  }
+  const verifiedAt = Date.parse(verification.time || "");
+  const latestAppliedAt = Math.max(...activePatches.map((patch) => Date.parse(patch.time || "")).filter(Number.isFinite));
+  if (!Number.isFinite(verifiedAt) || !Number.isFinite(latestAppliedAt) || verifiedAt < latestAppliedAt) {
+    throw patchOperationError("TASK_COMPLETE_VERIFICATION_STALE", "The saved verification predates the applied patch. Run verification again before completing the task.", 409);
+  }
+}
+
+async function removeTaskSummaryAfterReopen(task, action) {
+  if (!task?.rootPath || !task?.id) return;
+  try {
+    await memoryStore.removeTaskSummary(task.rootPath, task.id);
+  } catch {
+    throw patchOperationError("TASK_MEMORY_RECONCILE_FAILED", `The project change was recorded, but local task memory could not reconcile after trying to ${action}. Restart CodeClaw before continuing.`, 500);
+  }
 }
 
 async function applyPatch(request, response) {
   const body = await readJson(request);
   const initialTask = await taskStore.get(body.taskId);
+  assertTaskOpenForMutation(initialTask, "apply another patch");
   await assertTaskCanMutate(initialTask, "apply patches");
   const proposalFiles = getProposalFiles(initialTask.patchProposal);
   if (!proposalFiles.length) throw new Error("No applicable patch proposal.");
@@ -1089,9 +1138,11 @@ async function applyPatch(request, response) {
   return serializePatchOperation(initialTask.rootPath, async () => {
     let task = await taskStore.get(body.taskId);
     task = await canonicalizeTaskRoot(task, "apply a patch");
+    assertTaskOpenForMutation(task, "apply another patch");
     await assertTaskCanMutate(task, "apply patches");
     await ensurePatchRecoveryReady(task.rootPath, task.rootIdentity);
     task = await canonicalizeTaskRoot(await taskStore.get(body.taskId), "apply a patch");
+    assertTaskOpenForMutation(task, "apply another patch");
     await assertTaskCanMutate(task, "apply patches");
     const proposal = task.patchProposal;
     assertProposalApproval(proposal, body, task.rootIdentity);
@@ -1159,6 +1210,7 @@ async function applyPatch(request, response) {
         ...appliedPatch,
         patchIdentity: appliedPatchIdentity(appliedPatch)
       })));
+      await removeTaskSummaryAfterReopen(task, "apply");
       committed = true;
       const cleanupPending = !(await cleanupCommittedPatchTransaction(transaction));
       await recordAudit({ type: "task.patch.apply", title: "Patch applied", detail: `${files.length} file(s)`, rootPath: task.rootPath, metadata: { taskId: task.id, batchId: transaction.id, paths: files.map((file) => file.path), cleanupPending } });
@@ -1185,6 +1237,7 @@ async function applyPatch(request, response) {
       await updateGlobalPatchRecoveryStatus(recovery);
       if (recovery.committedCleanup) {
         const updatedTask = await taskStore.get(task.id);
+        await removeTaskSummaryAfterReopen(updatedTask, "recover an applied patch");
         await recordAudit({ type: "task.patch.apply", title: "Patch applied", detail: `${files.length} file(s)`, rootPath: task.rootPath, metadata: { taskId: task.id, batchId: transaction.id, recoveredCommit: true } });
         return json(response, { ok: true, result: { files: writes, diff: writes.map((item) => item.diff).join("\n\n"), recoveredCommit: true }, task: updatedTask });
       }
@@ -1294,6 +1347,7 @@ async function revertPatch(request, response) {
           };
       write = await registry.call("write_patch", restoreArgs, { approved: true });
       const updatedTask = await taskStore.markPatchReverted(task.id, patchIndex, { revertTransactionId: transaction.id });
+      await removeTaskSummaryAfterReopen(updatedTask, "revert a patch");
       committed = true;
       const cleanupPending = !(await cleanupCommittedPatchTransaction(transaction));
       await recordAudit({ type: "task.patch.revert", title: "Patch reverted", detail: currentPatch.path, rootPath: task.rootPath, metadata: { taskId: task.id, path: currentPatch.path, transactionId: transaction.id, cleanupPending } });
@@ -1320,6 +1374,7 @@ async function revertPatch(request, response) {
       await updateGlobalPatchRecoveryStatus(recovery);
       if (recovery.committedCleanup) {
         const updatedTask = await taskStore.get(task.id);
+        await removeTaskSummaryAfterReopen(updatedTask, "recover a reverted patch");
         await recordAudit({ type: "task.patch.revert", title: "Patch reverted", detail: currentPatch.path, rootPath: task.rootPath, metadata: { taskId: task.id, transactionId: transaction.id, recoveredCommit: true } });
         return json(response, { ok: true, result: write?.result, recoveredCommit: true, task: updatedTask });
       }
@@ -1430,6 +1485,32 @@ async function assertCurrentBaseline(registry, filePath, expectedBaseline, code,
   return current;
 }
 
+async function assertActivePatchesCurrent(task, code, instruction) {
+  const activePatches = (task?.appliedPatches || []).filter((patch) => !patch.revertedAt);
+  if (!activePatches.length || !activePatchSetDigest(task)) {
+    throw patchOperationError(code, "The active patch set is incomplete. Apply a newly reviewed patch before continuing.", 409);
+  }
+  const registry = getToolRegistry(task.rootPath, task.rootIdentity);
+  const topPatchByPath = new Map();
+  for (const patch of activePatches) topPatchByPath.set(normalizePatchPath(patch.path), patch);
+  for (const patch of topPatchByPath.values()) {
+    if (typeof patch.nextContent !== "string" || patch.patchIdentity !== appliedPatchIdentity(patch)) {
+      throw patchOperationError(code, `The saved applied-patch identity is incomplete for ${patch.path}. Reapply a newly reviewed patch before continuing.`, 409);
+    }
+    const parentIdentity = (await captureWorkspaceParentIdentity(task.rootPath, patch.path)).digest;
+    if (!patch.parentIdentity || parentIdentity !== patch.parentIdentity) {
+      throw patchOperationError(code, `${instruction} The parent directory changed for ${patch.path}.`, 409);
+    }
+    await assertCurrentBaseline(
+      registry,
+      patch.path,
+      { exists: true, sha256: hashContent(patch.nextContent) },
+      code,
+      instruction
+    );
+  }
+}
+
 async function readRegistryFileState(registry, filePath) {
   try {
     const read = await registry.call("read_file", { path: filePath });
@@ -1470,6 +1551,11 @@ function patchOperationError(code, message, status) {
   error.code = code;
   error.status = status;
   return error;
+}
+
+function assertTaskOpenForMutation(task, action) {
+  if (task?.status !== "completed") return;
+  throw patchOperationError("TASK_ALREADY_COMPLETED", `This task is already completed. Create a new task instead of trying to ${action}.`, 409);
 }
 
 async function assertTaskCanMutate(task, action) {
@@ -1565,18 +1651,19 @@ async function canonicalizeTaskRoot(task, action) {
 async function scanRepo(request, response) {
   const body = await readJson(request);
   const repositoryPath = await assertRepositoryDirectory(body.path, "scan");
-  lastRepoProfile = await scanRepositoryWithFriendlyErrors(repositoryPath);
-  const workspace = await workspaceCapabilityStore.register(lastRepoProfile.rootPath);
-  await bindLastWorkspace(workspace, lastRepoProfile.rootPath, lastRepoProfile.commands);
-  const memory = await memoryStore.upsertProfile(lastRepoProfile);
+  const profile = await scanRepositoryWithFriendlyErrors(repositoryPath);
+  const workspace = await workspaceCapabilityStore.register(profile.rootPath);
+  await bindLastWorkspace(workspace, profile.rootPath, profile.commands);
+  lastRepoProfile = profile;
+  const memory = await memoryStore.upsertProfile(profile);
   await recordAudit({
     type: "repo.scan",
     title: "Repository scanned",
-    detail: `${lastRepoProfile.fileCount} files, ${lastRepoProfile.skippedCount} skipped`,
-    rootPath: lastRepoProfile.rootPath,
-    metadata: { languages: lastRepoProfile.languages, commands: lastRepoProfile.commands }
+    detail: `${profile.fileCount} files, ${profile.skippedCount} skipped`,
+    rootPath: profile.rootPath,
+    metadata: { languages: profile.languages, commands: profile.commands }
   });
-  return json(response, { ok: true, profile: lastRepoProfile, memory, workspace: lastWorkspace });
+  return json(response, { ok: true, profile, memory, workspace });
 }
 
 async function createPlan(request, response) {
@@ -1614,12 +1701,59 @@ async function callTool(request, response) {
   const binding = task
     ? await assertTaskWorkspaceCurrent(task, `call ${body.tool}`)
     : await assertLastWorkspaceCurrent(rootPath, `call ${body.tool}`);
+  if (body.tool === "run_command" && task) assertTaskOpenForMutation(task, "run another verification");
   const registry = getToolRegistry(rootPath, binding.current.digest);
   let result;
+  let taskRecordedDuringExecution = false;
   if (["run_command", "git_status", "git_diff"].includes(body.tool)) {
     if (task) await assertTaskCanMutate(task, "run project commands");
     else await workspaceCapabilityStore.assertCanMutate(rootPath, "run project commands");
-    if (body.tool !== "run_command" || body.approved === true) {
+    if (body.tool === "run_command" && task && !(task.appliedPatches || []).some((patch) => !patch.revertedAt)) {
+      throw patchOperationError("TASK_VERIFY_PATCH_REQUIRED", "Apply a reviewed patch before running task verification.", 409);
+    }
+    if (body.tool === "run_command" && body.approved === true && task) {
+      const execution = await serializePatchOperation(rootPath, async () => {
+        let currentTask = await taskStore.get(task.id);
+        assertTaskOpenForMutation(currentTask, "run another verification");
+        await assertTaskCanMutate(currentTask, "run project commands");
+        await ensurePatchRecoveryReady(currentTask.rootPath, currentTask.rootIdentity);
+        currentTask = await taskStore.get(task.id);
+        assertTaskOpenForMutation(currentTask, "run another verification");
+        await assertTaskCanMutate(currentTask, "run project commands");
+        if (!(currentTask.appliedPatches || []).some((patch) => !patch.revertedAt)) {
+          throw patchOperationError("TASK_VERIFY_PATCH_REQUIRED", "Apply a reviewed patch before running task verification.", 409);
+        }
+        await assertActivePatchesCurrent(currentTask, "TASK_VERIFY_PATCH_CHANGED", "An applied file changed before verification. Review or revert that change before running the command.");
+        const expectedPatchSetDigest = activePatchSetDigest(currentTask);
+        const commandResult = await registry.call(body.tool, body.args || {}, { approved: true });
+        if (!commandResult.blocked) {
+          currentTask = await taskStore.get(task.id);
+          await assertTaskWorkspaceCurrent(currentTask, `complete ${body.tool}`);
+          if (activePatchSetDigest(currentTask) !== expectedPatchSetDigest) {
+            throw patchOperationError("TASK_VERIFY_PATCH_CHANGED", "The applied patch set changed while verification was running. The result was not saved; verify again.", 409);
+          }
+          await assertActivePatchesCurrent(currentTask, "TASK_VERIFY_PATCH_CHANGED", "An applied file changed while verification was running. The result was not saved; verify the current files again.");
+        }
+        currentTask = await taskStore.appendToolCall(body.taskId, {
+          tool: body.tool,
+          args: summarizeArgs(body.args || {}),
+          blocked: Boolean(commandResult.blocked),
+          approved: true,
+          permission: commandResult.permission,
+          summary: summarizeToolResult(commandResult)
+        });
+        if (commandResult.ok && commandResult.result && !commandResult.blocked) {
+          currentTask = await taskStore.setVerification(body.taskId, commandResult.result, { expectedPatchSetDigest });
+          if (currentTask.verification?.patchSetDigest !== expectedPatchSetDigest) {
+            throw patchOperationError("TASK_VERIFY_PATCH_CHANGED", "The applied patch set changed before the verification result could be saved. Verify again.", 409);
+          }
+        }
+        return { result: commandResult, task: currentTask };
+      });
+      result = execution.result;
+      task = execution.task;
+      taskRecordedDuringExecution = true;
+    } else if (body.tool !== "run_command" || body.approved === true) {
       result = await serializePatchOperation(rootPath, async () => {
         if (task) await assertTaskCanMutate(await taskStore.get(task.id), "run project commands");
         else await workspaceCapabilityStore.assertCanMutate(rootPath, "run project commands");
@@ -1632,12 +1766,12 @@ async function callTool(request, response) {
     result = await registry.call(body.tool, body.args || {}, { approved: body.approved === true });
   }
 
-  if (!result.blocked) {
+  if (!taskRecordedDuringExecution && !result.blocked) {
     if (task) await assertTaskWorkspaceCurrent(await taskStore.get(task.id), `complete ${body.tool}`);
     else await assertLastWorkspaceCurrent(rootPath, `complete ${body.tool}`);
   }
 
-  if (task) {
+  if (task && !taskRecordedDuringExecution) {
     task = await taskStore.appendToolCall(body.taskId, {
       tool: body.tool,
       args: summarizeArgs(body.args || {}),

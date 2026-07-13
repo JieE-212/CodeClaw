@@ -193,6 +193,21 @@ Expected result:
 - Verification and revert are both exercised before wider sharing.
 - The trial ledger has either one completed record or an explicit `Pending` entry.
 
+## Stage 3.0.13 Beginner Workflow Gate
+
+- Exactly one eight-step workflow is present: project, preflight, plan, context, patch, workspace, verify, complete.
+- Beginner is the default; Advanced changes presentation only and never changes requests, confirmation, or workspace authority.
+- Demo launches a read-only preflight and reports plan/context progress with zero writes and zero commands.
+- Every workflow module exposes purpose plus read, project-write, network, command, and local-state effects.
+- Navigation and workflow steps expose current state; labels, primary live status, focus-visible, reduced-motion, forced-colors, sticky navigation, 900/620/390px contracts, and AA primary-action contrast pass source checks.
+- Apply is required before Verify; a successful verification bound to the current patch set is required before Complete.
+- Verify and Complete reject pending patch recovery, changed patch files, stale patch-set provenance, or changed task revision.
+- Completed tasks allow inspection and Revert, but do not send new model requests or start new patch/verification work. A different goal creates a new task.
+- Async UI responses are rejected when workflow generation, path, workspace, task, or revision no longer matches.
+- Memory notes and completion-summary mutations are atomic across instances; startup reconciles summaries before and after patch recovery.
+- `npm.cmd run i18n:check` reports 710 keys for each supported language and rejects replacement characters, damaged question-mark runs, missing target script, and placeholder drift.
+- Pixel, full keyboard, NVDA, and real Windows high-contrast checks remain manual and must not be inferred from static contracts.
+
 ## Safety Review
 
 - Writes still require explicit approval.

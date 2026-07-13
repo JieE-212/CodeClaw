@@ -639,14 +639,12 @@ The remediation mapping, candidate-binding checks, and engineering safeguards ar
 
 ## Next Planned Phase
 
-Stage 3.0.12 is machine verified and awaits only its final Git audit and independent commit. Stage 3.0.13 is next. Real-person testing remains intentionally postponed.
+Stage 3.0.13 is machine verified and committed. Stage 3.0.14 is next. Real-person testing remains intentionally postponed.
 
 The engineering order is:
 
-1. Complete Stage 3.0.12's final Git audit and independent commit without adding local artifacts or pushing.
-2. Stage 3.0.13 beginner UI and accessibility semantics, with real visual/NVDA checks kept manual.
-3. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
-4. Stage 4B candidate-aware Windows launcher and hashed candidate package.
+1. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
+2. Stage 4B candidate-aware Windows launcher and hashed candidate package.
 
 Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code and fixture copies must be deleted after verification; do not retain tombstone code.
 
@@ -698,7 +696,7 @@ Machine evidence: `npm.cmd test` reported 246 total, 245 pass, 0 fail, and 1 env
 
 Honest limits: Node path operations retain a very small documented TOCTOU interval; real power loss, unusual filesystems, ACL/antivirus interference, and real-person copy use remain unverified. If a `.gitignore` ignores itself, it is excluded with its ignored payload and the original ignore-rule snapshot is not preserved for future paths created inside the copy. The bundled browser automation helper is unavailable, so no pixel, keyboard, NVDA, high-contrast, or clean-Windows acceptance is claimed.
 
-Next: complete the final Git audit/commit for Stage 3.0.12, then proceed to Stage 3.0.13. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
+Next: proceed to Stage 3.0.14. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
 
 ## Stage 3.0.12 - Exact model outbound review and minimized local state
 
@@ -733,3 +731,29 @@ Pending before the stage commit:
 - Confirm `dist`, `.codeclaw`, logs, screenshots, evidence, and real-person records remain outside the index; then create the independent Stage 3.0.12 commit without pushing.
 
 Honest limits: this stage did not rerun a real managed-cloud provider. An approved online request still leaves the device and provider retention is outside CodeClaw's control; a local provider still receives bytes over loopback HTTP; retained request-buffer overwriting is best effort rather than cryptographic erasure. Manifest revalidation and the later TaskStore rename are not one filesystem-atomic snapshot, so an extreme external edit can leave a stale draft; Apply's baseline-hash check prevents it from overwriting the changed file, but not every external TOCTOU is claimed closed. No real-person, pixel-level, keyboard/NVDA, high-contrast, clean-Windows, real-power-loss, unusual-filesystem, or provider-retention acceptance is claimed. `REMEDIATION_HOLD`, tester-2's `AFTER_LIVE_BLOCKED`, tester-3's `not scheduled` state, and the original-project write prohibition remain unchanged.
+
+## Stage 3.0.13 - Beginner workflow, accessibility semantics, and ordered task state
+
+Stage 3.0.13 is machine verified and committed; real-person testing is still paused.
+
+Implemented:
+
+- Replaced competing Quick Start, Guide, and trial-host product paths with one authoritative eight-step workflow: project, preflight, plan, context, patch, workspace, verify, complete. Beginner is the default; Advanced changes presentation only and cannot affect requests or authority.
+- Added semantic workflow sections, explicit five-category impact descriptions, current-page/current-step state, labelled controls, a single primary live status, sticky desktop navigation, 900/620/390px contracts, focus-visible, reduced-motion, forced-colors, and reviewed AA primary-action contrast.
+- Made Demo launch a read-only preflight and show an explicit receipt for automatic plan/context progress, zero writes, and zero commands. Workspace refresh no longer silently adopts another tab's active copy.
+- Enforced Apply -> Verify -> Complete in the server. Verification is bound to the complete active patch-set digest and is persisted inside the same project lock as recovery checks, before/after file-content checks, and command execution. Completion repeats recovery/content/provenance checks and uses TaskStore revision CAS plus a final commit guard.
+- Reopened tasks only through Revert, cleared stale verification/summary on Apply/Revert, and made completed tasks terminal for planning, model use, patching, and verification. Pure inspection remains possible; Revert remains the explicit undo path.
+- Added workflow-generation, path, workspace, task-ID, and monotonic-revision guards so stale async scan, preflight, copy, memory, model, patch, verification, and completion responses cannot rebind the UI to the wrong target. Concurrent scans now return request-local profiles and workspaces.
+- Made MemoryStore updates cross-instance serialized and atomic, and reconciled derived completion summaries with TaskStore both before and after startup patch recovery.
+- Restored all Chinese and Russian workflow translations with Unicode-safe source, added U+FFFD/question-mark/target-script/placeholder quality gates, and aligned Apply/Revert write boundaries in dictionaries and HTML fallbacks.
+
+Machine evidence:
+
+- Independent red-team closure found no remaining P0, High, or Medium issue.
+- Focused state/model/write/workflow regressions passed 58/58.
+- The authoritative single-concurrency full suite reported 344 total, 343 pass, 0 fail, and 1 environment-only file-symlink skip.
+- `npm.cmd run check` passed; i18n reported 710 keys per language, 0 warnings, and 0 failures.
+- health, smoke, all four pilots, an explicitly targeted real-repository read-only preflight, and the simulated first trial passed. The self pilot truthfully remained read-only; writable pilots restored disposable copies and left source fixtures unchanged; the model pilot made 9 fake requests.
+- The real-repository preflight reported zero writes. Simulation restored Demo, kept the real repository read-only, and blocked unconfirmed Apply/Verify. Its two generated `dist` reports were deleted after recording the minimal result.
+
+Honest limits: the missing bundled browser helper prevents automated pixel, complete keyboard, NVDA, and Windows high-contrast claims. Responsive and accessibility source contracts do not substitute for host or real-person acceptance. No new human test was run, host-1 acceptance is still pending, `REMEDIATION_HOLD` remains truthful, tester-2 remains `AFTER_LIVE_BLOCKED`, and tester-3 remains `not scheduled`.

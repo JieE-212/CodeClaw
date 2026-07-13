@@ -4,7 +4,7 @@
 
 ## 1. 当前决策
 
-CodeClaw 已完成第一轮真人测试、第一批问题修复和 `Stage 3.0.9` remediation 工程闭环。真人复测继续暂停；当前按用户授权进入无需逐项确认的工程加固循环。`Stage 3.0.10`、`3.0.11`、`3.0.12` 已完成机器验证，当前下一阶段是 `3.0.13`，之后依次推进 `3.0.14 -> 4B`。
+CodeClaw 已完成第一轮真人测试、第一批问题修复和 `Stage 3.0.9` remediation 工程闭环。真人复测继续暂停；当前按用户授权进入无需逐项确认的工程加固循环。`Stage 3.0.10` 至 `3.0.13` 已完成机器验证，当前下一阶段是 `3.0.14`，之后推进 `4B`。
 
 这里的“工程闭环”不等于复测准入已经通过：host-1 的七项人工验收尚未完成，真实 remediation 状态继续是 `REMEDIATION_HOLD`。后续阶段的机器通过不会改写 tester-2 的 `AFTER_LIVE_BLOCKED`，也不会自动开放真实原项目写入。
 
@@ -341,8 +341,8 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 | --- | --- | --- | --- |
 | 3.0.10 崩溃安全 Apply/Revert | machine verified；host acceptance pending | 写前 WAL、原子替换、跨进程项目锁、启动恢复、冲突停写、事务绕行关闭、故障矩阵通过 | 断电绝对持久性、跨操作系统用户/不同锁目录互斥、Windows 自定义 ACL 完整保留、真实项目写入已开放 |
 | 3.0.11 可丢弃项目副本 | machine verified；host acceptance pending | 统一数据边界策略、预览/创建/激活/清理、哈希 Manifest、原项目服务端只读能力 | “副本可安全分享”或“副本不含普通源码” |
-| 3.0.12 隐私与模型出站透明度 | machine verified；final Git audit/commit pending | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化；全量门禁通过 | 在线模型零出站；本机模型零本地 HTTP 数据传输；所有外部 TOCTOU 已完全关闭 |
-| 3.0.13 新手界面与无障碍 | planned | 单一权威流程、新手/高级模式、语义标签、焦点/键盘/响应式静态契约、三语门禁 | 新手主观清晰度、NVDA/高对比度/真实像素验收 |
+| 3.0.12 隐私与模型出站透明度 | machine verified；committed | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化；全量门禁通过 | 在线模型零出站；本机模型零本地 HTTP 数据传输；所有外部 TOCTOU 已完全关闭 |
+| 3.0.13 新手界面与无障碍 | machine verified；committed | 单一权威流程、新手/高级模式、语义标签、焦点/键盘/响应式静态契约、三语门禁；顺序/竞态门禁通过 | 新手主观清晰度、NVDA/高对比度/真实像素验收 |
 | 3.0.14 稳定性与性能 | planned | 测试 fixture 全隔离、请求/扫描/模型预算、取消与超时、进程/端口/状态清理、增长上限 | 真实大型项目的主观等待感和真实断电体验 |
 | 4B Windows 启动器与候选包 | planned | 候选身份校验、回环监听、就绪后开页、端口冲突分流、哈希 Manifest/篡改检测、无孤儿进程 | 干净 Windows 10/11、Defender/SmartScreen、双击体验等人工验收 |
 
@@ -387,11 +387,11 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 
 诚实边界：Node 路径 API 仍有极小 TOCTOU 窗口；未验证真实断电、异常文件系统、ACL/杀毒软件干预和真人副本使用。若 `.gitignore` 忽略其自身，该规则文件不会进入副本，因此不宣称原 ignore 规则快照会约束副本未来新建路径。浏览器插件缺少自动化 helper，像素、键盘、NVDA、高对比度和干净 Windows 验收仍为人工项。
 
-当前正式状态：`Stage 3.0.12 machine verified; Stage 3.0.13 next; remediation REMEDIATION_HOLD`。Stage 3.0.12 仅待最终 Git 审计与独立提交；host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
+当前正式状态：`Stage 3.0.13 machine verified and committed; Stage 3.0.14 next; remediation REMEDIATION_HOLD`。host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
 
 ### 15.4 Stage 3.0.12 已完成的机器证据
 
-当前状态是 `machine verified; final Git audit/commit pending`。已完成的实现包括：
+当前状态是 `machine verified; committed`。已完成的实现包括：
 
 - 所有模型操作统一为 `POST /api/model/preview -> 明确审核 -> POST /api/model/send`；放弃审核使用 `POST /api/model/cancel`。客户端 Preview 只提交 `operation` 与 `taskId`，目标、根目录、repo profile、上下文和配置由服务端权威状态推导。
 - Preview 精确披露完整 UTF-8 请求正文、字节数、SHA-256、endpoint/channel/是否离开设备、数据类别，以及每个传输文件组件和传输字节；approval 同时绑定 task revision、workspace ID/root identity、Data Boundary Manifest digest/policy version、模型配置代次和 prepared request。
@@ -411,3 +411,24 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 5. 最终 Git 审计与独立提交仍待主线程执行：检查完整 diff、`git diff --check`、明确暂存清单和禁入项；不得把 `dist/`、`.codeclaw/`、日志、截图、evidence 或真人记录加入提交，不直接 push。
 
 诚实边界：在线 provider 会收到用户审核过的请求正文，CodeClaw 无法控制其后续保留；本机 provider 仍通过 loopback HTTP 传输；JavaScript 缓冲覆写只是 best effort；本阶段未重新运行任何真实云模型，也未完成真人、像素、NVDA、高对比度或干净 Windows 验收。Manifest 最终复验与随后 TaskStore 原子 rename 不是一个文件系统原子快照，极端外部并发编辑仍可能留下过时补丁草案；Apply 的 baseline hash 复验会阻止它覆盖已变化文件，因此不得宣称完全关闭所有外部 TOCTOU。
+
+### 15.5 Stage 3.0.13 已完成的机器证据
+
+当前状态是 `machine verified; final Git audit/commit pending`。已完成的实现包括：
+
+- 删除 Quick Start、旧 Guide 和 trial-host 产品路径，建立唯一的八步流程：`project -> preflight -> plan -> context -> patch -> workspace -> verify -> complete`。默认新手模式；高级模式只改变呈现，不进入请求或权限判断。
+- 每一步都有语义 section、用途、读取/项目写入/联网/命令/本地状态五类影响说明；桌面侧栏 sticky，900/620/390px 有响应式契约，导航和步骤使用 `aria-current`，表单标签、单主状态区、focus-visible、reduced-motion、forced-colors 和 AA 主按钮对比度均有静态门禁。
+- Demo 自动执行只读预检并显示计划、上下文读取数、写入 0、命令 0 回执；刷新工作区列表不会静默采用另一个标签页的 active copy，只有显式 Activate 才切换任务绑定。
+- Apply、Verify、Complete 形成服务端权威顺序。verification 绑定完整 active patch-set digest；Verify 在同一项目锁内执行 recovery gate、命令前后 top-of-path 内容复核、命令和结果落盘；Complete 在同一锁内执行 recovery、内容、digest、时间、revision CAS 和最终 commit guard。Apply/Revert 会清除陈旧 verification/summary，Revert 重新打开任务；completed task 除 Revert 和纯查看外不能继续计划、模型、补丁或命令操作。
+- 所有 stateful UI 响应绑定 workflow generation、路径、workspace、task ID 和单调 revision；路径/目标/工作区改变后，旧 scan/preflight/model/copy/memory/Apply/Revert/Verify/Complete 响应不会重新绑定错误目标。并发 scan 使用请求局部 profile/workspace。
+- MemoryStore 改为进程内队列、跨实例文件锁和原子写；notes、完成摘要新增/删除不会互相丢失。启动在 patch recovery 前后依据 TaskStore 对账派生摘要，防止崩溃窗口复活已 Revert 的完成记录。
+- 三语词典修复为每种 710 个同键；质量门禁拒绝连续问号、U+FFFD、缺少目标文字和占位符不一致。Apply 与 Revert 的项目写入边界已在运行时和 HTML fallback 中统一。
+
+最终机器证据：
+
+1. 独立红队复审未发现剩余 P0、High 或 Medium；聚焦模型/状态/写入/工作流回归 58/58，通过内容漂移、同路径叠加、Verify/Apply-Revert 竞态、Complete/Revert CAS、Memory 并发与前端乱序契约。
+2. 单并发完整测试为 344 total、343 pass、0 fail、1 个环境性 file-symlink skip；`npm.cmd run check` 与 i18n 通过，三语各 710 个 key，0 warning/failure。
+3. health、smoke、`pilot:self`、`pilot:fixture`、`pilot:inbox`、`pilot:model`、明确路径的 real-repo preflight 和 first-trial simulation 全部通过。只读 self pilot 不再伪造 Complete；两个副本写入 pilot 均 Verify 成功、恢复副本且源 fixture 未变化；模型 pilot 为 9 次 fake request。
+4. 真实仓库预检明确 `writeAttempted:false`；模拟报告显示 Demo 恢复、真实仓库 0 写入、未确认 Apply/Verify 均被阻断。生成的两份 `dist` 模拟报告已在记录结果后删除，不进入 Git。
+
+诚实边界：浏览器插件缺少必需的自动化 helper，因此没有宣称真实像素、完整键盘、NVDA 或 Windows 高对比度实测通过；静态响应式/无障碍契约不能代替真人主观清晰度。浏览器、模型和外部编辑仍存在无法完全消除的调度窗口，但权威服务端门禁会拒绝陈旧对象落盘或完成。真人测试继续暂停，host-1 人工验收仍未完成，故 remediation 保持 `REMEDIATION_HOLD`。

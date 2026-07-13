@@ -60,6 +60,60 @@ test("patch APIs reject stale and ignored targets, while protecting post-apply e
   try {
     await waitForHealth({ baseUrl, server, serverOutput: () => serverOutput });
 
+    const orderedTask = await store.create({ goal: "enforce Apply before Verify and Complete", rootPath: workspace, workspaceId: activated.workspace.id });
+    const verifyBeforeApply = await request(baseUrl, "/api/tools/call", {
+      tool: "run_command",
+      args: { command: "npm test" },
+      rootPath: workspace,
+      taskId: orderedTask.id,
+      approved: true
+    });
+    assert.equal(verifyBeforeApply.response.status, 409);
+    assert.equal(verifyBeforeApply.payload.code, "TASK_VERIFY_PATCH_REQUIRED");
+    const completeBeforeApply = await request(baseUrl, "/api/tasks/complete", { taskId: orderedTask.id });
+    assert.equal(completeBeforeApply.response.status, 409);
+    assert.equal(completeBeforeApply.payload.code, "TASK_COMPLETE_PATCH_REQUIRED");
+
+    await store.recordAppliedPatch(orderedTask.id, { path: "first.txt", previousContent: "first-old\n", nextContent: "first-next\n" });
+    await fs.writeFile(firstPath, "first-next\n", "utf8");
+    await store.setVerification(orderedTask.id, { exitCode: 1, timedOut: false, stderr: "expected failure" });
+    const completeAfterFailure = await request(baseUrl, "/api/tasks/complete", { taskId: orderedTask.id });
+    assert.equal(completeAfterFailure.response.status, 409);
+    assert.equal(completeAfterFailure.payload.code, "TASK_COMPLETE_VERIFICATION_REQUIRED");
+    await store.setVerification(orderedTask.id, { exitCode: 0, timedOut: false });
+    await fs.writeFile(firstPath, "manual-after-verify\n", "utf8");
+    const completeAfterDrift = await request(baseUrl, "/api/tasks/complete", { taskId: orderedTask.id });
+    assert.equal(completeAfterDrift.response.status, 409);
+    assert.equal(completeAfterDrift.payload.code, "TASK_COMPLETE_PATCH_CHANGED");
+    await fs.writeFile(firstPath, "first-next\n", "utf8");
+    const completedInOrder = await request(baseUrl, "/api/tasks/complete", { taskId: orderedTask.id });
+    assert.equal(completedInOrder.response.status, 200);
+    assert.equal(completedInOrder.payload.task.status, "completed");
+    const completedRead = await request(baseUrl, "/api/tools/call", { tool: "read_file", args: { path: "first.txt" }, rootPath: workspace, taskId: orderedTask.id });
+    assert.equal(completedRead.response.status, 200);
+    assert.equal(completedRead.payload.task.status, "completed");
+    const verifyCompleted = await request(baseUrl, "/api/tools/call", { tool: "run_command", args: { command: "npm test" }, rootPath: workspace, taskId: orderedTask.id, approved: true });
+    assert.equal(verifyCompleted.response.status, 409);
+    assert.equal(verifyCompleted.payload.code, "TASK_ALREADY_COMPLETED");
+    const applyCompleted = await request(baseUrl, "/api/tasks/apply-patch", { taskId: orderedTask.id, approved: true });
+    assert.equal(applyCompleted.response.status, 409);
+    assert.equal(applyCompleted.payload.code, "TASK_ALREADY_COMPLETED");
+    const replanCompleted = await request(baseUrl, "/api/agent/plan", { taskId: orderedTask.id, goal: "change again", repoProfile: { rootPath: workspace } });
+    assert.equal(replanCompleted.response.status, 409);
+    assert.equal(replanCompleted.payload.code, "TASK_ALREADY_COMPLETED");
+    await fs.writeFile(firstPath, "first-old\n", "utf8");
+
+    const layeredTask = await store.create({ goal: "verify the top patch for a repeated path", rootPath: workspace, workspaceId: activated.workspace.id });
+    await store.recordAppliedPatch(layeredTask.id, { path: "first.txt", previousContent: "first-old\n", nextContent: "first-middle\n" });
+    await fs.writeFile(firstPath, "first-middle\n", "utf8");
+    await store.recordAppliedPatch(layeredTask.id, { path: "first.txt", previousContent: "first-middle\n", nextContent: "first-top\n" });
+    await fs.writeFile(firstPath, "first-top\n", "utf8");
+    await store.setVerification(layeredTask.id, { exitCode: 0, timedOut: false });
+    const completedLayered = await request(baseUrl, "/api/tasks/complete", { taskId: layeredTask.id });
+    assert.equal(completedLayered.response.status, 200);
+    assert.equal(completedLayered.payload.task.status, "completed");
+    await fs.writeFile(firstPath, "first-old\n", "utf8");
+
     const staleTask = await store.create({ goal: "add divide by zero test", rootPath: workspace, workspaceId: activated.workspace.id });
     await store.appendContextFile(staleTask.id, {
       path: "test/calculator.test.js",

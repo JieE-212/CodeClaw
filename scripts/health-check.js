@@ -46,16 +46,30 @@ await withAutomationResources(async (scope) => {
   const markers = {
     i18n: html.includes("languageSelect") && appJs.includes("initI18n") && i18nJs.includes("SUPPORTED_LANGUAGES") && i18nJs.includes("zh-CN") && i18nJs.includes("ru"),
     trustStrip: html.includes("trust-strip") && html.includes("trust.local.title") && html.includes("trust.confirm.title") && styles.includes(".trust-strip"),
-    quickStart: html.includes("quickStartPrimary") && appJs.includes("function quickStartModel"),
-    trialOperator: html.includes("trial-operator-guide") && html.includes("trial:first-live-standby") && html.includes("trial:post-call-rehearsal") && html.includes("trial:record-draft") && html.includes("trial:after-live") && appJs.includes("function copyTrialCommand") && i18nJs.includes("trialHost.waiting.rehearsal") && styles.includes(".trial-command-row"),
-    modelCostHint: html.includes("modelCostHint") && appJs.includes("MODEL_COST_GUIDE") && styles.includes(".model-cost-hint"),
+    workflow: html.includes('id="workflowPanel"')
+      && html.includes('id="workflowSteps"')
+      && html.includes('data-workflow-step="project"')
+      && html.includes('data-workflow-step="complete"')
+      && appJs.includes("const workflowModel"),
+    experienceMode: html.includes('id="workflowMode"')
+      && html.includes('id="modeBeginner"')
+      && html.includes('id="modeAdvanced"')
+      && appJs.includes("function syncVisibility"),
+    modelCostHint: html.includes("modelCostHint") && appJs.includes("MODEL_COST_PROFILES") && styles.includes(".model-cost-hint"),
     preflightPanel: html.includes("preflightButton") && appJs.includes("/api/preflight/run"),
-    realProjectPathInput: html.includes("real-project-path-helper") && html.includes("examplePathButton") && styles.includes(".path-helper") && appJs.includes("PATH_IS_FILE"),
+    realProjectPathInput: html.includes('id="repoPath"') && html.includes('id="pathHelper"') && html.includes("examplePathButton") && styles.includes(".path-helper") && appJs.includes("PATH_IS_FILE"),
     patchGate: html.includes("patchGate") && appJs.includes("preflightPatchGateStatus"),
-    applyReview: html.includes("dry-run-apply-review") && appJs.includes("function renderApplyReview") && i18nJs.includes("applyReview.writeWarning.title") && styles.includes(".apply-review"),
+    applyReview: html.includes('id="applyReview"') && appJs.includes("function renderApplyReview") && i18nJs.includes("applyReview.writeWarning.title") && styles.includes(".apply-review"),
     sessionRecovery: html.includes("sessionRecovery") && appJs.includes("function hydrateRestoredSession") && appJs.includes("function startFreshClientWorkflow"),
-    modulePurpose: html.includes("purpose.preflight") && html.includes("purpose.patch") && i18nJs.includes("purpose.verify"),
-    explicitBoundaries: html.includes("applyBoundary.title") && html.includes("verifyBoundary") && appJs.includes("function renderVerifyBoundary"),
+    modulePurpose: html.includes("data-workflow-section") && html.includes("aria-describedby") && html.includes("data-module-purpose"),
+    explicitBoundaries: ["read", "project-write", "network", "command", "local-state"].every((boundary) => html.includes(`data-boundary="${boundary}"`))
+      && appJs.includes("function renderVerifyBoundary"),
+    accessibility: html.includes('id="workflowStatus"')
+      && html.includes('role="status"')
+      && html.includes('aria-live="polite"')
+      && styles.includes(":focus-visible")
+      && styles.includes("prefers-reduced-motion")
+      && styles.includes("forced-colors"),
     workspaceCapabilities: html.includes("workspaceCapability")
       && html.includes("previewCopyButton")
       && html.includes("workspaceList")

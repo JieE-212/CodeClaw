@@ -67,24 +67,39 @@ export class TaskStore {
   }
 
   async setPlan(id, plan) {
-    return this.update(id, { plan, status: "planned" });
+    return this.update(id, (task) => {
+      assertTaskNotCompleted(task, "replace its plan");
+      return { plan, status: "planned" };
+    });
   }
 
   async appendToolCall(id, toolCall) {
     return this.update(id, (task) => ({
-      status: toolCall.blocked ? "blocked" : "running",
+      status: task.status === "completed" ? "completed" : toolCall.blocked ? "blocked" : "running",
       toolCalls: [...task.toolCalls, { ...toolCall, time: toolCall.time || new Date().toISOString() }]
     }));
   }
 
-  async setVerification(id, verification) {
+  async setVerification(id, verification, options = {}) {
     const failed = verification.exitCode !== 0 || verification.timedOut;
-    return this.update(id, (task) => ({
-      status: failed ? "failed" : "verified",
-      verification,
-      verificationHistory: [...(task.verificationHistory || []), { ...verification, time: verification.time || new Date().toISOString() }],
-      failureSummary: failed ? summarizeVerificationFailure(verification) : ""
-    }));
+    return this.update(id, (task) => {
+      assertTaskNotCompleted(task, "save another verification");
+      const currentPatchSetDigest = activePatchSetDigest(task);
+      if (options.expectedPatchSetDigest !== undefined && options.expectedPatchSetDigest !== currentPatchSetDigest) {
+        throw taskVerificationPatchConflict(options.expectedPatchSetDigest, currentPatchSetDigest);
+      }
+      const recorded = {
+        ...verification,
+        time: verification.time || new Date().toISOString(),
+        patchSetDigest: currentPatchSetDigest
+      };
+      return {
+        status: failed ? "failed" : "verified",
+        verification: recorded,
+        verificationHistory: [...(task.verificationHistory || []), recorded],
+        failureSummary: failed ? summarizeVerificationFailure(recorded) : ""
+      };
+    });
   }
 
   async recordModelEvent(id, event, options = {}) {
@@ -105,6 +120,7 @@ export class TaskStore {
 
   async setPatchProposal(id, patchProposal, options = {}) {
     return this.update(id, async (task) => {
+      assertTaskNotCompleted(task, "replace its patch proposal");
       const boundPatchProposal = await bindProposalParentIdentities(patchProposal, task);
       const proposal = {
         ...minimizeInapplicablePatchProposal(boundPatchProposal),
@@ -131,6 +147,7 @@ export class TaskStore {
     if (!Array.isArray(patches) || !patches.length) throw new Error("No applied patches to record.");
     const now = new Date().toISOString();
     return this.update(id, async (task) => {
+      assertTaskNotCompleted(task, "apply another patch");
       const existing = task.appliedPatches || [];
       const transactionIds = [...new Set(patches.map((patch) => patch.transactionId).filter(Boolean))];
       if (transactionIds.length === 1) {
@@ -155,6 +172,10 @@ export class TaskStore {
       }));
       return {
         status: "patched",
+        verification: null,
+        failureSummary: "",
+        summary: "",
+        reviewDraft: "",
         appliedPatches: [
           ...existing,
           ...normalizedPatches
@@ -169,7 +190,7 @@ export class TaskStore {
       const index = patches.findLastIndex((patch) => !patch.revertedAt);
       if (index === -1) throw new Error("No applied patch to revert.");
       patches[index] = revertedPatch(patches[index], options);
-      return { status: task.status === "completed" ? "completed" : "running", appliedPatches: patches };
+      return { status: "running", verification: null, failureSummary: "", summary: "", reviewDraft: "", appliedPatches: patches };
     });
   }
 
@@ -179,12 +200,12 @@ export class TaskStore {
       if (patches[index]?.revertedAt && options.revertTransactionId && patches[index].revertTransactionId === options.revertTransactionId) return {};
       if (!patches[index] || patches[index].revertedAt) throw new Error("No applied patch to revert.");
       patches[index] = revertedPatch(patches[index], options);
-      return { status: task.status === "completed" ? "completed" : "running", appliedPatches: patches };
+      return { status: "running", verification: null, failureSummary: "", summary: "", reviewDraft: "", appliedPatches: patches };
     });
   }
 
-  async complete(id, summary = "", reviewDraft = "") {
-    return this.update(id, (task) => ({ status: "completed", summary, reviewDraft: reviewDraft || buildTaskReviewDraft(task, summary) }));
+  async complete(id, summary = "", reviewDraft = "", options = {}) {
+    return this.update(id, (task) => ({ status: "completed", summary, reviewDraft: reviewDraft || buildTaskReviewDraft(task, summary) }), options);
   }
 
   async update(id, patch, options = {}) {
@@ -396,6 +417,23 @@ function taskRevisionConflict(taskId, expectedRevision, currentRevision) {
   return error;
 }
 
+function taskVerificationPatchConflict(expectedPatchSetDigest, currentPatchSetDigest) {
+  const error = new Error("The applied patch set changed while verification was running. The result was not saved.");
+  error.code = "TASK_VERIFY_PATCH_CHANGED";
+  error.status = 409;
+  error.expectedPatchSetDigest = expectedPatchSetDigest;
+  error.currentPatchSetDigest = currentPatchSetDigest;
+  return error;
+}
+
+function assertTaskNotCompleted(task, action) {
+  if (task?.status !== "completed") return;
+  const error = new Error(`Task ${task.id} is already completed. Create a new task instead of trying to ${action}.`);
+  error.code = "TASK_ALREADY_COMPLETED";
+  error.status = 409;
+  throw error;
+}
+
 function validSha256(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value) ? value.toLowerCase() : "";
 }
@@ -542,6 +580,18 @@ export function appliedPatchIdentity(patch = {}) {
     nextSha256: createHash("sha256").update(String(patch.nextContent ?? ""), "utf8").digest("hex")
   };
   return createHash("sha256").update(JSON.stringify(identity), "utf8").digest("hex");
+}
+
+export function activePatchSetDigest(task = {}) {
+  const identities = (task.appliedPatches || [])
+    .map((patch, index) => ({ patch, index }))
+    .filter(({ patch }) => !patch.revertedAt)
+    .map(({ patch, index }) => {
+      if (typeof patch.nextContent !== "string") return null;
+      return { index, identity: appliedPatchIdentity(patch) };
+    });
+  if (!identities.length || identities.some((identity) => identity === null)) return "";
+  return createHash("sha256").update(JSON.stringify(identities), "utf8").digest("hex");
 }
 
 function sortJson(value) {

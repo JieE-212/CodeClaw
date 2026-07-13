@@ -7,7 +7,7 @@
 ## 重启后的第一条指令
 
 ```text
-请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.12 模型出站透明度与隐私已完成机器验证，仅待最终 Git 审计和独立提交；确认禁入项后提交但不要 push，随后进入 3.0.13，再推进 3.0.14 和 4B。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码。
+请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.13 新手工作流、无障碍语义和顺序状态门禁已完成机器验证和独立提交；现在进入 3.0.14，再推进 4B，不要 push。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码。
 ```
 
 ## 当前结论
@@ -26,12 +26,12 @@ c402b45 Prioritize remediation in trial status
 ```
 
 - 最新阶段提交以 `git log -1 --oneline` 为准。后续提交仍由用户决定何时运行 `git pushall`；Codex 不直接 push。
-- 下一轮真人测试明确暂缓。`Stage 3.0.12` 已完成机器验证，仅待最终 Git 审计和独立提交；`Stage 3.0.13` 是下一阶段，但尚未因此完成。详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
+- 下一轮真人测试明确暂缓。`Stage 3.0.13` 已完成机器验证和独立提交；`Stage 3.0.14` 是下一阶段。详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
 - `Stage 3.0.9` 的工程映射完成不代表复测准入通过：host-1 七项人工验收仍缺失，真实状态保持 `REMEDIATION_HOLD`；tester-3 仍为 `not scheduled`。
 - Stage 3.0.10 的最终机器证据为 `npm.cmd test` 187/187、`npm.cmd run check` 通过，以及 health、smoke、四个 pilot 全部通过。它实现了三阶段全局 claim、写前 journal、root/parent/临时文件实体身份绑定和跨 state-dir 恢复阻断，但没有宣称真实断电、自定义 ACL、杀毒软件/网络盘或真人原项目写入已验收。
 - Stage 3.0.11 的最终机器证据为 `npm.cmd test` 245 pass、0 fail、1 个环境性 symlink skip（246 total），`npm.cmd run check` 通过且三语各 665 键，以及 health、smoke、四个 pilot 全部通过。它实现了完整 Data Boundary Manifest、三类服务端工作区能力、显式副本创建/激活/清理、崩溃恢复和 exact-target 复验；原项目仍不可写或运行项目命令。副本不等于匿名化或适合分享，自身被忽略的 `.gitignore` 也不宣称规则快照已被保留。
 
-## Stage 3.0.12 当前交接状态
+## Stage 3.0.12 已提交基线
 
 已实现：
 
@@ -51,9 +51,19 @@ c402b45 Prioritize remediation in trial status
 1. 默认 `.codeclaw` 已迁移：26 个 task、59 个 context record 且正文 0，当前 59 个 source 均为白名单内的 `read_file`，legacy suggestion entry 0，`model.json` 无凭据字段，model/server-error audit detail 均为空；该目录仍不得进入 Git。
 2. 14 个自动化 `%TEMP%` 前缀剩余数为 0，两个已知历史临时目录与 `server-bg.log` 已删除；4173 无监听，未发现需保留的一次性测试开关、调试代码或墓碑分支。
 
-仍待主线程执行：阅读完整 diff，运行最终 `git diff --check`，明确列出暂存文件并检查禁入项；只提交 Stage 3.0.12 的源码、测试与这 5 份文档，不提交 `.codeclaw`、`dist`、日志或真人材料，不 push。完成独立提交后进入 3.0.13；前后都不运行真人流程。
+Stage 3.0.12 已由独立提交 `267287a Add exact model outbound review` 收口；没有 push，也没有把 `.codeclaw`、`dist`、日志或真人材料加入提交。
 
 诚实边界：未重跑真实云模型；在线模型仍会收到审核过的数据，本机模型仍通过 loopback HTTP 收到字节；Provider 后续保留不可由 CodeClaw 控制，缓冲覆写也只是 best effort。Manifest 复验与随后 TaskStore rename 不是文件系统原子快照，极端外部并发编辑可留下过时草案；Apply baseline hash 会阻断它覆盖已变化文件，但不得宣称所有外部 TOCTOU 已完全关闭。真人、像素、键盘/NVDA、高对比度、干净 Windows、真实断电和异常文件系统验收均未完成。
+
+## Stage 3.0.13 当前交接状态
+
+已实现唯一八步工作流、默认新手/呈现型高级模式、模块用途和五类影响边界、sticky/响应式/焦点/高对比度静态契约、Demo 只读预检回执，以及 Unicode-safe 三语词典。Apply -> Verify -> Complete 已由服务端 recovery、patch-set/content、项目锁和 revision CAS 共同约束；completed 任务只允许查看或 Revert。所有 stateful UI 响应绑定 generation、路径、workspace、task 和 revision；MemoryStore 使用跨实例锁、原子写和启动前后对账。
+
+最终机器证据：独立红队无剩余 P0/High/Medium；聚焦回归 58/58；单并发全量 344 total、343 pass、0 fail、1 个环境性 symlink skip；check/i18n 通过，三语各 710 key；health、smoke、四个 pilot、明确路径的真实仓库只读预检和模拟均通过。只读 self pilot 不再伪造 Complete；真实仓库写入为 0；模拟生成的两份 `dist` 报告已删除。
+
+Stage 3.0.13 已经最终 diff/Git/禁入项/临时产物审计并由独立提交收口，没有 push。下一步立即进入 Stage 3.0.14；不得运行 tester-2 after-live，不得创建 tester-3。
+
+诚实边界：浏览器插件缺少必需 helper，因此像素、完整键盘、NVDA 和 Windows 高对比度仍是人工待验项；没有运行新真人测试，`REMEDIATION_HOLD`、tester-2 的 `AFTER_LIVE_BLOCKED` 和 tester-3 `not scheduled` 均保持不变。
 
 ## 重启后先检查
 
