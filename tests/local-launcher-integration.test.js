@@ -126,10 +126,15 @@ test("a child that never presents the matching ready identity is terminated and 
 test("cancelling startup during readiness terminates the child before browser handoff", async (t) => {
   let browserCalls = 0;
   let startedChild = null;
+  const controller = new AbortController();
   const fixture = await launcherFixture(t, wrongIdentityServerSource(), {
     readyTimeoutMs: 5_000,
     dependencies: {
       openBrowser: async () => { browserCalls += 1; },
+      fetch: async (...args) => {
+        controller.abort();
+        return globalThis.fetch(...args);
+      },
       terminateChildTree: async (child) => {
         startedChild = child;
         await stopDirectChild(child);
@@ -138,9 +143,7 @@ test("cancelling startup during readiness terminates the child before browser ha
     }
   });
   const port = await availablePort();
-  const controller = new AbortController();
   const start = fixture.launcher.start({ port, signal: controller.signal });
-  setTimeout(() => controller.abort(), 100);
   await assert.rejects(() => start, { code: "LAUNCHER_START_CANCELLED" });
   assert.equal(browserCalls, 0);
   assert.ok(startedChild?.pid > 0);
