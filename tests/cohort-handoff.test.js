@@ -2,16 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { REQUIRED_REMEDIATION_HOST_CHECKS } from "../scripts/trial-remediation-contract.js";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "cohort-handoff.js");
 
-test("cohort-handoff creates expansion handoff when watch expansion is accepted", async () => {
-  const fixture = await makeFixture({ decision: "EXPAND_WITH_WATCH", includeAfterLive: true });
+test("cohort-handoff creates expansion handoff when watch expansion is accepted", async (t) => {
+  const fixture = await makeFixture(t, { decision: "EXPAND_WITH_WATCH", includeAfterLive: true });
   const result = await runHandoff([...fixture.args, "--accept-review", "--accepted-by", "host-test"]);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -23,8 +23,8 @@ test("cohort-handoff creates expansion handoff when watch expansion is accepted"
   assert.ok(await exists(fixture.handoffPath));
 });
 
-test("cohort-handoff blocks watch expansion without host acceptance", async () => {
-  const fixture = await makeFixture({ decision: "EXPAND_WITH_WATCH", includeAfterLive: true });
+test("cohort-handoff blocks watch expansion without host acceptance", async (t) => {
+  const fixture = await makeFixture(t, { decision: "EXPAND_WITH_WATCH", includeAfterLive: true });
   const result = await runHandoff(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -34,8 +34,8 @@ test("cohort-handoff blocks watch expansion without host acceptance", async () =
   assert.equal(await exists(fixture.handoffPath), false);
 });
 
-test("cohort-handoff blocks when completed testers are missing after-live evidence", async () => {
-  const fixture = await makeFixture({ decision: "READY_TO_EXPAND_3_5", includeAfterLive: false });
+test("cohort-handoff blocks when completed testers are missing after-live evidence", async (t) => {
+  const fixture = await makeFixture(t, { decision: "READY_TO_EXPAND_3_5", includeAfterLive: false });
   const result = await runHandoff(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -44,8 +44,8 @@ test("cohort-handoff blocks when completed testers are missing after-live eviden
   assert.ok(report.blockers.some((item) => item.includes("tester-1: after-live evidence is missing")));
 });
 
-test("cohort-handoff marks repeated safety as review required", async () => {
-  const fixture = await makeFixture({ decision: "REVIEW_REPEATED_SAFETY", includeAfterLive: true, safety: true });
+test("cohort-handoff marks repeated safety as review required", async (t) => {
+  const fixture = await makeFixture(t, { decision: "REVIEW_REPEATED_SAFETY", includeAfterLive: true, safety: true });
   const result = await runHandoff(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -56,8 +56,8 @@ test("cohort-handoff marks repeated safety as review required", async () => {
   assert.ok(await exists(fixture.handoffPath));
 });
 
-test("cohort-handoff preserves remediation history but requires two clean post-fix after-live results", async () => {
-  const fixture = await makeFixture({ decision: "READY_TO_EXPAND_3_5", includeAfterLive: true });
+test("cohort-handoff preserves remediation history but requires two clean post-fix after-live results", async (t) => {
+  const fixture = await makeFixture(t, { decision: "READY_TO_EXPAND_3_5", includeAfterLive: true });
   await fs.rm(path.join(fixture.afterLiveDir, "tester-1-20260709"), { recursive: true, force: true });
   await writeRemediation(fixture.remediationDir, "tester-1");
 
@@ -73,8 +73,8 @@ test("cohort-handoff preserves remediation history but requires two clean post-f
   assert.ok(!report.blockers.some((item) => item.includes("tester-1: after-live evidence is missing")));
 });
 
-test("cohort-handoff does not trust remediation without all manual host checks", async () => {
-  const fixture = await makeFixture({ decision: "READY_TO_EXPAND_3_5", includeAfterLive: true });
+test("cohort-handoff does not trust remediation without all manual host checks", async (t) => {
+  const fixture = await makeFixture(t, { decision: "READY_TO_EXPAND_3_5", includeAfterLive: true });
   await fs.rm(path.join(fixture.afterLiveDir, "tester-1-20260709"), { recursive: true, force: true });
   await writeRemediation(fixture.remediationDir, "tester-1", { includeHostChecks: false });
 
@@ -86,8 +86,8 @@ test("cohort-handoff does not trust remediation without all manual host checks",
   assert.ok(report.blockers.some((item) => item.includes("tester-1: after-live evidence is missing")));
 });
 
-async function makeFixture({ decision, includeAfterLive, safety = false }) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-cohort-handoff-"));
+async function makeFixture(t, { decision, includeAfterLive, safety = false }) {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-cohort-handoff-");
   const cohortPath = path.join(tempRoot, "TRIAL_COHORT_SUMMARY.json");
   const afterLiveDir = path.join(tempRoot, "trial-after-live");
   const remediationDir = path.join(tempRoot, "trial-remediation");

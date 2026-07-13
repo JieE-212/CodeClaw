@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "generate-host-run.js");
 
-test("host-run writes a live runbook when host-ready and intake-session are ready", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-host-run-ok-"));
+test("host-run writes a live runbook when host-ready and intake-session are ready", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-host-run-ok-");
   const sessionPath = path.join(tempRoot, "tester-1");
   const hostReadyPath = path.join(tempRoot, "TRIAL_HOST_READY_REPORT.json");
   const intakeSessionPath = path.join(tempRoot, "TRIAL_INTAKE_SESSION_REPORT.json");
@@ -66,8 +66,8 @@ test("host-run writes a live runbook when host-ready and intake-session are read
   assert.ok(report.nextCommands.some((item) => item.includes("trial:after-live")));
 });
 
-test("host-run blocks when host-ready is not ready", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-host-run-hold-"));
+test("host-run blocks when host-ready is not ready", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-host-run-hold-");
   const sessionPath = path.join(tempRoot, "tester-1");
   const hostReadyPath = path.join(tempRoot, "TRIAL_HOST_READY_REPORT.json");
   const jsonPath = path.join(tempRoot, "host-run-report.json");

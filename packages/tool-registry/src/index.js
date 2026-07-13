@@ -6,13 +6,18 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { classifyToolCall } from "../../permission-engine/src/index.js";
 import { atomicRemoveFile, atomicWriteFile, capturePathIdentity, patchWriteTemporaryPath, removeOwnedTemporaryFile } from "../../shared/src/atomic-file.js";
-import { isPathIgnoredStrict } from "../../shared/src/ignore-utils.js";
+import { createStrictIgnoreMatcher, isPathIgnoredStrict } from "../../shared/src/ignore-utils.js";
 import { isProtectedDirectory, isSensitiveFile, relativePath } from "../../shared/src/path-utils.js";
+import { RUNTIME_BUDGETS, boundedBudgetValue, readFileHandleBounded, runtimeBudgetError } from "../../shared/src/runtime-budget.js";
+import { openStableDirectory } from "../../shared/src/stable-directory.js";
 import { captureWorkspaceIdentity, workspaceIdentityMatches, workspaceParentIdentityMatches } from "../../shared/src/workspace-identity.js";
+import { throwIfAborted } from "../../shared/src/operation-manager.js";
+import { processSpawnOptions, terminateProcessTree } from "../../shared/src/process-tree.js";
 
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 30000;
 const MAX_OUTPUT_CHARS = 20000;
+const BUDGETED_TOOL_RESULT = Symbol("budgeted-tool-result");
 const DANGEROUS_COMMAND_PATTERNS = [
   /\brm\s+-/i,
   /\bdel\b/i,
@@ -31,10 +36,11 @@ const DANGEROUS_COMMAND_PATTERNS = [
 ];
 
 export class ToolRegistry {
-  constructor({ rootPath, rootIdentity = "", allowedCommands = [] }) {
+  constructor({ rootPath, rootIdentity = "", allowedCommands = [], runtimeBudget = {} }) {
     this.rootPath = path.resolve(rootPath);
     this.rootIdentity = String(rootIdentity || "");
     this.allowedCommands = normalizeAllowedCommands(allowedCommands);
+    this.runtimeBudget = normalizeToolBudget(runtimeBudget);
     this.tools = new Map();
     this.registerDefaults();
   }
@@ -44,12 +50,25 @@ export class ToolRegistry {
   }
 
   async call(name, args = {}, options = {}) {
+    const signal = options.signal || null;
+    throwIfAborted(signal);
     const permission = classifyToolCall(name, args);
     if (permission.requiresApproval && options.approved !== true) return { ok: false, permission, blocked: true, message: "Tool call requires approval." };
     const handler = this.tools.get(name);
     if (!handler) throw new Error(`Unknown tool: ${name}`);
     await assertWorkspaceReadIdentity(this.rootPath, this.rootIdentity);
-    return { ok: true, permission, result: await handler(args) };
+    const execution = await handler(args, { signal });
+    throwIfAborted(signal);
+    if (execution?.[BUDGETED_TOOL_RESULT]) {
+      return {
+        ok: true,
+        permission,
+        result: execution.value,
+        budget: execution.budget,
+        truncated: execution.budget?.truncated === true
+      };
+    }
+    return { ok: true, permission, result: execution };
   }
 
   async cleanupPatchTemporary({ path: filePath, transactionId, rootIdentity, parentIdentity, temporaryIdentity = null }) {
@@ -80,11 +99,11 @@ export class ToolRegistry {
   }
 
   registerDefaults() {
-    this.register("list_files", async () => listFiles(this.rootPath, this.rootIdentity));
-    this.register("read_file", async ({ path: filePath }) => readFileSafe(this.rootPath, filePath, this.rootIdentity));
-    this.register("search_code", async ({ query }) => searchCode(this.rootPath, query, this.rootIdentity));
-    this.register("git_status", async () => runGit(this.rootPath, ["status", "--short", "--untracked-files=normal", "--", "."], this.rootIdentity));
-    this.register("git_diff", async () => runGit(this.rootPath, ["diff", "--no-ext-diff", "--no-textconv", "--", "."], this.rootIdentity));
+    this.register("list_files", async (_args, { signal }) => listFiles(this.rootPath, this.rootIdentity, this.runtimeBudget, signal));
+    this.register("read_file", async ({ path: filePath }, { signal }) => readFileBudgeted(this.rootPath, filePath, this.rootIdentity, this.runtimeBudget, signal));
+    this.register("search_code", async ({ query }, { signal }) => searchCode(this.rootPath, query, this.rootIdentity, this.runtimeBudget, signal));
+    this.register("git_status", async (_args, { signal }) => runGit(this.rootPath, ["status", "--short", "--untracked-files=normal", "--", "."], this.rootIdentity, signal));
+    this.register("git_diff", async (_args, { signal }) => runGit(this.rootPath, ["diff", "--no-ext-diff", "--no-textconv", "--", "."], this.rootIdentity, signal));
     this.register("write_patch", async ({ path: filePath, content, expectedBaseline, remove = false, transactionId = "", rootIdentity = "", parentIdentity = "", onTemporaryReady = null }) => writePatch(this.rootPath, filePath, content, {
       expectedBaseline,
       remove,
@@ -93,7 +112,7 @@ export class ToolRegistry {
       parentIdentity,
       onTemporaryReady
     }));
-    this.register("run_command", async (args) => runCommand(this.rootPath, args, this.allowedCommands, this.rootIdentity));
+    this.register("run_command", async (args, { signal }) => runCommand(this.rootPath, args, this.allowedCommands, this.rootIdentity, signal));
   }
 }
 
@@ -113,32 +132,157 @@ async function assertWorkspaceReadIdentity(rootPath, rootIdentity) {
   return current;
 }
 
-async function listFiles(rootPath, rootIdentity = "") {
+async function listFiles(rootPath, rootIdentity = "", runtimeBudget = normalizeToolBudget(), signal = null) {
+  throwIfAborted(signal);
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
-  const output = [];
-  await walk(rootPath, rootPath, output, rootIdentity);
+  const collection = await collectFiles(rootPath, rootIdentity, {
+    maxFiles: runtimeBudget.maxListFiles,
+    maxEntries: runtimeBudget.maxTraversalEntries,
+    maxDirectories: runtimeBudget.maxTraversalDirectories,
+    maxDepth: runtimeBudget.maxTraversalDepth,
+    maxIgnoreFiles: runtimeBudget.maxIgnoreFiles,
+    maxIgnoreFileBytes: runtimeBudget.maxIgnoreFileBytes,
+    maxIgnoreTotalBytes: runtimeBudget.maxIgnoreTotalBytes,
+    maxIgnoreRules: runtimeBudget.maxIgnoreRules,
+    maxIgnoreRuleEvaluations: runtimeBudget.maxIgnoreRuleEvaluations
+  }, "tool-list-files", signal);
+  throwIfAborted(signal);
+  await collection.ignoreSession.verify();
+  throwIfAborted(signal);
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
-  return output.slice(0, 500);
+  return budgetedToolResult(collection.files, traversalBudgetEvidence(collection, "tool-list-files"));
 }
 
-async function walk(rootPath, currentPath, output, rootIdentity) {
+async function collectFiles(rootPath, rootIdentity, limits, operation, signal = null) {
+  const ignoreSession = createStrictIgnoreMatcher(rootPath, {
+    maxFiles: limits.maxIgnoreFiles,
+    maxFileBytes: limits.maxIgnoreFileBytes,
+    maxTotalBytes: limits.maxIgnoreTotalBytes,
+    maxRules: limits.maxIgnoreRules,
+    maxRuleEvaluations: limits.maxIgnoreRuleEvaluations,
+    signal
+  });
+  const state = {
+    files: [],
+    limits,
+    operation,
+    reasons: new Set(),
+    used: { entriesVisited: 0, directoriesVisited: 0, maxDepthReached: 0, nonTextFilesSkipped: 0 },
+    ignoreSession,
+    isIgnored: ignoreSession.isIgnoredTraversed,
+    signal
+  };
+  throwIfAborted(signal);
+  await walk(rootPath, rootPath, state, rootIdentity, 0);
+  throwIfAborted(signal);
+  return state;
+}
+
+async function walk(rootPath, currentPath, state, rootIdentity, depth) {
+  throwIfAborted(state.signal);
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
-  const entries = await fs.readdir(currentPath, { withFileTypes: true });
+  if (state.used.entriesVisited >= state.limits.maxEntries) {
+    state.reasons.add("max-entries");
+    return;
+  }
+  if (state.used.directoriesVisited >= state.limits.maxDirectories) {
+    state.reasons.add("max-directories");
+    return;
+  }
+  state.used.directoriesVisited += 1;
+  state.used.maxDepthReached = Math.max(state.used.maxDepthReached, depth);
+
+  const entries = [];
+  const openedDirectory = await openStableDirectory(rootPath, currentPath, "traverse tool files", state.signal);
+  for await (const entry of openedDirectory.directory) {
+    throwIfAborted(state.signal);
+    if (state.used.entriesVisited >= state.limits.maxEntries) {
+      state.reasons.add("max-entries");
+      break;
+    }
+    state.used.entriesVisited += 1;
+    entries.push(entry);
+  }
+  throwIfAborted(state.signal);
+  await openedDirectory.verify();
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
+    throwIfAborted(state.signal);
+    await openedDirectory.verify();
+    try {
+    if (state.files.length >= state.limits.maxFiles) {
+      state.reasons.add("max-files");
+      break;
+    }
     const absolutePath = path.join(currentPath, entry.name);
     const rel = relativePath(rootPath, absolutePath);
     if (entry.isDirectory()) {
-      if (isProtectedDirectory(entry.name) || await isPathIgnoredStrict(rootPath, rel, true)) continue;
-      await walk(rootPath, absolutePath, output, rootIdentity);
-    } else if (entry.isFile() && !isSensitiveFile(entry.name) && !(await isPathIgnoredStrict(rootPath, rel, false))) {
-      output.push(rel);
+      if (isProtectedDirectory(entry.name) || await state.isIgnored(rel, true)) continue;
+      throwIfAborted(state.signal);
+      if (depth >= state.limits.maxDepth) {
+        state.reasons.add("max-depth");
+        continue;
+      }
+      await walk(rootPath, absolutePath, state, rootIdentity, depth + 1);
+    } else if (entry.isFile() && !isSensitiveFile(entry.name) && !(await state.isIgnored(rel, false))) {
+      throwIfAborted(state.signal);
+      state.files.push(rel);
+    }
+    } finally {
+      throwIfAborted(state.signal);
+      await openedDirectory.verify();
     }
   }
 }
 
-async function readFileSafe(rootPath, filePath, rootIdentity = "") {
+async function readFileBudgeted(rootPath, filePath, rootIdentity, runtimeBudget, signal = null) {
+  throwIfAborted(signal);
+  const ignoreSession = createStrictIgnoreMatcher(rootPath, {
+    maxFiles: runtimeBudget.maxIgnoreFiles,
+    maxFileBytes: runtimeBudget.maxIgnoreFileBytes,
+    maxTotalBytes: runtimeBudget.maxIgnoreTotalBytes,
+    maxRules: runtimeBudget.maxIgnoreRules,
+    maxRuleEvaluations: runtimeBudget.maxIgnoreRuleEvaluations,
+    signal
+  });
+  const read = await readFileSafe(rootPath, filePath, rootIdentity, {
+    maxBytes: runtimeBudget.maxReadBytes,
+    operation: "tool-read-file",
+    includeMetadata: true,
+    ignoreMatcher: ignoreSession.isIgnored,
+    signal
+  });
+  throwIfAborted(signal);
+  await ignoreSession.verify();
+  const ignore = ignoreSession.evidence();
+  return budgetedToolResult(read.content, {
+    operation: "tool-read-file",
+    limits: {
+      maxBytes: runtimeBudget.maxReadBytes,
+      maxIgnoreFiles: runtimeBudget.maxIgnoreFiles,
+      maxIgnoreFileBytes: runtimeBudget.maxIgnoreFileBytes,
+      maxIgnoreTotalBytes: runtimeBudget.maxIgnoreTotalBytes,
+      maxIgnoreRules: runtimeBudget.maxIgnoreRules,
+      maxIgnoreRuleEvaluations: runtimeBudget.maxIgnoreRuleEvaluations
+    },
+    used: {
+      bytesRead: read.byteLength,
+      ignoreFilesRead: ignore.used.filesRead,
+      ignoreBytesRead: ignore.used.bytesRead,
+      ignoreIdentityChecks: ignore.used.identityChecks,
+      ignoreCacheEntries: ignore.used.cacheEntries,
+      ignoreRulesLoaded: ignore.used.rulesLoaded,
+      ignoreRuleEvaluations: ignore.used.ruleEvaluations
+    },
+    truncated: false,
+    reasons: []
+  });
+}
+
+async function readFileSafe(rootPath, filePath, rootIdentity = "", options = {}) {
+  const signal = options.signal || null;
+  throwIfAborted(signal);
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   const absolutePath = resolveInside(rootPath, filePath);
   const rel = relativePath(rootPath, absolutePath);
@@ -150,85 +294,314 @@ async function readFileSafe(rootPath, filePath, rootIdentity = "") {
   }
   if (isSensitiveFile(path.basename(absolutePath))) throw new Error("Refusing to read sensitive file.");
   await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
-  if (await isPathIgnoredStrict(rootPath, rel, false)) {
+  throwIfAborted(signal);
+  const ignored = options.ignoreMatcher
+    ? await options.ignoreMatcher(rel, false)
+    : await isPathIgnoredStrict(rootPath, rel, false);
+  if (ignored) {
     const error = new Error("Refusing to read an ignored file.");
     error.code = "READ_IGNORED_PATH_REFUSED";
     error.status = 409;
     throw error;
   }
-  const content = decodeUtf8(await readStableRegularFile(rootPath, absolutePath), absolutePath);
-  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
-  return content;
-}
-
-async function searchCode(rootPath, query = "", rootIdentity = "") {
-  const files = await listFiles(rootPath, rootIdentity);
-  const normalizedQuery = String(query).toLowerCase();
-  const matches = [];
-  if (!normalizedQuery) return matches;
-
-  for (const file of files.slice(0, 300)) {
-    try {
-      const content = await readFileSafe(rootPath, file, rootIdentity);
-      const lineMatches = findLineMatches(content, normalizedQuery);
-      if (lineMatches.length) matches.push({ path: file, matches: lineMatches, preview: lineMatches.map((item) => `${item.line}: ${item.text}`).join("\n").slice(0, 800) });
-    } catch {}
+  throwIfAborted(signal);
+  const maxBytes = options.maxBytes || RUNTIME_BUDGETS.toolRegistry.maxReadBytes;
+  const raw = await readStableRegularFile(rootPath, absolutePath, {
+    maxBytes,
+    operation: options.operation || "tool-read-file",
+    signal
+  });
+  throwIfAborted(signal);
+  let content;
+  try {
+    content = decodeUtf8(raw, absolutePath);
+  } catch (error) {
+    error.bytesRead = raw.byteLength;
+    throw error;
   }
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
-  return matches.slice(0, 20);
+  throwIfAborted(signal);
+  return options.includeMetadata ? { content, byteLength: raw.byteLength } : content;
 }
 
-function findLineMatches(content, normalizedQuery) {
+async function searchCode(rootPath, query = "", rootIdentity = "", runtimeBudget = normalizeToolBudget(), signal = null) {
+  throwIfAborted(signal);
+  const collection = await collectFiles(rootPath, rootIdentity, {
+    maxFiles: runtimeBudget.maxSearchFiles,
+    maxEntries: runtimeBudget.maxTraversalEntries,
+    maxDirectories: runtimeBudget.maxTraversalDirectories,
+    maxDepth: runtimeBudget.maxTraversalDepth,
+    maxIgnoreFiles: runtimeBudget.maxIgnoreFiles,
+    maxIgnoreFileBytes: runtimeBudget.maxIgnoreFileBytes,
+    maxIgnoreTotalBytes: runtimeBudget.maxIgnoreTotalBytes,
+    maxIgnoreRules: runtimeBudget.maxIgnoreRules,
+    maxIgnoreRuleEvaluations: runtimeBudget.maxIgnoreRuleEvaluations
+  }, "tool-search-code", signal);
+  const normalizedQuery = String(query).toLowerCase();
+  const matches = [];
+  const reasons = new Set(collection.reasons);
+  const used = {
+    ...collection.used,
+    candidateFiles: collection.files.length,
+    filesRead: 0,
+    bytesRead: 0,
+    oversizedFilesSkipped: 0,
+    unreadableFilesSkipped: 0,
+    resultsReturned: 0,
+    resultBytes: 2
+  };
+  if (!normalizedQuery) {
+    throwIfAborted(signal);
+    await collection.ignoreSession.verify();
+    attachIgnoreUsage(used, collection);
+    return budgetedToolResult(matches, searchBudgetEvidence(runtimeBudget, used, reasons));
+  }
+
+  for (const file of collection.files) {
+    throwIfAborted(signal);
+    if (matches.length >= runtimeBudget.maxSearchResults) {
+      reasons.add("max-results");
+      break;
+    }
+    const remainingBytes = runtimeBudget.maxSearchTotalBytes - used.bytesRead;
+    if (remainingBytes <= 0) {
+      reasons.add("max-total-read-bytes");
+      break;
+    }
+    try {
+      const read = await readFileSafe(rootPath, file, rootIdentity, {
+        maxBytes: Math.min(runtimeBudget.maxReadBytes, remainingBytes),
+        operation: "tool-search-code",
+        includeMetadata: true,
+        ignoreMatcher: collection.isIgnored,
+        signal
+      });
+      throwIfAborted(signal);
+      used.filesRead += 1;
+      used.bytesRead += read.byteLength;
+      const lineMatches = findLineMatches(read.content, normalizedQuery, runtimeBudget.maxMatchesPerFile, runtimeBudget.maxSearchLineChars);
+      if (lineMatches.length) {
+        const match = {
+          path: file,
+          matches: lineMatches,
+          preview: lineMatches.map((item) => `${item.line}: ${item.text}`).join("\n").slice(0, runtimeBudget.maxSearchPreviewChars)
+        };
+        const resultBytes = Buffer.byteLength(JSON.stringify(match), "utf8") + (matches.length ? 1 : 0);
+        if (used.resultBytes + resultBytes > runtimeBudget.maxSearchResultBytes) {
+          reasons.add("max-result-bytes");
+          break;
+        }
+        matches.push(match);
+        used.resultBytes += resultBytes;
+      }
+    } catch (error) {
+      throwIfAborted(signal);
+      if (error.code === "TOOL_READ_FILE_TOO_LARGE") {
+        if ((error.runtimeBudget?.observed || 0) > runtimeBudget.maxReadBytes) {
+          used.oversizedFilesSkipped += 1;
+          reasons.add("max-file-bytes");
+          continue;
+        }
+        reasons.add("max-total-read-bytes");
+        break;
+      }
+      if (error.code === "WORKSPACE_IDENTITY_CHANGED") throw error;
+      if (String(error.code || "").startsWith("GITIGNORE_")) throw error;
+      if (error.code === "PATCH_NON_UTF8_REFUSED") {
+        used.filesRead += 1;
+        used.bytesRead += Number.isSafeInteger(error.bytesRead) ? error.bytesRead : 0;
+        used.nonTextFilesSkipped += 1;
+        continue;
+      }
+      used.unreadableFilesSkipped += 1;
+      reasons.add("unreadable-files");
+    }
+  }
+  throwIfAborted(signal);
+  await collection.ignoreSession.verify();
+  await assertWorkspaceReadIdentity(rootPath, rootIdentity);
+  used.resultsReturned = matches.length;
+  attachIgnoreUsage(used, collection);
+  return budgetedToolResult(matches, searchBudgetEvidence(runtimeBudget, used, reasons));
+}
+
+function findLineMatches(content, normalizedQuery, maxMatches, maxLineChars) {
   const lines = String(content || "").split(/\r?\n/);
   const matches = [];
   for (const [index, line] of lines.entries()) {
     const column = line.toLowerCase().indexOf(normalizedQuery);
     if (column === -1) continue;
-    const before = lines.slice(Math.max(0, index - 2), index);
-    const after = lines.slice(index + 1, Math.min(lines.length, index + 3));
+    const matchWindow = boundedMatchedLine(line, column, maxLineChars);
+    const before = lines.slice(Math.max(0, index - 2), index).map((item) => boundedSearchLine(item, maxLineChars));
+    const after = lines.slice(index + 1, Math.min(lines.length, index + 3)).map((item) => boundedSearchLine(item, maxLineChars));
     matches.push({
       line: index + 1,
       column: column + 1,
-      text: line,
+      text: matchWindow.text,
+      textStartColumn: matchWindow.start + 1,
+      textTruncated: matchWindow.truncated,
       before,
       after
     });
-    if (matches.length >= 5) break;
+    if (matches.length >= maxMatches) break;
   }
   return matches;
 }
 
-async function readStableRegularFile(rootPath, absolutePath) {
+function boundedSearchLine(value, maxChars) {
+  return String(value || "").slice(0, maxChars);
+}
+
+function boundedMatchedLine(value, matchColumn, maxChars) {
+  const line = String(value || "");
+  if (line.length <= maxChars) return { text: line, start: 0, truncated: false };
+  const preferredStart = Math.max(0, matchColumn - Math.floor(maxChars / 3));
+  const start = Math.min(preferredStart, line.length - maxChars);
+  return { text: line.slice(start, start + maxChars), start, truncated: true };
+}
+
+function attachIgnoreUsage(used, collection) {
+  const ignore = collection.ignoreSession.evidence().used;
+  used.ignoreFilesRead = ignore.filesRead;
+  used.ignoreBytesRead = ignore.bytesRead;
+  used.ignoreIdentityChecks = ignore.identityChecks;
+  used.ignoreCacheEntries = ignore.cacheEntries;
+  used.ignoreRulesLoaded = ignore.rulesLoaded;
+  used.ignoreRuleEvaluations = ignore.ruleEvaluations;
+}
+
+async function readStableRegularFile(rootPath, absolutePath, { maxBytes, operation, signal = null }) {
+  throwIfAborted(signal);
   await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
   const expected = await fs.lstat(absolutePath, { bigint: true });
   if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1n) {
     throw toolError("READ_PATH_CHANGED", "The file selected for reading is linked or is not a normal file.");
   }
+  assertToolReadWithinBudget(expected.size, maxBytes, operation);
 
   const handle = await fs.open(absolutePath, "r");
   try {
+    throwIfAborted(signal);
     const opened = await handle.stat({ bigint: true });
     if (!sameStableFileStat(expected, opened) || !opened.isFile() || opened.nlink !== 1n) {
       throw toolError("READ_PATH_CHANGED", "The file changed identity while it was opened for reading.");
     }
-    const content = await handle.readFile();
+    assertToolReadWithinBudget(opened.size, maxBytes, operation);
+    const bounded = await readFileHandleBounded(handle, maxBytes);
+    throwIfAborted(signal);
+    if (bounded.exceeded) assertToolReadWithinBudget(BigInt(bounded.byteLength), maxBytes, operation);
     const [afterHandle, afterPath] = await Promise.all([
       handle.stat({ bigint: true }),
       fs.lstat(absolutePath, { bigint: true })
     ]);
     await assertNoLinkedPathSegments(rootPath, absolutePath, "read");
+    throwIfAborted(signal);
     if (!sameStableFileStat(opened, afterHandle)
       || !sameStableFileStat(opened, afterPath)
       || !afterPath.isFile()
       || afterPath.isSymbolicLink()
       || afterPath.nlink !== 1n
-      || BigInt(content.length) !== afterHandle.size) {
+      || BigInt(bounded.byteLength) !== afterHandle.size) {
       throw toolError("READ_PATH_CHANGED", "The file or one of its parent directories changed while it was being read.");
     }
-    return content;
+    return bounded.buffer;
   } finally {
-    await handle.close();
+    try {
+      await handle.close();
+    } catch (error) {
+      throwIfAborted(signal);
+      throw error;
+    }
   }
+}
+
+function normalizeToolBudget(options = {}) {
+  const hard = RUNTIME_BUDGETS.toolRegistry;
+  return {
+    maxListFiles: boundedBudgetValue(options.maxListFiles, hard.maxListFiles),
+    maxTraversalEntries: boundedBudgetValue(options.maxTraversalEntries, hard.maxTraversalEntries),
+    maxTraversalDirectories: boundedBudgetValue(options.maxTraversalDirectories, hard.maxTraversalDirectories),
+    maxTraversalDepth: boundedBudgetValue(options.maxTraversalDepth, hard.maxTraversalDepth, hard.maxTraversalDepth, 0),
+    maxReadBytes: boundedBudgetValue(options.maxReadBytes, hard.maxReadBytes),
+    maxSearchFiles: boundedBudgetValue(options.maxSearchFiles, hard.maxSearchFiles),
+    maxSearchTotalBytes: boundedBudgetValue(options.maxSearchTotalBytes, hard.maxSearchTotalBytes),
+    maxSearchResults: boundedBudgetValue(options.maxSearchResults, hard.maxSearchResults),
+    maxMatchesPerFile: boundedBudgetValue(options.maxMatchesPerFile, hard.maxMatchesPerFile),
+    maxSearchPreviewChars: boundedBudgetValue(options.maxSearchPreviewChars, hard.maxSearchPreviewChars),
+    maxSearchLineChars: boundedBudgetValue(options.maxSearchLineChars, hard.maxSearchLineChars),
+    maxSearchResultBytes: boundedBudgetValue(options.maxSearchResultBytes, hard.maxSearchResultBytes, hard.maxSearchResultBytes, 2),
+    maxIgnoreFiles: boundedBudgetValue(options.maxIgnoreFiles, hard.maxIgnoreFiles),
+    maxIgnoreFileBytes: boundedBudgetValue(options.maxIgnoreFileBytes, hard.maxIgnoreFileBytes),
+    maxIgnoreTotalBytes: boundedBudgetValue(options.maxIgnoreTotalBytes, hard.maxIgnoreTotalBytes),
+    maxIgnoreRules: boundedBudgetValue(options.maxIgnoreRules, hard.maxIgnoreRules),
+    maxIgnoreRuleEvaluations: boundedBudgetValue(options.maxIgnoreRuleEvaluations, hard.maxIgnoreRuleEvaluations)
+  };
+}
+
+function budgetedToolResult(value, budget) {
+  return { [BUDGETED_TOOL_RESULT]: true, value, budget };
+}
+
+function traversalBudgetEvidence(collection, operation) {
+  const reasons = [...collection.reasons].sort();
+  const ignore = collection.ignoreSession.evidence().used;
+  return {
+    operation,
+    limits: { ...collection.limits },
+    used: {
+      ...collection.used,
+      filesCollected: collection.files.length,
+      ignoreFilesRead: ignore.filesRead,
+      ignoreBytesRead: ignore.bytesRead,
+      ignoreIdentityChecks: ignore.identityChecks,
+      ignoreCacheEntries: ignore.cacheEntries,
+      ignoreRulesLoaded: ignore.rulesLoaded,
+      ignoreRuleEvaluations: ignore.ruleEvaluations
+    },
+    truncated: reasons.length > 0,
+    reasons
+  };
+}
+
+function searchBudgetEvidence(runtimeBudget, used, reasons) {
+  const sortedReasons = [...reasons].sort();
+  return {
+    operation: "tool-search-code",
+    limits: {
+      maxFiles: runtimeBudget.maxSearchFiles,
+      maxEntries: runtimeBudget.maxTraversalEntries,
+      maxDirectories: runtimeBudget.maxTraversalDirectories,
+      maxDepth: runtimeBudget.maxTraversalDepth,
+      maxFileBytes: runtimeBudget.maxReadBytes,
+      maxTotalReadBytes: runtimeBudget.maxSearchTotalBytes,
+      maxResults: runtimeBudget.maxSearchResults,
+      maxMatchesPerFile: runtimeBudget.maxMatchesPerFile,
+      maxPreviewChars: runtimeBudget.maxSearchPreviewChars,
+      maxLineChars: runtimeBudget.maxSearchLineChars,
+      maxResultBytes: runtimeBudget.maxSearchResultBytes,
+      maxIgnoreFiles: runtimeBudget.maxIgnoreFiles,
+      maxIgnoreFileBytes: runtimeBudget.maxIgnoreFileBytes,
+      maxIgnoreTotalBytes: runtimeBudget.maxIgnoreTotalBytes,
+      maxIgnoreRules: runtimeBudget.maxIgnoreRules,
+      maxIgnoreRuleEvaluations: runtimeBudget.maxIgnoreRuleEvaluations
+    },
+    used,
+    truncated: sortedReasons.length > 0,
+    reasons: sortedReasons
+  };
+}
+
+function assertToolReadWithinBudget(size, maxBytes, operation) {
+  if (size <= BigInt(maxBytes)) return;
+  throw runtimeBudgetError(
+    "TOOL_READ_FILE_TOO_LARGE",
+    `CodeClaw refused to read a file larger than the ${maxBytes}-byte ${operation} budget.`,
+    { operation, limit: maxBytes, observed: safeBigIntNumber(size) }
+  );
+}
+
+function safeBigIntNumber(value) {
+  return value > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(value);
 }
 
 function sameStableFileStat(left, right) {
@@ -464,7 +837,8 @@ function splitLines(value) {
   return normalized.endsWith("\n") ? normalized.slice(0, -1).split("\n") : normalized.split("\n");
 }
 
-async function runGit(rootPath, args, rootIdentity = "") {
+async function runGit(rootPath, args, rootIdentity = "", signal = null) {
+  throwIfAborted(signal);
   const realRoot = (await assertWorkspaceReadIdentity(rootPath, rootIdentity)).rootPath;
   const env = safeGitEnvironment(realRoot);
   let topLevel;
@@ -472,23 +846,36 @@ async function runGit(rootPath, args, rootIdentity = "") {
     const result = await execFileAsync("git", ["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"], {
       cwd: realRoot,
       timeout: 10000,
-      env
+      env,
+      ...(signal ? { signal } : {})
     });
+    throwIfAborted(signal);
     topLevel = await fs.realpath(path.resolve(realRoot, result.stdout.trim()));
-  } catch {
+    throwIfAborted(signal);
+  } catch (error) {
+    throwIfAborted(signal);
     throw toolError("GIT_WORKSPACE_ROOT_REQUIRED", "Git metadata was not found at this workspace root. CodeClaw will not discover a repository from a parent directory.");
   }
   if (!sameCanonicalPath(topLevel, realRoot)) {
     throw toolError("GIT_WORKSPACE_ROOT_REQUIRED", "Git metadata belongs to a parent or different workspace. CodeClaw refused to cross the active workspace boundary.");
   }
 
-  const { stdout, stderr } = await execFileAsync("git", ["-c", "core.fsmonitor=false", ...args], {
-    cwd: realRoot,
-    timeout: 10000,
-    env
-  });
+  let output;
+  try {
+    output = await execFileAsync("git", ["-c", "core.fsmonitor=false", ...args], {
+      cwd: realRoot,
+      timeout: 10000,
+      env,
+      ...(signal ? { signal } : {})
+    });
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
+  throwIfAborted(signal);
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
-  return { stdout, stderr };
+  throwIfAborted(signal);
+  return { stdout: output.stdout, stderr: output.stderr };
 }
 
 function safeGitEnvironment(rootPath) {
@@ -519,7 +906,8 @@ function toolError(code, message, status = 409) {
   return error;
 }
 
-async function runCommand(rootPath, request = {}, allowedCommands, rootIdentity = "") {
+async function runCommand(rootPath, request = {}, allowedCommands, rootIdentity = "", signal = null) {
+  throwIfAborted(signal);
   const current = await assertWorkspaceReadIdentity(rootPath, rootIdentity);
   const selected = selectAllowedCommand(request, allowedCommands);
   if (isDangerousCommand(selected.command)) throw new Error("Refusing to run dangerous command.");
@@ -529,8 +917,11 @@ async function runCommand(rootPath, request = {}, allowedCommands, rootIdentity 
 
   const executable = resolveExecutable(parts[0]);
   const args = parts.slice(1);
-  const result = await executeCommand(current.rootPath, executable, args, selected.command, request.timeoutMs);
+  throwIfAborted(signal);
+  const result = await executeCommand(current.rootPath, executable, args, selected.command, request.timeoutMs, signal);
+  throwIfAborted(signal);
   await assertWorkspaceReadIdentity(rootPath, rootIdentity);
+  throwIfAborted(signal);
   return result;
 }
 
@@ -589,38 +980,145 @@ function resolveExecutable(executable) {
   return executable;
 }
 
-function executeCommand(rootPath, command, args, commandLine, timeoutMs = COMMAND_TIMEOUT_MS) {
+function executeCommand(rootPath, command, args, commandLine, timeoutMs = COMMAND_TIMEOUT_MS, signal = null) {
+  throwIfAborted(signal);
   const startedAt = Date.now();
   const timeout = Number.isFinite(timeoutMs) ? Math.min(Math.max(timeoutMs, 50), COMMAND_TIMEOUT_MS) : COMMAND_TIMEOUT_MS;
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const spawnTarget = command.endsWith(".cmd") && process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : command;
     const spawnArgs = spawnTarget === command ? args : ["/d", "/s", "/c", command, ...args];
-    const child = spawn(spawnTarget, spawnArgs, { cwd: rootPath, shell: false, windowsHide: true });
+    const child = spawn(spawnTarget, spawnArgs, processSpawnOptions({ cwd: rootPath }));
     let stdout = "";
     let stderr = "";
-    let timedOut = false;
+    let settled = false;
+    let terminationPromise = null;
+    let terminationTrigger = null;
+    let terminationOperationError = null;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, timeout);
-
-    child.stdout?.on("data", (chunk) => {
+    const onStdout = (chunk) => {
       stdout = appendOutput(stdout, chunk);
-    });
-    child.stderr?.on("data", (chunk) => {
+    };
+    const onStderr = (chunk) => {
       stderr = appendOutput(stderr, chunk);
-    });
-    child.on("error", (error) => {
+    };
+    const cleanup = () => {
       clearTimeout(timer);
-      resolve({ command: commandLine, stdout, stderr: appendOutput(stderr, error.message), exitCode: null, durationMs: Date.now() - startedAt, timedOut: false });
+      signal?.removeEventListener("abort", onAbort);
+      child.stdout?.off("data", onStdout);
+      child.stderr?.off("data", onStderr);
+      child.off("error", onError);
+      child.off("close", onClose);
+    };
+    const finishResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const commandResult = ({ exitCode, timedOut, treeTermination = null }) => ({
+      command: commandLine,
+      stdout,
+      stderr,
+      exitCode,
+      durationMs: Date.now() - startedAt,
+      timedOut,
+      treeTermination
     });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ command: commandLine, stdout, stderr, exitCode: timedOut ? null : code, durationMs: Date.now() - startedAt, timedOut });
-    });
+    const requestTermination = (trigger, operationError = null) => {
+      if (settled) return;
+      if (trigger === "abort") {
+        terminationTrigger = "abort";
+        terminationOperationError = operationError;
+      } else if (!terminationTrigger) {
+        terminationTrigger = trigger;
+      }
+      if (terminationPromise) return;
+      terminationPromise = (async () => {
+        let evidence;
+        try {
+          evidence = await terminateProcessTree(child);
+        } catch (error) {
+          evidence = {
+            attempted: true,
+            terminated: false,
+            treeTerminationVerified: false,
+            errorCode: String(error.code || "PROCESS_TREE_TERMINATION_FAILED")
+          };
+        }
+        if (evidence?.treeTerminationVerified !== true) {
+          const error = toolError(
+            "PROCESS_TREE_TERMINATION_UNVERIFIED",
+            "CodeClaw could not verify that the command process tree stopped. The operation failed closed.",
+            500
+          );
+          error.trigger = terminationTrigger;
+          error.treeTermination = evidence;
+          if (terminationOperationError?.code) error.operationCode = terminationOperationError.code;
+          finishReject(error);
+          return;
+        }
+        if (terminationTrigger === "abort") {
+          finishReject(abortErrorWithTreeEvidence(terminationOperationError, evidence));
+          return;
+        }
+        finishResolve(commandResult({ exitCode: null, timedOut: true, treeTermination: evidence }));
+      })();
+      terminationPromise.catch(finishReject);
+    };
+    const onAbort = () => requestTermination("abort", signalAbortError(signal));
+    const onError = (error) => {
+      if (terminationPromise) return;
+      stderr = appendOutput(stderr, error.message);
+      finishResolve(commandResult({ exitCode: null, timedOut: false }));
+    };
+    const onClose = (code) => {
+      if (terminationPromise) return;
+      if (signal?.aborted) {
+        requestTermination("abort", signalAbortError(signal));
+        return;
+      }
+      finishResolve(commandResult({ exitCode: code, timedOut: false }));
+    };
+    const timer = setTimeout(() => requestTermination("timeout"), timeout);
+    timer.unref?.();
+
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.once("error", onError);
+    child.once("close", onClose);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
+}
+
+function signalAbortError(signal) {
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    return error;
+  }
+  return toolError("OPERATION_CANCELLED", "The local command operation was cancelled.");
+}
+
+function abortErrorWithTreeEvidence(error, treeTermination) {
+  if (error && Object.isExtensible(error)) {
+    error.treeTermination = treeTermination;
+    return error;
+  }
+  const wrapped = toolError(
+    String(error?.code || "OPERATION_CANCELLED"),
+    String(error?.message || "The local command operation was cancelled."),
+    Number.isInteger(error?.status) ? error.status : 409
+  );
+  wrapped.treeTermination = treeTermination;
+  return wrapped;
 }
 
 function appendOutput(current, chunk) {

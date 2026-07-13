@@ -12,9 +12,11 @@ const pathHelper = document.querySelector("#pathHelper");
 const pathHelperCopy = document.querySelector("#pathHelperCopy");
 const pathMode = document.querySelector("#pathMode");
 const scanButton = document.querySelector("#scanButton");
+const cancelScanButton = document.querySelector("#cancelScanButton");
 const examplePathButton = document.querySelector("#examplePathButton");
 const demoButton = document.querySelector("#demoButton");
 const preflightButton = document.querySelector("#preflightButton");
+const cancelPreflightButton = document.querySelector("#cancelPreflightButton");
 const preflightState = document.querySelector("#preflightState");
 const preflightOutput = document.querySelector("#preflightOutput");
 const workspaceState = document.querySelector("#workspaceState");
@@ -42,6 +44,7 @@ const toolOutput = document.querySelector("#toolOutput");
 const toolState = document.querySelector("#toolState");
 const verifyCommandSelect = document.querySelector("#verifyCommandSelect");
 const runVerifyButton = document.querySelector("#runVerifyButton");
+const cancelVerifyButton = document.querySelector("#cancelVerifyButton");
 const fixFailureButton = document.querySelector("#fixFailureButton");
 const verifyOutput = document.querySelector("#verifyOutput");
 const verifyState = document.querySelector("#verifyState");
@@ -68,6 +71,7 @@ const contextCandidates = document.querySelector("#contextCandidates");
 const modelOutput = document.querySelector("#modelOutput");
 const modelState = document.querySelector("#modelState");
 const modelCostHint = document.querySelector("#modelCostHint");
+const cancelModelOperationButton = document.querySelector("#cancelModelOperationButton");
 const modelOutboundReview = document.querySelector("#modelOutboundReview");
 const modelReviewClose = document.querySelector("#modelReviewClose");
 const modelReviewOperation = document.querySelector("#modelReviewOperation");
@@ -127,6 +131,7 @@ let workflowGeneration = 0;
 let activeModelReview = null;
 let resolveModelReview = null;
 let modelReviewFocusFallback = null;
+const activeOperations = new Map();
 const EXPERIENCE_MODES = new Set(["beginner", "advanced"]);
 const workflowModel = {
   mode: "beginner",
@@ -147,6 +152,8 @@ const DYNAMIC_I18N_KEYS = Object.freeze([
   "model.review.operation.patchProposal",
   "model.review.operation.taskSuggest",
   "model.review.warning.body",
+  "runtimeBudget.complete",
+  "runtimeBudget.partial",
   "model.apiKey.placeholder",
   "model.cost.custom.detail",
   "model.cost.custom.level",
@@ -983,6 +990,10 @@ contextCandidates.addEventListener("change", () => {
   renderWorkflow();
   updateControls();
 });
+cancelScanButton.addEventListener("click", () => cancelActiveOperation("scan", scanState));
+cancelPreflightButton.addEventListener("click", () => cancelActiveOperation("preflight", preflightState));
+cancelModelOperationButton.addEventListener("click", () => cancelActiveOperation("model-send", modelState));
+cancelVerifyButton.addEventListener("click", () => cancelActiveOperation("verify", verifyState));
 
 scanButton.addEventListener("click", async () => {
   const path = repoPath.value.trim();
@@ -996,7 +1007,7 @@ scanButton.addEventListener("click", async () => {
   scanState.textContent = t("scan.state.scanning");
   renderPathHelper("warn", t("path.checking"));
   try {
-    const result = await request("/api/repo/scan", { path });
+    const result = await requestManagedOperation("scan", "/api/repo/scan", { path });
     if (!workflowTargetIsCurrent(target)) return;
     repoProfile = result.profile;
     adoptServerWorkspace(result.workspace);
@@ -1014,7 +1025,7 @@ scanButton.addEventListener("click", async () => {
     await refreshAudit();
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
-    scanState.textContent = t("scan.state.failed");
+    scanState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("scan.state.failed");
     renderPathHelper("error", friendlyErrorMessage(error).split("\n\n")[0]);
     contextOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1035,7 +1046,7 @@ preflightButton.addEventListener("click", async () => {
   renderPathHelper("warn", t("path.preflightRunning"));
   renderPreflightReport({ pending: true });
   try {
-    const payload = await request("/api/preflight/run", {
+    const payload = await requestManagedOperation("preflight", "/api/preflight/run", {
       path,
       goal: goalInput.value.trim() || t("preflight.goal.default")
     });
@@ -1067,7 +1078,7 @@ preflightButton.addEventListener("click", async () => {
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
     currentPreflight = null;
-    preflightState.textContent = t("preflight.state.failed");
+    preflightState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("preflight.state.failed");
     renderPathHelper("error", friendlyErrorMessage(error).split("\n\n")[0]);
     preflightOutput.textContent = friendlyErrorMessage(error);
   } finally {
@@ -1089,7 +1100,7 @@ planButton.addEventListener("click", async () => {
       adoptTaskResponse(created.task, { replace: true });
     }
     const taskTarget = captureWorkflowTarget(true);
-    const result = await request("/api/agent/plan", { goal, repoProfile, taskId: currentTask.id });
+    const result = await request("/api/agent/plan", { goal, taskId: currentTask.id });
     if (!workflowTargetIsCurrent(taskTarget)) return;
     if (result.task && !adoptTaskResponse(result.task)) return;
     renderPlan(result.plan);
@@ -1247,7 +1258,7 @@ async function executeReviewedModelOperation(operation, trigger, stateElement) {
 
     stateElement.textContent = t("model.review.state.sending");
     try {
-      return await request("/api/model/send", {
+      return await requestManagedOperation("model-send", "/api/model/send", {
         previewId: payload.preview.previewId,
         approvalDigest: payload.preview.approvalDigest,
         approved: true
@@ -1468,7 +1479,7 @@ suggestButton.addEventListener("click", async () => {
     await refreshAudit();
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
-    modelState.textContent = t("model.state.suggestFailed");
+    modelState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("model.state.suggestFailed");
     modelOutput.textContent = friendlyErrorMessage(error);
   } finally {
     updateControls();
@@ -1492,7 +1503,7 @@ contextButton.addEventListener("click", async () => {
     await refreshAudit();
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
-    modelState.textContent = t("model.state.contextFailed");
+    modelState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("model.state.contextFailed");
     modelOutput.textContent = friendlyErrorMessage(error);
   } finally {
     updateControls();
@@ -1554,7 +1565,7 @@ proposePatchButton.addEventListener("click", async () => {
     await refreshAudit();
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
-    patchState.textContent = t("patch.state.draftFailed");
+    patchState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("patch.state.draftFailed");
     patchOutput.textContent = friendlyErrorMessage(error);
   } finally {
     updateControls();
@@ -1749,7 +1760,7 @@ runVerifyButton.addEventListener("click", async () => {
       ].join("\n"));
       if (approved) {
         verifyState.textContent = t("verify.state.running");
-        result = await request("/api/tools/call", { tool: "run_command", args: { command: command.command }, rootPath: repoProfile.rootPath, taskId: currentTask?.id, approved: true });
+        result = await requestManagedOperation("verify", "/api/tools/call", { tool: "run_command", args: { command: command.command }, rootPath: repoProfile.rootPath, taskId: currentTask?.id, approved: true });
         if (!workflowTargetIsCurrent(target)) return;
       }
     }
@@ -1761,7 +1772,7 @@ runVerifyButton.addEventListener("click", async () => {
     await refreshAudit();
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
-    verifyState.textContent = t("verify.state.runFailed");
+    verifyState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("verify.state.runFailed");
     verifyOutput.textContent = friendlyErrorMessage(error);
   } finally {
     updateControls();
@@ -1786,7 +1797,7 @@ fixFailureButton.addEventListener("click", async () => {
     await refreshAudit();
   } catch (error) {
     if (!workflowTargetIsCurrent(target)) return;
-    verifyState.textContent = t("verify.state.fixFailed");
+    verifyState.textContent = operationWasCancelled(error) ? t("operation.state.cancelled") : t("verify.state.fixFailed");
     verifyOutput.textContent = friendlyErrorMessage(error);
   } finally {
     updateControls();
@@ -1875,23 +1886,28 @@ function updateControls() {
   const writeGateStatus = workspaceWriteGateStatus();
   const commandGateStatus = workspaceCommandGateStatus();
   const selectedToolRunsProcess = ["git_status", "git_diff"].includes(toolSelect.value);
+  const scanBusy = activeOperations.has("scan");
+  const preflightBusy = activeOperations.has("preflight");
+  const modelBusy = activeOperations.has("model-send");
+  const verifyBusy = activeOperations.has("verify");
 
-  setControlState(scanButton, !hasRepoPath, hasRepoPath ? "" : t("control.needProjectPathDemo"));
-  setControlState(preflightButton, !hasRepoPath, hasRepoPath ? "" : t("control.needProjectPath"));
+  setControlState(scanButton, !hasRepoPath || scanBusy, scanBusy ? t("operation.state.running") : hasRepoPath ? "" : t("control.needProjectPathDemo"));
+  setControlState(preflightButton, !hasRepoPath || preflightBusy, preflightBusy ? t("operation.state.running") : hasRepoPath ? "" : t("control.needProjectPath"));
   setControlState(planButton, !hasGoal || taskComplete && !startsNewTask, !hasGoal ? t("control.needGoal") : taskComplete && !startsNewTask ? t("control.taskComplete") : "");
   setControlState(completeTaskButton, !hasTask || taskComplete || !currentPreflight || !hasActivePatch || !hasSuccessfulVerification, !hasTask ? t("control.needTask") : taskComplete ? t("control.taskComplete") : !currentPreflight ? t("control.needPreflight") : !hasActivePatch ? t("control.needAppliedPatch") : !hasSuccessfulVerification ? t("control.needSuccessfulVerify") : "");
   setControlState(saveMemoryButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
   setControlState(refreshMemoryButton, !hasRepo, hasRepo ? "" : t("control.needScan"));
   setControlState(saveModelButton, false);
-  setControlState(suggestButton, !hasTask || taskComplete, !hasTask ? t("control.needPlan") : taskComplete ? t("control.taskComplete") : "");
-  setControlState(contextButton, !hasTask || !hasRepo || taskComplete, !hasTask ? t("control.needPlan") : !hasRepo ? t("control.needScan") : taskComplete ? t("control.taskComplete") : "");
+  setControlState(suggestButton, !hasTask || taskComplete || modelBusy, modelBusy ? t("operation.state.running") : !hasTask ? t("control.needPlan") : taskComplete ? t("control.taskComplete") : "");
+  setControlState(contextButton, !hasTask || !hasRepo || taskComplete || modelBusy, modelBusy ? t("operation.state.running") : !hasTask ? t("control.needPlan") : !hasRepo ? t("control.needScan") : taskComplete ? t("control.taskComplete") : "");
   setControlState(readContextButton, !hasTask || !hasContextCandidates || selectedContextCount === 0 || taskComplete, !hasTask ? t("control.needPlan") : !hasContextCandidates ? t("control.needContextCandidates") : selectedContextCount === 0 ? t("control.needContextSelection") : taskComplete ? t("control.taskComplete") : "");
-  setControlState(proposePatchButton, !hasTask || !hasContext || taskComplete || patchDraftGateStatus.blocksPatch, !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : taskComplete ? t("control.taskComplete") : patchDraftGateStatus.detail);
+  setControlState(proposePatchButton, !hasTask || !hasContext || taskComplete || patchDraftGateStatus.blocksPatch || modelBusy, modelBusy ? t("operation.state.running") : !hasTask ? t("control.needPlan") : !hasContext ? t("control.needReadContext") : taskComplete ? t("control.taskComplete") : patchDraftGateStatus.detail);
   setControlState(applyPatchButton, !proposalFiles.length || activePatches > 0 || taskComplete || patchApplyGateStatus.blocksPatch, !proposalFiles.length ? t("control.needApplicablePatch") : activePatches > 0 ? t("control.hasActivePatch") : taskComplete ? t("control.taskComplete") : patchApplyGateStatus.detail);
   setControlState(revertPatchButton, activePatches === 0 || writeGateStatus.blocksPatch, activePatches === 0 ? t("control.noRevertPatch") : writeGateStatus.detail);
   setControlState(callToolButton, !hasRepo || selectedToolRunsProcess && commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : selectedToolRunsProcess ? commandGateStatus.detail : "");
-  setControlState(runVerifyButton, !hasRepo || !currentPreflight || !hasActivePatch || !verificationCommand || taskComplete || commandGateStatus.blocksCommand, !hasRepo ? t("control.needScan") : !currentPreflight ? t("control.needPreflight") : !hasActivePatch ? t("control.needAppliedPatch") : !verificationCommand ? t("control.noVerifyCommand") : taskComplete ? t("control.taskComplete") : commandGateStatus.detail);
-  setControlState(fixFailureButton, !currentTask?.failureSummary || taskComplete, taskComplete ? t("control.taskComplete") : currentTask?.failureSummary ? "" : t("control.needFailedVerify"));
+  setControlState(runVerifyButton, !hasRepo || !currentPreflight || !hasActivePatch || !verificationCommand || taskComplete || commandGateStatus.blocksCommand || verifyBusy, verifyBusy ? t("operation.state.running") : !hasRepo ? t("control.needScan") : !currentPreflight ? t("control.needPreflight") : !hasActivePatch ? t("control.needAppliedPatch") : !verificationCommand ? t("control.noVerifyCommand") : taskComplete ? t("control.taskComplete") : commandGateStatus.detail);
+  setControlState(fixFailureButton, !currentTask?.failureSummary || taskComplete || modelBusy, modelBusy ? t("operation.state.running") : taskComplete ? t("control.taskComplete") : currentTask?.failureSummary ? "" : t("control.needFailedVerify"));
+  renderActiveOperationControls();
   renderPatchGate(proposalFiles.length ? patchApplyGateStatus : patchDraftGateStatus);
   renderApplyReview(currentTask?.patchProposal, currentTask, patchApplyGateStatus);
   renderVerifyBoundary();
@@ -2217,6 +2233,7 @@ function renderRepoSummary(profile) {
   const languages = profile.languages?.map((item) => item.name).join(", ") || t("repo.unknown");
   const frameworks = profile.frameworks?.join(", ") || t("repo.none");
   const commands = profile.commands?.map((item) => item.command).join("\n") || t("repo.none");
+  const runtimeBudgetEvidence = formatRuntimeBudgetEvidence(profile.budget, profile.truncated, profile.detailOmissions);
   repoSummary.innerHTML = `
     <div class="metric"><strong>${profile.fileCount}</strong><span>${escapeHtml(t("repo.metric.files"))}</span></div>
     <div class="metric"><strong>${profile.skippedCount}</strong><span>${escapeHtml(t("repo.metric.skipped"))}</span></div>
@@ -2229,6 +2246,7 @@ function renderRepoSummary(profile) {
     `${t("repo.output.frameworks")}: ${frameworks}`,
     `${t("repo.output.commands")}:`,
     commands,
+    ...(runtimeBudgetEvidence ? ["", `${t("runtimeBudget.title")}:`, runtimeBudgetEvidence] : []),
     "",
     `${t("repo.output.keyFiles")}:`,
     profile.keyFiles.join("\n")
@@ -2250,6 +2268,11 @@ function renderPreflightReport(report) {
 
   const warnings = report.nextGate?.warnings || [];
   const blockers = report.nextGate?.blockers || [];
+  const runtimeBudgetEvidence = [
+    formatRuntimeBudgetEvidence(report.repo?.budget, report.repo?.truncated, report.repo?.detailOmissions),
+    formatRuntimeBudgetEvidence(report.search?.budget, report.search?.truncated),
+    ...(report.readFiles || []).map((item) => formatRuntimeBudgetEvidence(item.budget, item.truncated))
+  ].filter(Boolean);
   const coverage = report.contextCoverage || { sourceFiles: 0, testFiles: 0, docsOrMetadata: 0 };
   const status = blockers.length ? t("preflight.status.blocked") : warnings.length ? t("preflight.status.warn") : t("preflight.status.ok");
   preflightState.textContent = status;
@@ -2272,8 +2295,20 @@ function renderPreflightReport(report) {
     <div class="preflight-next"><strong>${escapeHtml(t("preflight.next"))}</strong><span>${escapeHtml(preflightNextAction(report))}</span></div>
     ${blockers.length ? `<div class="preflight-list"><strong>${escapeHtml(t("preflight.blockers"))}</strong>${blockers.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
     ${warnings.length ? `<div class="preflight-list"><strong>${escapeHtml(t("preflight.warnings"))}</strong>${warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
+    ${runtimeBudgetEvidence.length ? `<div class="preflight-list"><strong>${escapeHtml(t("runtimeBudget.title"))}</strong>${runtimeBudgetEvidence.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
     <div class="preflight-list"><strong>${escapeHtml(t("preflight.context"))}</strong>${(report.contextFiles || []).map((item) => `<p>${escapeHtml(item.path)} <span>${escapeHtml(item.reason || "")}</span></p>`).join("") || `<p>${escapeHtml(t("preflight.noContext"))}</p>`}</div>
   `;
+}
+
+function formatRuntimeBudgetEvidence(budget, truncated = false, detailOmissions = []) {
+  if (!budget?.operation) return "";
+  const reasons = [...new Set([...(budget.reasons || []), ...(detailOmissions || [])])];
+  const partial = truncated === true || reasons.length > 0;
+  return t("runtimeBudget.evidence", {
+    operation: budget.operation,
+    status: t(partial ? "runtimeBudget.partial" : "runtimeBudget.complete"),
+    reasons: reasons.join(", ") || t("repo.none")
+  });
 }
 
 function renderRestoredPreflightNotice(session) {
@@ -2370,6 +2405,8 @@ function renderToolResult(tool, result) {
     tool,
     permission: result.permission,
     blocked: Boolean(result.blocked),
+    truncated: result.truncated === true,
+    budget: result.budget || undefined,
     result: result.result || result.message
   };
   toolOutput.textContent = formatToolPayload(payload);
@@ -2885,6 +2922,66 @@ function formatToolPayload(payload) {
   return JSON.stringify(payload, null, 2);
 }
 
+async function requestManagedOperation(kind, url, body) {
+  if (activeOperations.has(kind)) {
+    const error = new Error(t("operation.error.busy"));
+    error.code = "OPERATION_CLIENT_BUSY";
+    throw error;
+  }
+  const operation = {
+    id: createOperationId(kind),
+    kind,
+    cancelling: false
+  };
+  activeOperations.set(kind, operation);
+  renderActiveOperationControls();
+  try {
+    return await request(url, { ...body, operationId: operation.id });
+  } finally {
+    if (activeOperations.get(kind) === operation) activeOperations.delete(kind);
+    renderActiveOperationControls();
+  }
+}
+
+async function cancelActiveOperation(kind, stateElement) {
+  const operation = activeOperations.get(kind);
+  if (!operation || operation.cancelling) return;
+  operation.cancelling = true;
+  if (stateElement) stateElement.textContent = t("operation.state.cancelling");
+  renderActiveOperationControls();
+  try {
+    await request("/api/operations/cancel", { operationId: operation.id });
+  } catch (error) {
+    operation.cancelling = false;
+    if (stateElement) stateElement.textContent = friendlyErrorMessage(error);
+    renderActiveOperationControls();
+  }
+}
+
+function renderActiveOperationControls() {
+  for (const [kind, button] of [
+    ["scan", cancelScanButton],
+    ["preflight", cancelPreflightButton],
+    ["model-send", cancelModelOperationButton],
+    ["verify", cancelVerifyButton]
+  ]) {
+    const operation = activeOperations.get(kind);
+    button.hidden = !operation;
+    button.disabled = !operation || operation.cancelling;
+  }
+}
+
+function createOperationId(kind) {
+  if (globalThis.crypto?.randomUUID) return `${kind}-${globalThis.crypto.randomUUID()}`;
+  const values = new Uint32Array(2);
+  globalThis.crypto?.getRandomValues?.(values);
+  return `${kind}-${Date.now().toString(36)}-${values[0].toString(36)}${values[1].toString(36)}`;
+}
+
+function operationWasCancelled(error) {
+  return error?.code === "OPERATION_CANCELLED" || error?.code === "request_cancelled";
+}
+
 async function request(url, body) {
   const response = await fetch(url, {
     method: body ? "POST" : "GET",
@@ -2905,6 +3002,10 @@ function friendlyErrorMessage(error) {
   const message = String(error?.message || error || t("error.unknown"));
   const codeMessage = `${error?.code || ""} ${message}`;
   const structuredRules = [
+    [/OPERATION_CANCELLED|request_cancelled/, t("error.operationCancelled")],
+    [/OPERATION_(?:COMMIT_)?TIMEOUT|request_timeout/, t("error.operationTimeout")],
+    [/OPERATION_(?:LIMIT_REACHED|KIND_LIMIT_REACHED|ID_CONFLICT|CLIENT_BUSY)/, t("error.operationBusy")],
+    [/OPERATION_(?:COMMITTING|NOT_CANCELLABLE)/, t("error.operationCommitting")],
     [/WORKSPACE_ORIGINAL_READ_?ONLY|WORKSPACE_WRITE_FORBIDDEN/, t("error.workspaceOriginalReadonly")],
     [/WORKSPACE_COMMAND_FORBIDDEN|WORKSPACE_TOOL_NOT_ALLOWED/, t("error.workspaceCommandForbidden")],
     [/WORKSPACE_CLEANUP_ACTIVE/, t("workspace.cleanup.activeBlocked")],

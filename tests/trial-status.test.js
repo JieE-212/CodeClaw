@@ -3,16 +3,16 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { REQUIRED_REMEDIATION_HOST_CHECKS } from "../scripts/trial-remediation-contract.js";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "trial-status.js");
 
-test("trial-status starts with readiness when reports are missing", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-empty-"));
+test("trial-status starts with readiness when reports are missing", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-empty-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -25,8 +25,8 @@ test("trial-status starts with readiness when reports are missing", async () => 
   assert.equal(report.nextCommand, "npm.cmd run trial:ready");
 });
 
-test("trial-status asks for host runbook before ready-to-host state", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-host-"));
+test("trial-status asks for host runbook before ready-to-host state", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-host-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -44,8 +44,8 @@ test("trial-status asks for host runbook before ready-to-host state", async () =
   assert.match(report.nextCommand, /trial:host-run/);
 });
 
-test("trial-status asks for pre-live gate after host runbook", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-host-run-"));
+test("trial-status asks for pre-live gate after host runbook", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-host-run-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -61,8 +61,8 @@ test("trial-status asks for pre-live gate after host runbook", async () => {
   assert.match(report.nextCommand, /trial:pre-live/);
 });
 
-test("trial-status asks for live capture after pre-live gate", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-pre-live-"));
+test("trial-status asks for live capture after pre-live gate", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-pre-live-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -79,8 +79,8 @@ test("trial-status asks for live capture after pre-live gate", async () => {
   assert.match(report.nextCommand, /trial:live-capture/);
 });
 
-test("trial-status recognizes ready-to-host state after live capture", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-live-capture-"));
+test("trial-status recognizes ready-to-host state after live capture", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-live-capture-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -98,8 +98,8 @@ test("trial-status recognizes ready-to-host state after live capture", async () 
   assert.match(report.nextCommand, /trial:complete-session/);
 });
 
-test("trial-status recognizes ready-for-after-live after completion check", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-complete-"));
+test("trial-status recognizes ready-for-after-live after completion check", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-complete-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -118,8 +118,8 @@ test("trial-status recognizes ready-for-after-live after completion check", asyn
   assert.match(report.nextCommand, /trial:after-live/);
 });
 
-test("trial-status blocks when completion check holds", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-complete-hold-"));
+test("trial-status blocks when completion check holds", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-complete-hold-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -143,8 +143,8 @@ test("trial-status blocks when completion check holds", async () => {
   assert.ok(report.blockers.some((item) => item.includes("Feedback is missing")));
 });
 
-test("trial-status blocks on privacy hold", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-privacy-"));
+test("trial-status blocks on privacy hold", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-privacy-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -160,8 +160,8 @@ test("trial-status blocks on privacy hold", async () => {
   assert.match(report.nextCommand, /trial:privacy-check/);
 });
 
-test("trial-status asks for after-live after post-session", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-review-"));
+test("trial-status asks for after-live after post-session", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-review-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -178,8 +178,8 @@ test("trial-status asks for after-live after post-session", async () => {
   assert.match(report.nextCommand, /trial:after-live/);
 });
 
-test("trial-status requests remediation when a preserved after-live blocks", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-after-live-"));
+test("trial-status requests remediation when a preserved after-live blocks", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-after-live-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -202,8 +202,8 @@ test("trial-status requests remediation when a preserved after-live blocks", asy
   assert.match(report.nextCommand, /trial:remediation/);
 });
 
-test("trial-status keeps a failed remediation ahead of stale hosting reports", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-remediation-hold-"));
+test("trial-status keeps a failed remediation ahead of stale hosting reports", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-remediation-hold-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -224,8 +224,8 @@ test("trial-status keeps a failed remediation ahead of stale hosting reports", a
   assert.ok(!report.blockers.some((item) => item.includes("stale host-ready blocker")));
 });
 
-test("trial-status moves to new intake after a current remediation closes historical blockers", async () => {
-  const fixture = await writeRemediatedStatusFixture();
+test("trial-status moves to new intake after a current remediation closes historical blockers", async (t) => {
+  const fixture = await writeRemediatedStatusFixture(t);
   const result = await runStatus(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -236,8 +236,8 @@ test("trial-status moves to new intake after a current remediation closes histor
   assert.equal(report.reports.remediation.decision, "REMEDIATION_READY_FOR_RETEST");
 });
 
-test("trial-status rejects remediation when the preserved after-live report changes", async () => {
-  const fixture = await writeRemediatedStatusFixture({ tamperAfterLive: true });
+test("trial-status rejects remediation when the preserved after-live report changes", async (t) => {
+  const fixture = await writeRemediatedStatusFixture(t, { tamperAfterLive: true });
   const result = await runStatus(fixture.args);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
@@ -246,8 +246,8 @@ test("trial-status rejects remediation when the preserved after-live report chan
   assert.equal(report.reports.afterLive.decision, "AFTER_LIVE_BLOCKED");
 });
 
-test("trial-status asks for archive after after-live passes and archive is missing", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-after-live-ready-"));
+test("trial-status asks for archive after after-live passes and archive is missing", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-after-live-ready-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -265,8 +265,8 @@ test("trial-status asks for archive after after-live passes and archive is missi
   assert.equal(report.currentStage, "archive");
 });
 
-test("trial-status asks for cohort handoff before archived expansion-ready state", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-ready-"));
+test("trial-status asks for cohort handoff before archived expansion-ready state", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-ready-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -290,8 +290,8 @@ test("trial-status asks for cohort handoff before archived expansion-ready state
   assert.equal(report.quickLinks.latestArchive, path.relative(rootPath, archiveFolder).split(path.sep).join("/"));
 });
 
-test("trial-status asks for tester intake before the next session pack", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-intake-"));
+test("trial-status asks for tester intake before the next session pack", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-intake-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -310,8 +310,8 @@ test("trial-status asks for tester intake before the next session pack", async (
   assert.match(report.nextCommand, /trial:intake/);
 });
 
-test("trial-status recommends next-live after next tester live capture is ready", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-next-live-"));
+test("trial-status recommends next-live after next tester live capture is ready", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-next-live-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -340,8 +340,8 @@ test("trial-status recommends next-live after next tester live capture is ready"
   assert.match(report.nextCommand, /trial:next-live/);
 });
 
-test("trial-status blocks when next-live blocks", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-next-live-blocked-"));
+test("trial-status blocks when next-live blocks", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-next-live-blocked-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -362,8 +362,8 @@ test("trial-status blocks when next-live blocks", async () => {
   assert.ok(report.blockers.some((item) => item.includes("watch item missing")));
 });
 
-test("trial-status asks for cohort handoff after cohort summary allows expansion", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-cohort-handoff-"));
+test("trial-status asks for cohort handoff after cohort summary allows expansion", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-cohort-handoff-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -379,8 +379,8 @@ test("trial-status asks for cohort handoff after cohort summary allows expansion
   assert.match(report.nextCommand, /trial:cohort-handoff/);
 });
 
-test("trial-status recognizes cohort handoff ready to expand", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-cohort-ready-"));
+test("trial-status recognizes cohort handoff ready to expand", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-cohort-ready-");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");
 
@@ -422,8 +422,8 @@ async function writeArchivedExpansionReports(folder) {
   await writeJson(folder, "TRIAL_NEXT_LIVE_REPORT.json", { ok: true, mode: "trial-next-live", decision: "NEXT_LIVE_READY", testerId: "tester-2", blockers: [] });
 }
 
-async function writeRemediatedStatusFixture({ tamperAfterLive = false } = {}) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-status-remediated-"));
+async function writeRemediatedStatusFixture(t, { tamperAfterLive = false } = {}) {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-status-remediated-");
   const sourceRoot = path.join(tempRoot, "source");
   const jsonPath = path.join(tempRoot, "status.json");
   const markdownPath = path.join(tempRoot, "status.md");

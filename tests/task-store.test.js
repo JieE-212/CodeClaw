@@ -33,6 +33,29 @@ test("TaskStore creates and returns latest tasks", async () => {
   assert.equal((await store.latest({ rootPath: "C:/repo-a" })).id, second.id);
 });
 
+test("TaskStore creates prepared preflight evidence in one revision", async () => {
+  const store = await makeStore();
+  const task = await store.create({
+    goal: "review safely",
+    rootPath: "C:/repo-a",
+    plan: { title: "Review", steps: [{ id: "read" }] },
+    toolCalls: [{ tool: "read_file", summary: "read source", blocked: false }],
+    contextFiles: [{ path: "src/index.js", summary: "UTF-8 text metadata", size: 12, source: "preflight" }],
+    status: "running"
+  });
+
+  assert.equal(task.revision, 1);
+  assert.equal(task.status, "running");
+  assert.equal(task.plan.title, "Review");
+  assert.equal(task.toolCalls.length, 1);
+  assert.equal(task.contextFiles.length, 1);
+  assert.ok(task.toolCalls[0].time);
+  const persisted = JSON.parse(await fs.readFile(store.storagePath, "utf8"));
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].revision, 1);
+  assert.equal(persisted[0].contextFiles[0].path, "src/index.js");
+});
+
 test("TaskStore stores plan, tool calls, verification, and completion", async () => {
   const store = await makeStore();
   const task = await store.create({ goal: "fix tests", rootPath: "C:/repo-a" });

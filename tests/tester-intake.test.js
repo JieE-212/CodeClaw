@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "tester-intake.js");
 
-test("tester-intake creates a local empty roster template", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-init-"));
+test("tester-intake creates a local empty roster template", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-intake-init-");
   const rosterPath = path.join(tempRoot, "TESTER_ROSTER.json");
   const jsonPath = path.join(tempRoot, "intake-report.json");
   const markdownPath = path.join(tempRoot, "intake-report.md");
@@ -26,8 +26,8 @@ test("tester-intake creates a local empty roster template", async () => {
   assert.deepEqual(roster.testers, []);
 });
 
-test("tester-intake accepts an anonymous ready tester", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-ready-"));
+test("tester-intake accepts an anonymous ready tester", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-intake-ready-");
   const rosterPath = path.join(tempRoot, "TESTER_ROSTER.json");
   const jsonPath = path.join(tempRoot, "intake-report.json");
   const markdownPath = path.join(tempRoot, "intake-report.md");
@@ -53,8 +53,8 @@ test("tester-intake accepts an anonymous ready tester", async () => {
   assert.match(report.nextCommands[0], /trial:session-pack/);
 });
 
-test("tester-intake blocks missing consent and privacy acceptance", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-hold-"));
+test("tester-intake blocks missing consent and privacy acceptance", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-intake-hold-");
   const rosterPath = path.join(tempRoot, "TESTER_ROSTER.json");
   const jsonPath = path.join(tempRoot, "intake-report.json");
   const markdownPath = path.join(tempRoot, "intake-report.md");
@@ -77,8 +77,8 @@ test("tester-intake blocks missing consent and privacy acceptance", async () => 
   assert.ok(report.blockers.some((item) => item.includes("privacyAccepted must be true")));
 });
 
-test("tester-intake blocks personal fields in roster", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-pii-"));
+test("tester-intake blocks personal fields in roster", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-intake-pii-");
   const rosterPath = path.join(tempRoot, "TESTER_ROSTER.json");
   const jsonPath = path.join(tempRoot, "intake-report.json");
   const markdownPath = path.join(tempRoot, "intake-report.md");

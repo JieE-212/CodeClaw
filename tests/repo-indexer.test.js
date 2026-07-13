@@ -89,3 +89,83 @@ test("scanRepository skips protected directories case-insensitively and follows 
   }
   assert.ok(!profile.files.some((item) => item.path.includes("owner.json") || item.path.endsWith("/.Git/config")));
 });
+
+test("scanRepository reports bounded traversal evidence without treating optional summaries as structural truncation", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-indexer-budget-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  await fs.mkdir(path.join(root, "nested"));
+  await fs.writeFile(path.join(root, "a.js"), "export const a = 1;\n", "utf8");
+  await fs.writeFile(path.join(root, "b.js"), "export const b = 2;\n", "utf8");
+  await fs.writeFile(path.join(root, "large.js"), "x".repeat(32), "utf8");
+  await fs.writeFile(path.join(root, "nested", "c.js"), "export const c = 3;\n", "utf8");
+
+  const fileLimited = await scanRepository(root, { maxFiles: 1 });
+  assert.equal(fileLimited.fileCount, 1);
+  assert.equal(fileLimited.truncated, true);
+  assert.ok(fileLimited.truncationReasons.includes("max-files"));
+  assert.equal(fileLimited.budget.limits.maxFiles, 1);
+  assert.equal(fileLimited.budget.used.filesCollected, 1);
+
+  const depthLimited = await scanRepository(root, { maxDepth: 0 });
+  assert.equal(depthLimited.truncated, true);
+  assert.ok(depthLimited.truncationReasons.includes("max-depth"));
+  assert.ok(depthLimited.skipped.some((item) => item.path === "nested" && item.reason === "runtime-budget-depth"));
+
+  const summaryLimited = await scanRepository(root, { maxSummaryFileBytes: 24 });
+  assert.equal(summaryLimited.truncated, false);
+  assert.deepEqual(summaryLimited.detailOmissions, ["max-summary-file-bytes"]);
+  assert.equal(summaryLimited.budget.used.summaryFilesSkippedByBudget, 1);
+
+  const hardCapped = await scanRepository(root, { maxFiles: Number.MAX_SAFE_INTEGER });
+  assert.equal(hardCapped.budget.limits.maxFiles, 800);
+});
+
+test("scanRepository bounds manifest and ignore metadata", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-indexer-metadata-budget-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }), "utf8");
+  await fs.writeFile(path.join(root, ".gitignore"), "first.tmp\nsecond.tmp\n", "utf8");
+
+  const manifestLimited = await scanRepository(root, { maxManifestFileBytes: 8 });
+  assert.equal(manifestLimited.truncated, true);
+  assert.ok(manifestLimited.truncationReasons.includes("max-manifest-file-bytes"));
+  assert.equal(manifestLimited.budget.used.manifestFilesSkippedByBudget, 1);
+  assert.deepEqual(manifestLimited.commands, []);
+
+  await assert.rejects(
+    () => scanRepository(root, { maxIgnoreRules: 1 }),
+    (error) => error.code === "GITIGNORE_RUNTIME_BUDGET_EXCEEDED"
+      && error.runtimeBudget.operation === "gitignore-rules"
+      && error.runtimeBudget.limit === 1
+      && error.runtimeBudget.observed === 2
+  );
+});
+
+test("scanRepository rejects cancellation during summary and manifest reads", async (t) => {
+  for (const scenario of ["summary", "manifest"]) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), `codeclaw-indexer-signal-${scenario}-`));
+    t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+    const target = scenario === "summary" ? path.join(root, "source.js") : path.join(root, "package.json");
+    await fs.writeFile(target, scenario === "summary"
+      ? "export const signalMarker = true;\n"
+      : JSON.stringify({ padding: "x".repeat(7000), scripts: { test: "node --test" } }), "utf8");
+    const controller = new AbortController();
+    const reason = Object.assign(new Error(`${scenario} cancelled`), { code: "OPERATION_CANCELLED", status: 409 });
+    const originalOpen = fs.open.bind(fs);
+    t.mock.method(fs, "open", async (filePath, ...args) => {
+      const handle = await originalOpen(filePath, ...args);
+      if (path.resolve(filePath) === path.resolve(target)) controller.abort(reason);
+      return handle;
+    });
+
+    await assert.rejects(() => scanRepository(root, { signal: controller.signal }), (error) => error === reason);
+    t.mock.restoreAll();
+  }
+});
+
+test("scanRepository rejects an already-cancelled operation before filesystem work", async () => {
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("scan cancelled"), { code: "OPERATION_CANCELLED", status: 409 });
+  controller.abort(reason);
+  await assert.rejects(() => scanRepository(process.cwd(), { signal: controller.signal }), (error) => error === reason);
+});

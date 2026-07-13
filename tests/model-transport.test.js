@@ -193,6 +193,104 @@ test("safe transport applies request size, credential, and absolute timeout limi
   });
 });
 
+test("safe transport cancels pending DNS resolution with a stable local error", async () => {
+  const controller = new AbortController();
+  let lookupStarted;
+  const started = new Promise((resolve) => {
+    lookupStarted = resolve;
+  });
+  let finishLookup;
+  const request = requestJsonSafely({
+    endpoint: "https://model.test/v1/chat/completions",
+    apiKey: "key",
+    bodyBuffer: BODY,
+    timeoutMs: 5_000,
+    lookup: async () => {
+      lookupStarted();
+      return new Promise((resolve) => {
+        finishLookup = resolve;
+      });
+    },
+    signal: controller.signal
+  });
+
+  await started;
+  controller.abort(new Error("caller details must not leak"));
+  await assert.rejects(request, (error) => {
+    assert.equal(error.code, "request_cancelled");
+    assert.equal(error.status, 409);
+    assert.equal(error.upstreamStatus, null);
+    assert.doesNotMatch(error.message, /caller details/i);
+    return true;
+  });
+  finishLookup([{ address: "8.8.8.8", family: 4 }]);
+});
+
+test("safe transport removes the abort listener when DNS times out", async () => {
+  let abortListener = null;
+  const signal = {
+    aborted: false,
+    reason: undefined,
+    addEventListener(_name, listener) {
+      abortListener = listener;
+    },
+    removeEventListener(_name, listener) {
+      if (abortListener === listener) abortListener = null;
+    }
+  };
+
+  await assert.rejects(requestJsonSafely({
+    endpoint: "https://model.test/v1/chat/completions",
+    apiKey: "key",
+    bodyBuffer: BODY,
+    timeoutMs: 20,
+    lookup: async () => new Promise(() => {}),
+    signal
+  }), { code: "request_timeout", status: 504 });
+  assert.equal(abortListener, null);
+});
+
+test("safe transport preserves only internal operation timeout semantics", async () => {
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("private internal detail"), { code: "OPERATION_TIMEOUT", status: 408 });
+  controller.abort(reason);
+
+  await assert.rejects(requestJsonSafely({
+    endpoint: "https://model.test/v1/chat/completions",
+    apiKey: "key",
+    bodyBuffer: BODY,
+    signal: controller.signal
+  }), (error) => {
+    assert.equal(error.code, "request_timeout");
+    assert.equal(error.status, 408);
+    assert.doesNotMatch(error.message, /private internal detail/);
+    return true;
+  });
+});
+
+test("safe transport destroys an in-flight request when cancelled", async () => {
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  await withServer((request, response) => {
+    markStarted();
+    request.resume();
+    request.once("close", () => response.destroy());
+  }, async ({ endpoint }) => {
+    const controller = new AbortController();
+    const request = requestJsonSafely({
+      endpoint,
+      apiKey: "key",
+      bodyBuffer: BODY,
+      signal: controller.signal
+    });
+    await started;
+    controller.abort();
+    await assert.rejects(request, { code: "request_cancelled", status: 409 });
+  });
+});
+
 async function callLookup(lookup, hostname, options) {
   return new Promise((resolve, reject) => {
     lookup(hostname, options, (error, address, family) => {

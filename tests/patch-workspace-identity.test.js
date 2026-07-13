@@ -10,8 +10,9 @@ import { hashContent } from "../packages/tool-registry/src/index.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../packages/shared/src/cross-process-lock.js";
 import { activateRegisteredWorkspace, createActivatedWorkspace } from "./helpers/activated-workspace.js";
 
-test("patch APIs bind Apply and Revert to the reviewed workspace directories", async () => {
+test("patch APIs bind Apply and Revert to the reviewed workspace directories", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-workspace-identity-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
   const stateDir = path.join(base, "state");
   const coordinationDir = path.join(base, "coordination");
   const copyRoot = path.join(base, "copies");
@@ -79,7 +80,10 @@ test("patch APIs bind Apply and Revert to the reviewed workspace directories", a
     }
     const replacedRootApply = await replacedRootApplyPromise;
     assert.equal(replacedRootApply.response.status, 409);
-    assert.equal(replacedRootApply.payload.code, "PATCH_WORKSPACE_CHANGED");
+    assert.ok(
+      ["PATCH_WORKSPACE_CHANGED", "WORKSPACE_COPY_IDENTITY_CHANGED"].includes(replacedRootApply.payload.code),
+      `unexpected root replacement gate: ${replacedRootApply.payload.code}`
+    );
     await assertMissing(path.join(movedReviewedRoot, "new.txt"));
     await assertMissing(path.join(reviewedRoot, "new.txt"));
 

@@ -53,7 +53,7 @@ body[data-active-view="audit"] .grid { grid-template-columns:minmax(320px,920px)
 .panel-header span,.field-label { color:var(--muted); font-size:13px; }
 .panel-purpose { margin:-6px 0 14px; color:var(--muted); font-size:12px; line-height:1.55; }
 .field-label { display:block; margin-bottom:8px; }
-.input-row { display:grid; grid-template-columns:1fr auto auto auto; gap:10px; }
+.input-row { display:grid; grid-template-columns:1fr repeat(4,auto); gap:10px; }
 input,textarea,select { width:100%; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); padding:11px 12px; outline:none; }
 textarea { resize:vertical; min-height:132px; }
 input:focus,textarea:focus,select:focus { border-color:var(--accent); background:#fff; }

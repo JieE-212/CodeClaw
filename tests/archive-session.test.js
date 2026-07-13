@@ -1,25 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createIsolatedProject } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptPath = path.join(rootPath, "scripts", "archive-session.js");
 
 test("archive-session creates a local evidence package after privacy passes", async (t) => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-archive-ok-"));
+  const isolated = await createIsolatedProject(t, rootPath, "codeclaw-archive-ok-");
+  const tempRoot = isolated.path("inputs");
   const sessionPath = path.join(tempRoot, "tester-1");
   const reportsPath = path.join(tempRoot, "reports");
-  const archivePath = path.join(rootPath, "dist", "test-archives", `archive-ok-${Date.now()}`);
+  const archivePath = path.join(isolated.projectRoot, "dist", "test-archives", "archive-ok");
   const jsonPath = path.join(tempRoot, "archive-report.json");
   const markdownPath = path.join(tempRoot, "archive-report.md");
-  t.after(() => Promise.all([
-    fs.rm(tempRoot, { recursive: true, force: true }),
-    fs.rm(archivePath, { recursive: true, force: true })
-  ]));
 
   await fs.mkdir(sessionPath, { recursive: true });
   await fs.mkdir(reportsPath, { recursive: true });
@@ -37,7 +32,7 @@ test("archive-session creates a local evidence package after privacy passes", as
     decision: "READY_FOR_NEXT_TESTER"
   }, null, 2), "utf8");
 
-  const result = await runArchive([
+  const result = await runArchive(isolated, [
     "--session", sessionPath,
     "--reports", reportsPath,
     "--tester", "tester-1",
@@ -61,16 +56,13 @@ test("archive-session creates a local evidence package after privacy passes", as
 });
 
 test("archive-session blocks privacy-hold records", async (t) => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-archive-hold-"));
+  const isolated = await createIsolatedProject(t, rootPath, "codeclaw-archive-hold-");
+  const tempRoot = isolated.path("inputs");
   const sessionPath = path.join(tempRoot, "tester-1");
   const reportsPath = path.join(tempRoot, "reports");
-  const archivePath = path.join(rootPath, "dist", "test-archives", `archive-hold-${Date.now()}`);
+  const archivePath = path.join(isolated.projectRoot, "dist", "test-archives", "archive-hold");
   const jsonPath = path.join(tempRoot, "archive-report.json");
   const markdownPath = path.join(tempRoot, "archive-report.md");
-  t.after(() => Promise.all([
-    fs.rm(tempRoot, { recursive: true, force: true }),
-    fs.rm(archivePath, { recursive: true, force: true })
-  ]));
 
   await fs.mkdir(sessionPath, { recursive: true });
   await fs.mkdir(reportsPath, { recursive: true });
@@ -80,7 +72,7 @@ test("archive-session blocks privacy-hold records", async (t) => {
     blockers: [{ rule: "openai-key" }]
   }, null, 2), "utf8");
 
-  const result = await runArchive([
+  const result = await runArchive(isolated, [
     "--session", sessionPath,
     "--reports", reportsPath,
     "--tester", "tester-1",
@@ -98,20 +90,8 @@ test("archive-session blocks privacy-hold records", async (t) => {
   assert.equal(await exists(path.join(archivePath, "ARCHIVE_MANIFEST.json")), false);
 });
 
-function runArchive(args) {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], { cwd: rootPath }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== "number") {
-        reject(error);
-        return;
-      }
-      resolve({
-        code: typeof error?.code === "number" ? error.code : 0,
-        stdout,
-        stderr
-      });
-    });
-  });
+function runArchive(isolated, args) {
+  return isolated.execNodeScript("archive-session.js", args, { label: "isolated archive-session" });
 }
 
 async function exists(targetPath) {

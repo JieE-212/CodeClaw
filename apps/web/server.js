@@ -24,6 +24,9 @@ import { captureWorkspaceIdentity, captureWorkspaceParentIdentity } from "../../
 import { isProtectedDirectory, isSensitiveFile } from "../../packages/shared/src/path-utils.js";
 import { WorkspaceCapabilityStore } from "../../packages/workspace-capability/src/index.js";
 import { atomicWriteFile } from "../../packages/shared/src/atomic-file.js";
+import { RUNTIME_BUDGETS, publicRuntimeBudgetEvidence, runtimeBudgetError } from "../../packages/shared/src/runtime-budget.js";
+import { OperationManager, throwIfAborted } from "../../packages/shared/src/operation-manager.js";
+import { runManagedOperation } from "../../packages/shared/src/operation-runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -56,8 +59,19 @@ const modelConfigPath = path.join(localStateDir, "model.json");
 const MODEL_CONTEXT_MAX_FILE_BYTES = 1024 * 1024;
 const MODEL_CONTEXT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 const MODEL_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
-const UNTRUSTED_REQUEST_REJECTION_CODES = new Set(["LOCAL_ORIGIN_REQUIRED", "JSON_CONTENT_TYPE_REQUIRED", "JSON_BODY_INVALID"]);
+const UNTRUSTED_REQUEST_REJECTION_CODES = new Set(["LOCAL_ORIGIN_REQUIRED", "JSON_CONTENT_TYPE_REQUIRED", "JSON_BODY_INVALID", "JSON_BODY_TOO_LARGE"]);
 const port = DEFAULT_PORT;
+const operationManager = new OperationManager({
+  maxActive: 6,
+  maxPerKind: 2,
+  defaultTimeoutMs: 30_000,
+  maxTimeoutMs: 120_000,
+  commitTimeoutMs: 10_000
+});
+const SHUTDOWN_RUNNING_GRACE_MS = 2500;
+const SHUTDOWN_COMMIT_MARGIN_MS = 750;
+const SHUTDOWN_CONNECTION_GRACE_MS = 1000;
+const SHUTDOWN_FORCE_EXIT_MARGIN_MS = 1500;
 let lastRepoProfile = null;
 let toolRegistry = null;
 let modelConfig = sanitizeModelConfig({ type: "mock", name: "mock", model: "mock-codeclaw" });
@@ -69,6 +83,7 @@ let patchRecoveryStatus = emptyPatchRecoveryStatus();
 let lastWorkspace = null;
 let lastWorkspaceBinding = null;
 const patchOperationQueues = new Map();
+let shutdownPromise = null;
 
 function defaultProjectCoordinationDir() {
   if (process.platform === "win32") {
@@ -90,7 +105,10 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
     assertLocalJsonRequest(request);
-    if (request.method === "GET" && url.pathname === "/api/health") return json(response, { ok: true, app: "CodeClaw", time: new Date().toISOString() });
+    if (request.method === "GET" && url.pathname === "/api/health") return json(response, { ok: true, app: "CodeClaw", accepting: shutdownPromise === null, time: new Date().toISOString() });
+    if (shutdownPromise && url.pathname.startsWith("/api/")) throw patchOperationError("SERVER_SHUTTING_DOWN", "CodeClaw is shutting down and is not accepting new operations.", 503);
+    if (request.method === "GET" && url.pathname === "/api/operations") return getOperations(response);
+    if (request.method === "POST" && url.pathname === "/api/operations/cancel") return await cancelManagedOperation(request, response);
     if (request.method === "GET" && url.pathname === "/api/system/check") return await systemCheck(response);
     if (request.method === "GET" && url.pathname === "/api/session/last") return await getLastSession(response);
     if (request.method === "GET" && url.pathname === "/api/audit/events") return await getAuditEvents(url, response);
@@ -122,14 +140,22 @@ const server = http.createServer(async (request, response) => {
     if (!UNTRUSTED_REQUEST_REJECTION_CODES.has(error.code)) {
       await recordAudit({ type: "server.error", status: "error", title: "Server error", rootPath: lastRepoProfile?.rootPath, metadata: { code: error.code || "SERVER_ERROR" } });
     }
-    return json(response, { ok: false, code: error.code || "SERVER_ERROR", error: error.message }, localErrorStatus(error));
+    const budget = publicRuntimeBudgetEvidence(error.runtimeBudget);
+    return json(response, {
+      ok: false,
+      code: error.code || "SERVER_ERROR",
+      error: error.message,
+      ...(budget ? { budget } : {})
+    }, localErrorStatus(error));
   }
 });
 
 await startServer();
+installShutdownHandlers();
 
 async function startServer() {
   await taskStore.initialize();
+  await memoryStore.initialize();
   await memoryStore.reconcileTaskSummaries(await taskStore.readAll());
   await auditLog.redactLegacyModelData();
   await loadModelConfig();
@@ -146,9 +172,87 @@ async function startServer() {
   });
   await memoryStore.reconcileTaskSummaries(await taskStore.readAll());
   await workspaceCapabilityStore.initialize();
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`CodeClaw workspace running at http://127.0.0.1:${port}`);
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      console.log(`CodeClaw workspace running at http://127.0.0.1:${port}`);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "127.0.0.1");
   });
+}
+
+function installShutdownHandlers() {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      const forceExit = setTimeout(
+        () => process.exit(1),
+        operationManager.commitTimeoutMs
+          + SHUTDOWN_COMMIT_MARGIN_MS
+          + SHUTDOWN_CONNECTION_GRACE_MS
+          + SHUTDOWN_FORCE_EXIT_MARGIN_MS
+      );
+      gracefulShutdown(signal).then(
+        ({ idle }) => {
+          clearTimeout(forceExit);
+          process.exit(idle ? 0 : 1);
+        },
+        () => {
+          clearTimeout(forceExit);
+          process.exit(1);
+        }
+      );
+    });
+  }
+}
+
+function gracefulShutdown(reason = "shutdown") {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    const closed = new Promise((resolve) => server.close(resolve));
+    const aborted = operationManager.abortAll(`CodeClaw received ${reason} and is shutting down.`);
+    const hasCommitInFlight = operationManager.list().some((operation) => operation.phase === "committing");
+    const idle = await operationManager.waitForIdle(hasCommitInFlight
+      ? operationManager.commitTimeoutMs + SHUTDOWN_COMMIT_MARGIN_MS
+      : SHUTDOWN_RUNNING_GRACE_MS);
+    modelOutboundPreviews.clear();
+    if (!idle) server.closeAllConnections?.();
+    await Promise.race([
+      closed,
+      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_CONNECTION_GRACE_MS))
+    ]);
+    return { aborted, idle };
+  })();
+  return shutdownPromise;
+}
+
+function getOperations(response) {
+  return json(response, { ok: true, operations: operationManager.list() });
+}
+
+async function cancelManagedOperation(request, response) {
+  const body = await readJson(request);
+  assertOnlyRequestFields(body, ["operationId"], "OPERATION_CANCEL_FIELDS_INVALID");
+  const operation = operationManager.list().find((item) => item.id === body.operationId);
+  if (!operation) throw patchOperationError("OPERATION_NOT_FOUND", "The local operation is no longer active.", 404);
+  if (operation.phase === "committing") {
+    throw patchOperationError("OPERATION_COMMITTING", "The operation is finishing its bounded local-state commit and can no longer be cancelled.", 409);
+  }
+  if (!operationManager.cancel(operation.id)) {
+    throw patchOperationError("OPERATION_NOT_CANCELLABLE", "The local operation is already cancelled or finishing.", 409);
+  }
+  await recordAudit({
+    type: "operation.cancel",
+    title: "Local operation cancelled",
+    metadata: { operationId: operation.id, kind: operation.kind }
+  });
+  return json(response, { ok: true, operationId: operation.id, cancelled: true });
 }
 
 async function getAuditEvents(url, response) {
@@ -445,9 +549,9 @@ function pathInputError(code, message, status) {
   return error;
 }
 
-async function scanRepositoryWithFriendlyErrors(repositoryPath) {
+async function scanRepositoryWithFriendlyErrors(repositoryPath, options = {}) {
   try {
-    return await scanRepository(repositoryPath);
+    return await scanRepository(repositoryPath, options);
   } catch (error) {
     if (error.code === "ENOENT") throw pathInputError("PATH_NOT_FOUND", `Project path changed or was not found: ${repositoryPath}`, 404);
     if (error.code === "EACCES" || error.code === "EPERM") throw pathInputError("PATH_PERMISSION_DENIED", `Permission denied while scanning project path: ${repositoryPath}`, 403);
@@ -603,7 +707,19 @@ async function previewModelOperation(request, response) {
 
 async function sendModelOperation(request, response) {
   const body = await readJson(request);
-  assertOnlyRequestFields(body, ["previewId", "approvalDigest", "approved"], "MODEL_SEND_FIELDS_INVALID");
+  assertOnlyRequestFields(body, ["previewId", "approvalDigest", "approved", "operationId"], "MODEL_SEND_FIELDS_INVALID");
+  const payload = await runManagedOperation(operationManager, {
+    id: body.operationId,
+    kind: "model-send",
+    timeoutMs: 120_000,
+    metadata: { operation: "model-send" },
+    request,
+    response
+  }, (operation) => sendModelOperationManaged(body, operation));
+  return json(response, payload);
+}
+
+async function sendModelOperationManaged(body, operation) {
   const record = modelOutboundPreviews.take(body);
   let result;
   try {
@@ -615,22 +731,24 @@ async function sendModelOperation(request, response) {
     if (binding.workspace.id !== record.workspaceId || task.rootIdentity !== record.rootIdentity) {
       throw patchOperationError("MODEL_WORKSPACE_CHANGED", "The task workspace changed after preview. No model request was sent.", 409);
     }
-    const manifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
+    const manifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace, operation.signal);
     if (manifest.manifestDigest !== record.manifestDigest || manifest.policyVersion !== record.manifestPolicyVersion) {
       throw patchOperationError("MODEL_SOURCE_CHANGED", "The workspace changed after preview. No model request was sent.", 409);
     }
 
     assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_BEFORE_SEND");
-    result = await modelProvider.executePrepared(record.prepared);
+    result = await modelProvider.executePrepared(record.prepared, { signal: operation.signal });
+    throwIfAborted(operation.signal);
     assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_AFTER_SEND");
 
+    operation.beginCommit();
     const committed = await serializeModelState(async () => {
       assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_AFTER_SEND");
       const commitTask = await taskStore.get(record.taskId);
-      await assertModelCommitStillCurrent(record, commitTask);
+      await assertModelCommitStillCurrent(record, commitTask, operation.signal);
       const responseSummary = summarizeModelResponse(result);
       const modelEvent = modelEventForResult(record, result, responseSummary, "ok");
-      const beforeCommit = ({ currentTask }) => assertModelCommitStillCurrent(record, currentTask);
+      const beforeCommit = ({ currentTask }) => assertModelCommitStillCurrent(record, currentTask, operation.signal);
       let updatedTask;
       let publicResult = result;
       if (record.operation === "patch-proposal") {
@@ -649,7 +767,10 @@ async function sendModelOperation(request, response) {
       }
       return { task: commitTask, updatedTask, publicResult, responseSummary };
     });
-    await recordAudit({
+    if (!operation.confirmCommit()) {
+      throw patchOperationError("OPERATION_COMMIT_STATE_INVALID", "The model result was saved, but its operation commit state could not be confirmed.", 500);
+    }
+    const auditRecorded = await recordAudit({
       type: "model.send",
       title: "Model request completed",
       rootPath: committed.task.rootPath,
@@ -666,8 +787,14 @@ async function sendModelOperation(request, response) {
         channel: record.target.channel,
         willLeaveDevice: record.target.willLeaveDevice
       }
-    });
-    return json(response, { ok: true, operation: record.operation, result: committed.publicResult, task: committed.updatedTask });
+    }, { timeoutMs: 500 });
+    return {
+      ok: true,
+      operation: record.operation,
+      result: committed.publicResult,
+      task: committed.updatedTask,
+      persistence: { taskRecorded: true, auditRecorded }
+    };
   } catch (error) {
     await bestEffortRecordFailedModelEvent(record, result);
     await recordAudit({
@@ -702,9 +829,10 @@ async function cancelModelOperation(request, response) {
   return json(response, { ok: true, ...result });
 }
 
-async function buildModelBoundaryManifest(rootPath, workspace) {
+async function buildModelBoundaryManifest(rootPath, workspace, signal = null) {
   return buildDataBoundaryManifest(rootPath, {
-    allowDisposableMarker: workspace?.kind === "disposable-copy"
+    allowDisposableMarker: workspace?.kind === "disposable-copy",
+    signal
   });
 }
 
@@ -887,14 +1015,14 @@ function assertModelConfigGeneration(record, code) {
   }
 }
 
-async function assertModelCommitStillCurrent(record, task) {
+async function assertModelCommitStillCurrent(record, task, signal = null) {
   assertModelConfigGeneration(record, "MODEL_CONFIG_CHANGED_BEFORE_COMMIT");
   assertTaskRevision(task, record.taskRevision, "MODEL_TASK_CHANGED_AFTER_SEND");
   const binding = await assertTaskWorkspaceCurrent(task, `commit model result ${record.operation}`);
   if (binding.workspace.id !== record.workspaceId || task.rootIdentity !== record.rootIdentity) {
     throw patchOperationError("MODEL_WORKSPACE_CHANGED_AFTER_SEND", "The task workspace changed while the model request was running. The response was not attached to the task.", 409);
   }
-  const manifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace);
+  const manifest = await buildModelBoundaryManifest(task.rootPath, binding.workspace, signal);
   if (manifest.manifestDigest !== record.manifestDigest || manifest.policyVersion !== record.manifestPolicyVersion) {
     throw patchOperationError("MODEL_SOURCE_CHANGED_AFTER_SEND", "The workspace changed while the model request was running. The response was not attached to the task.", 409);
   }
@@ -952,6 +1080,18 @@ function assertOnlyRequestFields(body, allowedFields, code) {
 
 async function runPreflight(request, response) {
   const body = await readJson(request);
+  assertOnlyRequestFields(body, ["path", "rootPath", "goal", "limit", "operationId"], "PREFLIGHT_FIELDS_INVALID");
+  const payload = await runManagedOperation(operationManager, {
+    id: body.operationId,
+    kind: "preflight",
+    timeoutMs: 60_000,
+    request,
+    response
+  }, (operation) => runPreflightOperation(body, operation));
+  return json(response, payload);
+}
+
+async function runPreflightOperation(body, operation) {
   const targetPath = Object.hasOwn(body, "path")
     ? body.path
     : Object.hasOwn(body, "rootPath")
@@ -960,59 +1100,40 @@ async function runPreflight(request, response) {
   const goal = String(body.goal || "understand the project and identify safe first context files").trim();
   const repositoryPath = await assertRepositoryDirectory(targetPath, "preflight");
 
-  const repoProfile = await scanRepositoryWithFriendlyErrors(repositoryPath);
-  const workspace = await workspaceCapabilityStore.register(repoProfile.rootPath);
-  lastRepoProfile = repoProfile;
-  await bindLastWorkspace(workspace, repoProfile.rootPath, repoProfile.commands);
-  const memory = await memoryStore.upsertProfile(repoProfile);
-  const task = await taskStore.create({ goal, rootPath: repoProfile.rootPath, workspaceId: workspace.id });
-  await assertTaskWorkspaceCurrent(task, "run preflight tools");
+  const repoProfile = await scanRepositoryWithFriendlyErrors(repositoryPath, { signal: operation.signal });
+  throwIfAborted(operation.signal);
   const plan = createTaskPlan(goal, repoProfile);
-  const plannedTask = await taskStore.setPlan(task.id, plan);
-  const selected = selectContextFiles({ goal, repoProfile, task: plannedTask, limit: Number.isInteger(body.limit) ? body.limit : 5 });
-  let updatedTask = plannedTask;
+  const contextLimit = clampPreflightContextLimit(body.limit);
+  const selected = selectContextFiles({ goal, repoProfile, task: null, limit: contextLimit });
   const readFiles = [];
-  const registry = getToolRegistry(repoProfile.rootPath, task.rootIdentity);
+  const readResults = [];
+  const rootIdentity = (await captureWorkspaceIdentity(repoProfile.rootPath)).digest;
+  const registry = getToolRegistry(repoProfile.rootPath, rootIdentity);
 
   for (const file of selected) {
-    const read = await registry.call("read_file", { path: file.path });
-    await assertTaskWorkspaceCurrent(await taskStore.get(task.id), "complete a preflight read");
-    await recordAudit({
-      type: "preflight.read",
-      status: read.ok ? "ok" : "error",
-      title: "Preflight read",
-      detail: file.path,
-      rootPath: repoProfile.rootPath,
-      metadata: { taskId: task.id, path: file.path }
+    throwIfAborted(operation.signal);
+    const read = await registry.call("read_file", { path: file.path }, { signal: operation.signal });
+    throwIfAborted(operation.signal);
+    readResults.push({ file, read });
+    readFiles.push({
+      path: file.path,
+      ok: Boolean(read.ok),
+      size: typeof read.result === "string" ? Buffer.byteLength(read.result, "utf8") : 0,
+      budget: read.budget || null,
+      truncated: read.truncated === true
     });
-    if (read.ok && typeof read.result === "string") {
-      updatedTask = await taskStore.appendToolCall(task.id, {
-        tool: "read_file",
-        args: { path: file.path },
-        blocked: false,
-        approved: false,
-        permission: read.permission,
-        summary: summarizeToolResult(read)
-      });
-      updatedTask = await taskStore.appendContextFile(task.id, {
-        ...contextFileMetadata(file.path, read.result, "preflight")
-      });
-    }
-    readFiles.push({ path: file.path, ok: Boolean(read.ok), size: typeof read.result === "string" ? Buffer.byteLength(read.result, "utf8") : 0 });
   }
 
   const searchQuery = pickSearchQuery(goal, selected, repoProfile);
-  const search = await registry.call("search_code", { query: searchQuery });
-  await assertTaskWorkspaceCurrent(await taskStore.get(task.id), "complete a preflight search");
-  updatedTask = await taskStore.appendToolCall(task.id, {
-    tool: "search_code",
-    args: { query: searchQuery },
-    blocked: false,
-    approved: false,
-    permission: search.permission,
-    summary: summarizeToolResult(search)
-  });
+  throwIfAborted(operation.signal);
+  const search = await registry.call("search_code", { query: searchQuery }, { signal: operation.signal });
+  throwIfAborted(operation.signal);
   const searchHits = search.result || [];
+  const nextGate = decidePreflightGate({ goal, scan: repoProfile, selected, searchHits });
+  if (repoProfile.truncated) {
+    const reasons = repoProfile.truncationReasons?.length ? ` (${repoProfile.truncationReasons.join(", ")})` : "";
+    nextGate.warnings.push(`Repository scan returned partial context because runtime limits were reached${reasons}. Review the scan budget before preparing a patch.`);
+  }
   const report = {
     ok: true,
     mode: "read-only-preflight",
@@ -1021,7 +1142,11 @@ async function runPreflight(request, response) {
       rootPath: repoProfile.rootPath,
       files: repoProfile.fileCount,
       skipped: repoProfile.skippedCount,
-      languages: repoProfile.languages
+      languages: repoProfile.languages,
+      budget: repoProfile.budget,
+      truncated: repoProfile.truncated === true,
+      truncationReasons: repoProfile.truncationReasons || [],
+      detailOmissions: repoProfile.detailOmissions || []
     },
     commands: repoProfile.commands.map((item) => ({ name: item.name, command: item.command })),
     goal,
@@ -1035,21 +1160,93 @@ async function runPreflight(request, response) {
     readFiles,
     search: {
       query: searchQuery,
-      hits: searchHits.slice(0, 8).map((item) => item.path)
+      hits: searchHits.slice(0, 8).map((item) => item.path),
+      budget: search.budget || null,
+      truncated: search.truncated === true
     },
     writeAttempted: false,
     contextCoverage: summarizeContextCoverage(selected),
-    nextGate: decidePreflightGate({ goal, scan: repoProfile, selected, searchHits })
+    nextGate
   };
 
-  await recordAudit({
+  const initialToolCalls = [];
+  const initialContextFiles = [];
+  for (const { file, read } of readResults) {
+    initialToolCalls.push({
+      tool: "read_file",
+      args: { path: file.path },
+      blocked: false,
+      approved: false,
+      permission: read.permission,
+      summary: summarizeToolResult(read)
+    });
+    if (read.ok && typeof read.result === "string") {
+      initialContextFiles.push(contextFileMetadata(file.path, read.result, "preflight"));
+    }
+  }
+  initialToolCalls.push({
+    tool: "search_code",
+    args: { query: searchQuery },
+    blocked: false,
+    approved: false,
+    permission: search.permission,
+    summary: summarizeToolResult(search)
+  });
+
+  operation.beginCommit();
+  const workspace = await workspaceCapabilityStore.register(repoProfile.rootPath);
+  throwIfAborted(operation.signal);
+  await bindLastWorkspace(workspace, repoProfile.rootPath, repoProfile.commands);
+  throwIfAborted(operation.signal);
+  let memory = null;
+  let memoryRecorded = true;
+  try {
+    memory = await memoryStore.upsertProfile(repoProfile);
+  } catch (error) {
+    throwIfAborted(operation.signal);
+    memoryRecorded = false;
+  }
+  throwIfAborted(operation.signal);
+  const task = await taskStore.create({
+    goal,
+    rootPath: repoProfile.rootPath,
+    workspaceId: workspace.id,
+    plan,
+    toolCalls: initialToolCalls,
+    contextFiles: initialContextFiles,
+    status: "running",
+    requireRootIdentity: true
+  });
+  if (!operation.confirmCommit()) {
+    throw patchOperationError("OPERATION_COMMIT_STATE_INVALID", "The preflight task was saved, but its operation commit state could not be confirmed.", 500);
+  }
+  lastRepoProfile = repoProfile;
+  let auditRecorded = true;
+  for (const { file, read } of readResults) {
+    auditRecorded = (await recordAudit({
+      type: "preflight.read",
+      status: read.ok ? "ok" : "error",
+      title: "Preflight read",
+      detail: file.path,
+      rootPath: repoProfile.rootPath,
+      metadata: { taskId: task.id, path: file.path, budget: read.budget || null }
+    }, { timeoutMs: 250 })) && auditRecorded;
+  }
+  auditRecorded = (await recordAudit({
     type: "preflight.run",
     title: "Read-only preflight",
     detail: `${repoProfile.name}: ${report.contextFiles.length} context file(s), ${report.nextGate.warnings.length} warning(s)`,
     rootPath: repoProfile.rootPath,
     metadata: { taskId: task.id, contextCoverage: report.contextCoverage, warnings: report.nextGate.warnings }
-  });
-  return json(response, { ok: true, report, profile: repoProfile, task: updatedTask, memory, workspace });
+  }, { timeoutMs: 250 })) && auditRecorded;
+  report.persistence = {
+    taskRecorded: true,
+    memoryRecorded,
+    auditRecorded
+  };
+  if (!memoryRecorded) report.nextGate.warnings.push("Project memory could not be refreshed, but the preflight task and its evidence were saved atomically.");
+  if (!auditRecorded) report.nextGate.warnings.push("One or more supplemental audit entries could not be written, but the preflight task and its evidence were saved atomically.");
+  return { ok: true, report, profile: repoProfile, task, memory, workspace };
 }
 
 async function createTask(request, response) {
@@ -1650,25 +1847,49 @@ async function canonicalizeTaskRoot(task, action) {
 
 async function scanRepo(request, response) {
   const body = await readJson(request);
+  assertOnlyRequestFields(body, ["path", "operationId"], "REPO_SCAN_FIELDS_INVALID");
   const repositoryPath = await assertRepositoryDirectory(body.path, "scan");
-  const profile = await scanRepositoryWithFriendlyErrors(repositoryPath);
-  const workspace = await workspaceCapabilityStore.register(profile.rootPath);
-  await bindLastWorkspace(workspace, profile.rootPath, profile.commands);
-  lastRepoProfile = profile;
-  const memory = await memoryStore.upsertProfile(profile);
-  await recordAudit({
-    type: "repo.scan",
-    title: "Repository scanned",
-    detail: `${profile.fileCount} files, ${profile.skippedCount} skipped`,
-    rootPath: profile.rootPath,
-    metadata: { languages: profile.languages, commands: profile.commands }
+  const payload = await runManagedOperation(operationManager, {
+    id: body.operationId,
+    kind: "scan",
+    timeoutMs: 30_000,
+    request,
+    response
+  }, async (operation) => {
+    const profile = await scanRepositoryWithFriendlyErrors(repositoryPath, { signal: operation.signal });
+    throwIfAborted(operation.signal);
+    operation.beginCommit();
+    const workspace = await workspaceCapabilityStore.register(profile.rootPath);
+    throwIfAborted(operation.signal);
+    await bindLastWorkspace(workspace, profile.rootPath, profile.commands);
+    throwIfAborted(operation.signal);
+    lastRepoProfile = profile;
+    const memory = await memoryStore.upsertProfile(profile);
+    if (!operation.confirmCommit()) {
+      throw patchOperationError("OPERATION_COMMIT_STATE_INVALID", "The repository scan state was saved, but its operation commit state could not be confirmed.", 500);
+    }
+    await recordAudit({
+      type: "repo.scan",
+      title: "Repository scanned",
+      detail: `${profile.fileCount} files, ${profile.skippedCount} skipped`,
+      rootPath: profile.rootPath,
+      metadata: { languages: profile.languages, commands: profile.commands, budget: profile.budget }
+    }, { timeoutMs: 500 });
+    return { ok: true, profile, memory, workspace };
   });
-  return json(response, { ok: true, profile, memory, workspace });
+  return json(response, payload);
 }
 
 async function createPlan(request, response) {
   const body = await readJson(request);
-  const repoProfile = body.repoProfile || lastRepoProfile || {};
+  assertOnlyRequestFields(body, ["goal", "taskId"], "AGENT_PLAN_FIELDS_INVALID");
+  const existingTask = body.taskId ? await taskStore.get(body.taskId) : null;
+  if (existingTask?.rootPath) await assertTaskWorkspaceCurrent(existingTask, "create a plan");
+  const repoProfile = existingTask?.rootPath
+    ? lastRepoProfile && canonicalRootPath(lastRepoProfile.rootPath) === canonicalRootPath(existingTask.rootPath)
+      ? lastRepoProfile
+      : await scanRepositoryWithFriendlyErrors(existingTask.rootPath)
+    : lastRepoProfile || {};
   const plan = createTaskPlan(body.goal, repoProfile);
   const permissions = plan.steps.flatMap((step) => step.tools.map((tool) => classifyToolCall(tool)));
   let task = null;
@@ -1677,7 +1898,7 @@ async function createPlan(request, response) {
     type: "agent.plan",
     title: "Plan generated",
     detail: `${plan.title}: ${plan.steps.length} step(s)`,
-    rootPath: repoProfile.rootPath || lastRepoProfile?.rootPath,
+    rootPath: existingTask?.rootPath || repoProfile.rootPath || lastRepoProfile?.rootPath,
     metadata: { taskId: body.taskId || null, goal: body.goal, intent: plan.intent, confidence: plan.confidence }
   });
   return json(response, { ok: true, plan, permissions, task });
@@ -1685,6 +1906,25 @@ async function createPlan(request, response) {
 
 async function callTool(request, response) {
   const body = await readJson(request);
+  const kind = body.tool === "run_command" && body.approved === true ? "verify" : "tool";
+  const payload = await runManagedOperation(operationManager, {
+    id: body.operationId,
+    kind,
+    timeoutMs: kind === "verify" ? 120_000 : 30_000,
+    metadata: { tool: String(body.tool || "unknown").slice(0, 80) },
+    request,
+    response
+  }, (operation) => callToolManaged(body, operation));
+  return json(response, payload);
+}
+
+async function callToolManaged(body, operation) {
+  let commitStarted = false;
+  const beginOperationCommit = () => {
+    if (commitStarted) return;
+    operation.beginCommit();
+    commitStarted = true;
+  };
   if (body.tool === "write_patch") {
     throw patchOperationError("PATCH_TRANSACTION_REQUIRED", "Direct file writes are disabled. Generate a patch proposal, review it, and use the transaction-protected Apply action.", 409);
   }
@@ -1725,7 +1965,8 @@ async function callTool(request, response) {
         }
         await assertActivePatchesCurrent(currentTask, "TASK_VERIFY_PATCH_CHANGED", "An applied file changed before verification. Review or revert that change before running the command.");
         const expectedPatchSetDigest = activePatchSetDigest(currentTask);
-        const commandResult = await registry.call(body.tool, body.args || {}, { approved: true });
+        const commandResult = await registry.call(body.tool, body.args || {}, { approved: true, signal: operation.signal });
+        throwIfAborted(operation.signal);
         if (!commandResult.blocked) {
           currentTask = await taskStore.get(task.id);
           await assertTaskWorkspaceCurrent(currentTask, `complete ${body.tool}`);
@@ -1734,6 +1975,7 @@ async function callTool(request, response) {
           }
           await assertActivePatchesCurrent(currentTask, "TASK_VERIFY_PATCH_CHANGED", "An applied file changed while verification was running. The result was not saved; verify the current files again.");
         }
+        beginOperationCommit();
         currentTask = await taskStore.appendToolCall(body.taskId, {
           tool: body.tool,
           args: summarizeArgs(body.args || {}),
@@ -1757,14 +1999,15 @@ async function callTool(request, response) {
       result = await serializePatchOperation(rootPath, async () => {
         if (task) await assertTaskCanMutate(await taskStore.get(task.id), "run project commands");
         else await workspaceCapabilityStore.assertCanMutate(rootPath, "run project commands");
-        return registry.call(body.tool, body.args || {}, { approved: body.approved === true });
+        return registry.call(body.tool, body.args || {}, { approved: body.approved === true, signal: operation.signal });
       });
     } else {
-      result = await registry.call(body.tool, body.args || {}, { approved: false });
+      result = await registry.call(body.tool, body.args || {}, { approved: false, signal: operation.signal });
     }
   } else {
-    result = await registry.call(body.tool, body.args || {}, { approved: body.approved === true });
+    result = await registry.call(body.tool, body.args || {}, { approved: body.approved === true, signal: operation.signal });
   }
+  throwIfAborted(operation.signal);
 
   if (!taskRecordedDuringExecution && !result.blocked) {
     if (task) await assertTaskWorkspaceCurrent(await taskStore.get(task.id), `complete ${body.tool}`);
@@ -1772,6 +2015,7 @@ async function callTool(request, response) {
   }
 
   if (task && !taskRecordedDuringExecution) {
+    beginOperationCommit();
     task = await taskStore.appendToolCall(body.taskId, {
       tool: body.tool,
       args: summarizeArgs(body.args || {}),
@@ -1790,6 +2034,10 @@ async function callTool(request, response) {
     }
   }
 
+  beginOperationCommit();
+  if (!operation.confirmCommit()) {
+    throw patchOperationError("OPERATION_COMMIT_STATE_INVALID", "The tool result was saved, but its operation commit state could not be confirmed.", 500);
+  }
   await recordAudit({
     type: "tool.call",
     status: result.blocked ? "blocked" : result.ok ? "ok" : "error",
@@ -1803,8 +2051,8 @@ async function callTool(request, response) {
       approved: body.approved === true,
       permission: result.permission
     }
-  });
-  return json(response, { ...result, task });
+  }, { timeoutMs: 500 });
+  return { ...result, task };
 }
 
 function assertPublicReadPath(filePath) {
@@ -2038,13 +2286,43 @@ function contentType(filePath) {
 }
 
 async function readJson(request) {
+  const limit = RUNTIME_BUDGETS.jsonRequest.maxBytes;
+  const declaredLength = declaredContentLength(request.headers["content-length"]);
+  if (declaredLength !== null && declaredLength > limit) {
+    throw jsonBodyTooLargeError(limit, declaredLength);
+  }
+
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let observed = 0;
+  for await (const chunk of request) {
+    observed += chunk.byteLength;
+    if (observed > limit) throw jsonBodyTooLargeError(limit, observed);
+    chunks.push(chunk);
+  }
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
   } catch {
     throw patchOperationError("JSON_BODY_INVALID", "CodeClaw rejected a malformed JSON request body.", 400);
   }
+}
+
+function declaredContentLength(value) {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const parsed = BigInt(value);
+  return parsed > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(parsed);
+}
+
+function jsonBodyTooLargeError(limit, observed) {
+  return runtimeBudgetError(
+    "JSON_BODY_TOO_LARGE",
+    `CodeClaw rejected a JSON request body larger than the ${limit}-byte limit.`,
+    { operation: "json-request-body", limit, observed }
+  );
+}
+
+function clampPreflightContextLimit(value) {
+  if (!Number.isSafeInteger(value)) return Math.min(5, RUNTIME_BUDGETS.preflight.maxContextFiles);
+  return Math.min(RUNTIME_BUDGETS.preflight.maxContextFiles, Math.max(1, value));
 }
 
 function localErrorStatus(error) {
@@ -2128,10 +2406,13 @@ function persistedModelConfigIsCanonical(parsed, config) {
     && expectedKeys.every((key) => parsed[key] === expected[key]);
 }
 
-async function recordAudit(event) {
+async function recordAudit(event, options = {}) {
   try {
-    await auditLog.record(event);
-  } catch {}
+    await auditLog.record(event, options);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function summarizeArgs(args) {

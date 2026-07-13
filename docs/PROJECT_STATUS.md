@@ -639,12 +639,12 @@ The remediation mapping, candidate-binding checks, and engineering safeguards ar
 
 ## Next Planned Phase
 
-Stage 3.0.13 is machine verified and committed. Stage 3.0.14 is next. Real-person testing remains intentionally postponed.
+Stage 3.0.14 is machine verified and independently committed. Real-person testing remains intentionally postponed.
 
 The engineering order is:
 
-1. Stage 3.0.14 stability, performance budgets, cancellation, and fully isolated test fixtures.
-2. Stage 4B candidate-aware Windows launcher and hashed candidate package.
+1. Implement the Stage 4B candidate-aware Windows launcher and hashed candidate package.
+2. Run the Stage 4B machine-only integrity, startup, stop, port-routing, and orphan-process gates.
 
 Local tester records, `dist`, screenshots, logs, private project details, and evidence packets remain forbidden from Git. Temporary test code and fixture copies must be deleted after verification; do not retain tombstone code.
 
@@ -696,11 +696,11 @@ Machine evidence: `npm.cmd test` reported 246 total, 245 pass, 0 fail, and 1 env
 
 Honest limits: Node path operations retain a very small documented TOCTOU interval; real power loss, unusual filesystems, ACL/antivirus interference, and real-person copy use remain unverified. If a `.gitignore` ignores itself, it is excluded with its ignored payload and the original ignore-rule snapshot is not preserved for future paths created inside the copy. The bundled browser automation helper is unavailable, so no pixel, keyboard, NVDA, high-contrast, or clean-Windows acceptance is claimed.
 
-Next: proceed to Stage 3.0.14. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
+Historical handoff completed; the current engineering phase is Stage 4B. See [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md).
 
 ## Stage 3.0.12 - Exact model outbound review and minimized local state
 
-Stage 3.0.12 is machine verified. Its implementation, focused regressions, single-concurrency full suite, check/i18n, automation runs, state migration, and cleanup gates passed; only the final Git audit and independent commit remain.
+Stage 3.0.12 is machine verified and committed. Its implementation, focused regressions, single-concurrency full suite, check/i18n, automation runs, state migration, and cleanup gates passed.
 
 Implemented:
 
@@ -757,3 +757,26 @@ Machine evidence:
 - The real-repository preflight reported zero writes. Simulation restored Demo, kept the real repository read-only, and blocked unconfirmed Apply/Verify. Its two generated `dist` reports were deleted after recording the minimal result.
 
 Honest limits: the missing bundled browser helper prevents automated pixel, complete keyboard, NVDA, and Windows high-contrast claims. Responsive and accessibility source contracts do not substitute for host or real-person acceptance. No new human test was run, host-1 acceptance is still pending, `REMEDIATION_HOLD` remains truthful, tester-2 remains `AFTER_LIVE_BLOCKED`, and tester-3 remains `not scheduled`.
+
+## Stage 3.0.14 - Stability, runtime budgets, cancellation, and resource isolation
+
+Stage 3.0.14 is machine verified and committed. Real-person testing remains paused.
+
+Implemented:
+
+- Moved repository-writing fixtures into owned temporary project copies and centralized temporary-resource registration and idempotent cleanup. A source contract now rejects repo-local `dist`/`.codeclaw` writes, fixed ports, unclosed servers, and unmanaged temporary directories in tests.
+- Added explicit JSON-body, repository traversal, file/depth/summary/Manifest/rule-evaluation, context, tool read/search/output, long-line, and serialized-result budgets. APIs and UI preserve useful partial results where safe while exposing `partial`, `truncated`, and bounded reason lists; Data Boundary manifests instead fail closed and reject stat-known oversized files before hashing I/O.
+- Added stable-directory parent-chain identity checks before sensitive traversal. Persistent replacement is rejected as `TRAVERSAL_PATH_CHANGED` rather than silently continuing through a changed path.
+- Added global and per-kind operation concurrency, deadlines, cancellation, a one-way `running -> committing -> committed` boundary, a separate commit deadline, and bounded idle waiting. Scan, preflight, model Send, tool calls, and Verify use managed operations; preflight writes its complete task evidence in one revision and explicitly confirms the authoritative atomic write so a deadline race cannot misreport saved state as a 504.
+- Added explicit Scan, Preflight, model Send, and Verify cancel controls with active/cancelling/cancelled states. Client disconnects cancel running work; late user cancellation cannot interrupt an already-started commit, and the UI explains that boundary.
+- Added bounded SIGINT/SIGTERM shutdown: stop accepting APIs, abort running operations, allow 2.5 seconds for cancelled running work or the separate 10-second deadline plus a 750 ms margin for an in-flight commit, then close previews/connections. A 13.25-second force-exit ceiling remains.
+- Added POSIX process-group termination and a parameterized Windows `taskkill.exe /PID <pid> /T /F` path with a deadline. Tool execution fails closed when descendant-tree termination cannot be verified; timeout/abort overlap preserves the authoritative abort reason.
+- Added capped TaskStore, MemoryStore, and AuditLog growth with startup migration, dropped-history counters, audit locking and digest-linked two-generation rotation. Active patch and recovery evidence are not evicted merely to satisfy a cap.
+
+Machine evidence:
+
+- The default `npm.cmd test` command is bounded to concurrency 4. The final bounded full run reported 398 total, 394 pass, 0 fail, and 4 environment-only skips. The single-concurrency full baseline reported 397/393/0/4; the sole subsequently added file-growth budget regression also passed separately at concurrency 1.
+- `npm.cmd run check` passed. i18n reported 723 keys per language, 0 warnings, and 0 failures.
+- Focused operation, process cleanup, stable-directory, state-growth, server security/model-outbound, UI/accessibility/workflow, health, and diff checks passed. Explicit in-flight model cancellation and bounded SIGTERM integration checks also passed without saving a successful model result.
+
+Honest limits: the current sandbox could not execute the real Windows `taskkill /T` descendant-tree path, so Windows child-tree termination is an environment skip rather than an acceptance claim. A parent wrapper that has already exited can require Windows Job Object ownership for reliable descendant cleanup. Node does not expose `openat`-style directory-handle-relative traversal, so identity revalidation narrows but cannot erase every external path-replacement interval. Real power loss, large-project subjective latency, pixel-level rendering, complete keyboard use, NVDA, high contrast, clean Windows 10/11, non-administrator launch, Defender/SmartScreen, and real double-click behavior remain unverified. No new human test ran; `REMEDIATION_HOLD`, tester-2's historical `AFTER_LIVE_BLOCKED`, tester-3's `not scheduled` state, and the original-project write prohibition remain unchanged.

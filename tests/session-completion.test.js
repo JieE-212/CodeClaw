@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "session-completion-check.js");
 
-test("complete-session passes filled anonymous session records", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-complete-ok-"));
+test("complete-session passes filled anonymous session records", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-complete-ok-");
   const sessionPath = path.join(tempRoot, "tester-1");
   const jsonPath = path.join(tempRoot, "completion.json");
   const markdownPath = path.join(tempRoot, "completion.md");
@@ -27,8 +27,8 @@ test("complete-session passes filled anonymous session records", async () => {
   assert.match(checklist, /No completion blockers found/);
 });
 
-test("complete-session blocks empty placeholders and personal contact data", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-complete-hold-"));
+test("complete-session blocks empty placeholders and personal contact data", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-complete-hold-");
   const sessionPath = path.join(tempRoot, "tester-1");
   const jsonPath = path.join(tempRoot, "completion.json");
   const markdownPath = path.join(tempRoot, "completion.md");

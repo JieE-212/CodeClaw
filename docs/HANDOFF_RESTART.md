@@ -7,7 +7,7 @@
 ## 重启后的第一条指令
 
 ```text
-请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.13 新手工作流、无障碍语义和顺序状态门禁已完成机器验证和独立提交；现在进入 3.0.14，再推进 4B，不要 push。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码。
+请完整读取 docs/HANDOFF_RESTART.md 和 docs/NEXT_PHASE_PLAN.md，然后继续 CodeClaw 的暂停真人测试工程循环。Stage 3.0.14 稳定性、运行时预算、取消/关停、状态上限和 fixture 隔离已完成机器验证、最终 Git 审计和独立提交；从 Stage 4B 继续推进，不要 push。tester-2 的真实结果是 AFTER_LIVE_BLOCKED，必须保持不变；不要重跑 after-live、不要修改真人答案、不要创建 tester-3。不要提交 dist、.codeclaw、真人记录、截图、日志或证据包，不要保留临时/墓碑代码。
 ```
 
 ## 当前结论
@@ -26,7 +26,7 @@ c402b45 Prioritize remediation in trial status
 ```
 
 - 最新阶段提交以 `git log -1 --oneline` 为准。后续提交仍由用户决定何时运行 `git pushall`；Codex 不直接 push。
-- 下一轮真人测试明确暂缓。`Stage 3.0.13` 已完成机器验证和独立提交；`Stage 3.0.14` 是下一阶段。详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
+- 下一轮真人测试明确暂缓。`Stage 3.0.14` 已完成机器验证、最终 Git 审计和独立提交；当前直接进入 `Stage 4B`。详见 [`NEXT_PHASE_PLAN.md`](NEXT_PHASE_PLAN.md)。
 - `Stage 3.0.9` 的工程映射完成不代表复测准入通过：host-1 七项人工验收仍缺失，真实状态保持 `REMEDIATION_HOLD`；tester-3 仍为 `not scheduled`。
 - Stage 3.0.10 的最终机器证据为 `npm.cmd test` 187/187、`npm.cmd run check` 通过，以及 health、smoke、四个 pilot 全部通过。它实现了三阶段全局 claim、写前 journal、root/parent/临时文件实体身份绑定和跨 state-dir 恢复阻断，但没有宣称真实断电、自定义 ACL、杀毒软件/网络盘或真人原项目写入已验收。
 - Stage 3.0.11 的最终机器证据为 `npm.cmd test` 245 pass、0 fail、1 个环境性 symlink skip（246 total），`npm.cmd run check` 通过且三语各 665 键，以及 health、smoke、四个 pilot 全部通过。它实现了完整 Data Boundary Manifest、三类服务端工作区能力、显式副本创建/激活/清理、崩溃恢复和 exact-target 复验；原项目仍不可写或运行项目命令。副本不等于匿名化或适合分享，自身被忽略的 `.gitignore` 也不宣称规则快照已被保留。
@@ -55,15 +55,25 @@ Stage 3.0.12 已由独立提交 `267287a Add exact model outbound review` 收口
 
 诚实边界：未重跑真实云模型；在线模型仍会收到审核过的数据，本机模型仍通过 loopback HTTP 收到字节；Provider 后续保留不可由 CodeClaw 控制，缓冲覆写也只是 best effort。Manifest 复验与随后 TaskStore rename 不是文件系统原子快照，极端外部并发编辑可留下过时草案；Apply baseline hash 会阻断它覆盖已变化文件，但不得宣称所有外部 TOCTOU 已完全关闭。真人、像素、键盘/NVDA、高对比度、干净 Windows、真实断电和异常文件系统验收均未完成。
 
-## Stage 3.0.13 当前交接状态
+## Stage 3.0.13 已提交基线
 
 已实现唯一八步工作流、默认新手/呈现型高级模式、模块用途和五类影响边界、sticky/响应式/焦点/高对比度静态契约、Demo 只读预检回执，以及 Unicode-safe 三语词典。Apply -> Verify -> Complete 已由服务端 recovery、patch-set/content、项目锁和 revision CAS 共同约束；completed 任务只允许查看或 Revert。所有 stateful UI 响应绑定 generation、路径、workspace、task 和 revision；MemoryStore 使用跨实例锁、原子写和启动前后对账。
 
 最终机器证据：独立红队无剩余 P0/High/Medium；聚焦回归 58/58；单并发全量 344 total、343 pass、0 fail、1 个环境性 symlink skip；check/i18n 通过，三语各 710 key；health、smoke、四个 pilot、明确路径的真实仓库只读预检和模拟均通过。只读 self pilot 不再伪造 Complete；真实仓库写入为 0；模拟生成的两份 `dist` 报告已删除。
 
-Stage 3.0.13 已经最终 diff/Git/禁入项/临时产物审计并由独立提交收口，没有 push。下一步立即进入 Stage 3.0.14；不得运行 tester-2 after-live，不得创建 tester-3。
+Stage 3.0.13 已经最终 diff/Git/禁入项/临时产物审计并由独立提交收口，没有 push；随后完成的 Stage 3.0.14 状态见下一节。不得运行 tester-2 after-live，不得创建 tester-3。
 
 诚实边界：浏览器插件缺少必需 helper，因此像素、完整键盘、NVDA 和 Windows 高对比度仍是人工待验项；没有运行新真人测试，`REMEDIATION_HOLD`、tester-2 的 `AFTER_LIVE_BLOCKED` 和 tester-3 `not scheduled` 均保持不变。
+
+## Stage 3.0.14 当前交接状态
+
+已实现测试 fixture 全隔离，JSON/扫描/Manifest/上下文/工具输出预算，结构化 partial/truncated 回执，目录父链身份复验，统一 operation 并发/取消/deadline/commit 边界，Scan/Preflight/模型 Send/Verify 四类 UI 取消，以及 SIGINT/SIGTERM 有界关停。TaskStore、MemoryStore 和 AuditLog 已增加增长上限、迁移和有界轮转；活动补丁与恢复证据不因普通历史裁剪而丢失。进程终止在 POSIX 使用独立进程组，在 Windows 走参数化 `taskkill /PID /T /F` 并在无法验证后代清理时 fail closed。
+
+机器证据：默认完整测试限制为并发 4；最终有界全量为 398 total、394 pass、0 fail、4 个环境性 skip。单并发完整基线为 397/393/0/4，随后唯一新增的文件增长预算回归也以单并发通过。`check` 通过，三语各 723 key、0 warning/failure；operation/process/stable-directory/state、server security/model outbound、UI/accessibility/workflow、health 和 diff 聚焦门禁通过。在途模型取消、提交中的 SIGTERM 等待、原子 preflight、审计失败可见性和 Windows 瞬时锁竞争均有回归，操作槽释放、有界退出且取消场景没有落盘成功模型结果。
+
+当前状态是 `machine verified; committed`。最终 diff、`git diff --check`、暂存清单、临时目录/端口/子进程和禁入项审计均已通过；`dist`、`.codeclaw`、日志、截图、真人记录和证据包均未进入提交。下一断点是 Stage 4B，不 push。
+
+诚实边界：当前 Windows 沙箱无法执行真实 `taskkill /T` 后代树测试，父 wrapper 已退出后的后代归属仍可能需要 Job Object；Node 缺少 `openat` 风格目录句柄操作，身份复验不能消除每个外部目录替换窗口。像素、完整键盘、NVDA、高对比度、干净 Windows 10/11、非管理员启动、Defender/SmartScreen、默认浏览器、真实双击、真实断电和大型项目主观等待感均未验收。真人测试继续暂停，`REMEDIATION_HOLD`、tester-2 `AFTER_LIVE_BLOCKED`、tester-3 `not scheduled` 与原项目只读边界保持不变。
 
 ## 重启后先检查
 
@@ -75,7 +85,7 @@ git status --short --branch
 git log -5 --oneline --decorate
 ```
 
-不要假设工作树干净。若存在未提交修改，先阅读 diff，区分当前 Stage 3.0.9 工作与用户的其他修改；保留无关改动，不使用 `git reset --hard` 或 `git checkout --` 丢弃它们。
+不要假设工作树干净。若存在未提交修改，先阅读 diff，区分当前 Stage 3.0.14/4B 工程工作与用户的其他修改；保留无关改动，不使用 `git reset --hard` 或 `git checkout --` 丢弃它们。
 
 随后读取：
 

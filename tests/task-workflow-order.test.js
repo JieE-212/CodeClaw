@@ -8,7 +8,10 @@ const [server, taskStore] = await Promise.all([
 ]);
 
 test("task verification stays inside the project lock from patch check through persistence", () => {
-  const callTool = functionBody(server, "callTool");
+  const wrapper = functionBody(server, "callTool");
+  const callTool = functionBody(server, "callToolManaged");
+  assert.match(wrapper, /runManagedOperation\(operationManager/);
+  assert.match(wrapper, /kind === "verify" \? 120_000 : 30_000/);
   assert.match(callTool, /body\.tool === "run_command" && body\.approved === true && task/);
   assert.match(callTool, /serializePatchOperation\(rootPath, async \(\) => \{[\s\S]*ensurePatchRecoveryReady[\s\S]*assertActivePatchesCurrent[\s\S]*registry\.call\(body\.tool[\s\S]*assertActivePatchesCurrent[\s\S]*appendToolCall[\s\S]*setVerification/s);
   assert.match(callTool, /setVerification\(body\.taskId, commandResult\.result, \{ expectedPatchSetDigest \}\)/);
@@ -38,10 +41,12 @@ test("active file checks use only the top patch per path while provenance binds 
 
 test("concurrent repository scans keep request-local profile and workspace responses", () => {
   const scan = functionBody(server, "scanRepo");
-  assert.match(scan, /const profile = await scanRepositoryWithFriendlyErrors\(repositoryPath\)/);
+  assert.match(scan, /runManagedOperation\(operationManager/);
+  assert.match(scan, /const profile = await scanRepositoryWithFriendlyErrors\(repositoryPath, \{ signal: operation\.signal \}\)/);
   assert.match(scan, /const workspace = await workspaceCapabilityStore\.register\(profile\.rootPath\)/);
   assert.match(scan, /bindLastWorkspace\(workspace, profile\.rootPath, profile\.commands\)/);
-  assert.match(scan, /return json\(response, \{ ok: true, profile, memory, workspace \}\)/);
+  assert.match(scan, /return \{ ok: true, profile, memory, workspace \}/);
+  assert.match(scan, /return json\(response, payload\)/);
   assert.equal((scan.match(/lastRepoProfile/g) || []).length, 1, "scan globals may be updated only at the consistent commit point");
 });
 

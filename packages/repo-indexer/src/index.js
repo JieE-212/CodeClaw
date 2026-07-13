@@ -1,111 +1,197 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isPathIgnoredStrict } from "../../shared/src/ignore-utils.js";
+import { createStrictIgnoreMatcher } from "../../shared/src/ignore-utils.js";
 import { isSensitiveDirectory, isSensitiveFile, isSkippedDirectory, isTextLikeFile, relativePath } from "../../shared/src/path-utils.js";
+import { RUNTIME_BUDGETS, boundedBudgetValue, readFileHandleBounded, runtimeBudgetError } from "../../shared/src/runtime-budget.js";
+import { openStableDirectory } from "../../shared/src/stable-directory.js";
+import { throwIfAborted } from "../../shared/src/operation-manager.js";
 
-const MAX_FILES = 800;
-const MAX_SUMMARY_BYTES = 6000;
 const MAX_SYMBOLS = 80;
 
 export async function scanRepository(rootPath, options = {}) {
+  const signal = options.signal || null;
+  throwIfAborted(signal);
   const resolvedRoot = path.resolve(rootPath || ".");
   const stats = await fs.stat(resolvedRoot);
+  throwIfAborted(signal);
   if (!stats.isDirectory()) throw new Error(`Repository path is not a directory: ${resolvedRoot}`);
 
   const files = [];
   const skipped = [];
+  const budget = normalizeScanBudget(options);
+  const state = createScanState(files, skipped, budget, signal);
+  const ignoreSession = options.ignoreMatcher ? null : createStrictIgnoreMatcher(resolvedRoot, {
+    maxFiles: budget.maxIgnoreFiles,
+    maxFileBytes: budget.maxIgnoreFileBytes,
+    maxTotalBytes: budget.maxIgnoreTotalBytes,
+    maxRules: budget.maxIgnoreRules,
+    maxRuleEvaluations: budget.maxIgnoreRuleEvaluations,
+    signal
+  });
   const isIgnored = options.ignoreMatcher
-    ? async (relative, isDirectory) => options.ignoreMatcher(relative, isDirectory)
-    : async (relative, isDirectory) => isPathIgnoredStrict(resolvedRoot, relative, isDirectory);
-  await walk(resolvedRoot, resolvedRoot, files, skipped, options.maxFiles || MAX_FILES, isIgnored);
+    ? async (relative, isDirectory) => {
+      throwIfAborted(signal);
+      const ignored = await options.ignoreMatcher(relative, isDirectory, { signal });
+      throwIfAborted(signal);
+      return ignored;
+    }
+    : ignoreSession.isIgnoredTraversed;
+  await walk(resolvedRoot, resolvedRoot, state, isIgnored, 0);
 
-  const manifests = await readKnownManifests(resolvedRoot, new Set(files.map((file) => file.path)));
+  throwIfAborted(signal);
+  const manifests = await readKnownManifests(resolvedRoot, new Map(files.map((file) => [file.path, file])), state, signal);
+  throwIfAborted(signal);
+  await ignoreSession?.verify();
+  throwIfAborted(signal);
+  const budgetEvidence = scanBudgetEvidence(state, ignoreSession?.evidence());
   return {
     rootPath: resolvedRoot,
     name: path.basename(resolvedRoot),
     scannedAt: new Date().toISOString(),
     fileCount: files.length,
-    skippedCount: skipped.length,
+    skippedCount: state.used.skippedItemsObserved,
     languages: detectLanguages(files),
     frameworks: detectFrameworks(manifests, files),
     packageManagers: detectPackageManagers(files),
     commands: detectCommands(manifests),
     keyFiles: selectKeyFiles(files),
     files,
-    skipped
+    skipped,
+    truncated: budgetEvidence.truncated,
+    truncationReasons: budgetEvidence.reasons,
+    detailOmissions: budgetEvidence.detailOmissions,
+    budget: budgetEvidence
   };
 }
 
-async function walk(rootPath, currentPath, files, skipped, maxFiles, isIgnored) {
-  if (files.length >= maxFiles) return;
-  const entries = await fs.readdir(currentPath, { withFileTypes: true });
+async function walk(rootPath, currentPath, state, isIgnored, depth) {
+  throwIfAborted(state.signal);
+  if (state.used.entriesVisited >= state.limits.maxEntries) {
+    state.truncationReasons.add("max-entries");
+    return;
+  }
+  if (state.used.directoriesVisited >= state.limits.maxDirectories) {
+    state.truncationReasons.add("max-directories");
+    return;
+  }
+  state.used.directoriesVisited += 1;
+  state.used.maxDepthReached = Math.max(state.used.maxDepthReached, depth);
+
+  const entries = [];
+  const openedDirectory = await openStableDirectory(rootPath, currentPath, "scan repository files", state.signal);
+  for await (const entry of openedDirectory.directory) {
+    throwIfAborted(state.signal);
+    if (state.used.entriesVisited >= state.limits.maxEntries) {
+      state.truncationReasons.add("max-entries");
+      break;
+    }
+    state.used.entriesVisited += 1;
+    entries.push(entry);
+  }
+  throwIfAborted(state.signal);
+  await openedDirectory.verify();
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
-    if (files.length >= maxFiles) break;
+    throwIfAborted(state.signal);
+    await openedDirectory.verify();
+    try {
+    if (state.files.length >= state.limits.maxFiles) {
+      state.truncationReasons.add("max-files");
+      break;
+    }
     const absolutePath = path.join(currentPath, entry.name);
     const rel = relativePath(rootPath, absolutePath);
 
     if (entry.isDirectory()) {
       if (isSensitiveDirectory(entry.name)) {
-        skipped.push({ path: rel, reason: "sensitive-directory" });
+        recordSkipped(state, rel, "sensitive-directory");
         continue;
       }
       if (isSkippedDirectory(entry.name)) {
-        skipped.push({ path: rel, reason: "skipped-directory" });
+        recordSkipped(state, rel, "skipped-directory");
         continue;
       }
       if (await isIgnored(rel, true)) {
-        skipped.push({ path: rel, reason: "gitignore" });
+        throwIfAborted(state.signal);
+        recordSkipped(state, rel, "gitignore");
         continue;
       }
-      await walk(rootPath, absolutePath, files, skipped, maxFiles, isIgnored);
+      if (depth >= state.limits.maxDepth) {
+        state.truncationReasons.add("max-depth");
+        recordSkipped(state, rel, "runtime-budget-depth");
+        continue;
+      }
+      await walk(rootPath, absolutePath, state, isIgnored, depth + 1);
       continue;
     }
 
     if (!entry.isFile()) continue;
     if (isSensitiveFile(entry.name)) {
-      skipped.push({ path: rel, reason: "sensitive-file" });
+      recordSkipped(state, rel, "sensitive-file");
       continue;
     }
     if (await isIgnored(rel, false)) {
-      skipped.push({ path: rel, reason: "gitignore" });
+      throwIfAborted(state.signal);
+      recordSkipped(state, rel, "gitignore");
       continue;
     }
 
     const stat = await fs.lstat(absolutePath, { bigint: true });
+    throwIfAborted(state.signal);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) {
-      skipped.push({ path: rel, reason: "unsafe-filesystem-entry" });
+      recordSkipped(state, rel, "unsafe-filesystem-entry");
       continue;
     }
     const item = {
       path: rel,
       name: entry.name,
       extension: path.extname(entry.name).toLowerCase(),
-      size: Number(stat.size),
+      size: safeBigIntNumber(stat.size),
       textLike: isTextLikeFile(absolutePath),
       summary: null,
       symbols: []
     };
 
-    if (item.textLike && stat.size <= BigInt(MAX_SUMMARY_BYTES)) {
-      const details = await inspectTextFile(absolutePath, item.extension);
-      item.summary = details.summary;
-      item.symbols = details.symbols;
+    if (item.textLike && stat.size > BigInt(state.limits.maxSummaryFileBytes)) {
+      state.used.summaryFilesSkippedByBudget += 1;
+      state.detailOmissions.add("max-summary-file-bytes");
+    } else if (item.textLike) {
+      const remainingSummaryBytes = state.limits.maxSummaryTotalBytes - state.used.summaryBytesRead;
+      if (Number(stat.size) > remainingSummaryBytes) {
+        state.used.summaryFilesSkippedByBudget += 1;
+        state.detailOmissions.add("max-summary-total-bytes");
+      } else {
+        const details = await inspectTextFile(absolutePath, item.extension, state.limits.maxSummaryFileBytes, state.signal);
+        throwIfAborted(state.signal);
+        item.summary = details.summary;
+        item.symbols = details.symbols;
+        state.used.summaryBytesRead += details.byteLength;
+      }
     }
-    files.push(item);
+    state.files.push(item);
+    } finally {
+      throwIfAborted(state.signal);
+      await openedDirectory.verify();
+    }
   }
 }
 
-async function inspectTextFile(filePath, extension) {
+async function inspectTextFile(filePath, extension, maxBytes, signal) {
+  throwIfAborted(signal);
   try {
-    const content = stripBom(await readStableUtf8File(filePath));
+    const read = await readStableUtf8File(filePath, maxBytes, "repository-summary", signal);
+    throwIfAborted(signal);
+    const content = stripBom(read.content);
     return {
       summary: content.split(/\r?\n/).filter(Boolean).slice(0, 24).join("\n").slice(0, 1200),
-      symbols: extractSymbols(content, extension)
+      symbols: extractSymbols(content, extension),
+      byteLength: read.byteLength
     };
-  } catch {
-    return { summary: null, symbols: [] };
+  } catch (error) {
+    throwIfAborted(signal);
+    if (error.code === "REPO_SCAN_FILE_BUDGET_EXCEEDED") throw error;
+    return { summary: null, symbols: [], byteLength: 0 };
   }
 }
 
@@ -136,33 +222,151 @@ function extractSymbols(content, extension) {
   return symbols;
 }
 
-async function readKnownManifests(rootPath, allowedFiles) {
+async function readKnownManifests(rootPath, allowedFiles, state, signal) {
   const manifests = {};
   for (const name of ["package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod"]) {
-    if (!allowedFiles.has(name)) continue;
+    throwIfAborted(signal);
+    const file = allowedFiles.get(name);
+    if (!file) continue;
+    if (file.size > state.limits.maxManifestFileBytes) {
+      state.used.manifestFilesSkippedByBudget += 1;
+      state.truncationReasons.add("max-manifest-file-bytes");
+      continue;
+    }
     try {
-      const content = stripBom(await readStableUtf8File(path.join(rootPath, name)));
+      const read = await readStableUtf8File(path.join(rootPath, name), state.limits.maxManifestFileBytes, "repository-manifest", signal);
+      throwIfAborted(signal);
+      const content = stripBom(read.content);
+      state.used.manifestBytesRead += read.byteLength;
       manifests[name] = content;
       if (name === "package.json") manifests.packageJson = JSON.parse(content);
-    } catch {}
+    } catch (error) {
+      throwIfAborted(signal);
+      if (error.code === "REPO_SCAN_FILE_BUDGET_EXCEEDED") {
+        state.used.manifestFilesSkippedByBudget += 1;
+        state.truncationReasons.add("max-manifest-file-bytes");
+      }
+    }
   }
   return manifests;
 }
 
-async function readStableUtf8File(filePath) {
+async function readStableUtf8File(filePath, maxBytes, operation, signal) {
+  throwIfAborted(signal);
   const before = await fs.lstat(filePath, { bigint: true });
+  throwIfAborted(signal);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("Unsafe manifest or source file.");
+  assertFileWithinBudget(before.size, maxBytes, operation);
   const handle = await fs.open(filePath, "r");
   try {
+    throwIfAborted(signal);
     const opened = await handle.stat({ bigint: true });
     if (!sameStableFileStat(before, opened)) throw new Error("Source file changed before read.");
-    const raw = await handle.readFile();
+    assertFileWithinBudget(opened.size, maxBytes, operation);
+    const bounded = await readFileHandleBounded(handle, maxBytes);
+    throwIfAborted(signal);
+    if (bounded.exceeded) assertFileWithinBudget(BigInt(bounded.byteLength), maxBytes, operation);
     const after = await handle.stat({ bigint: true });
+    throwIfAborted(signal);
     if (!sameStableFileStat(opened, after)) throw new Error("Source file changed during read.");
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw);
+    return {
+      content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bounded.buffer),
+      byteLength: bounded.byteLength
+    };
   } finally {
-    await handle.close();
+    try {
+      await handle.close();
+    } catch (error) {
+      throwIfAborted(signal);
+      throw error;
+    }
   }
+}
+
+function normalizeScanBudget(options) {
+  const hard = RUNTIME_BUDGETS.repositoryScan;
+  return {
+    maxFiles: boundedBudgetValue(options.maxFiles, hard.maxFiles),
+    maxEntries: boundedBudgetValue(options.maxEntries, hard.maxEntries),
+    maxDirectories: boundedBudgetValue(options.maxDirectories, hard.maxDirectories),
+    maxDepth: boundedBudgetValue(options.maxDepth, hard.maxDepth, hard.maxDepth, 0),
+    maxSkippedItems: boundedBudgetValue(options.maxSkippedItems, hard.maxSkippedItems),
+    maxSummaryFileBytes: boundedBudgetValue(options.maxSummaryFileBytes, hard.maxSummaryFileBytes),
+    maxSummaryTotalBytes: boundedBudgetValue(options.maxSummaryTotalBytes, hard.maxSummaryTotalBytes),
+    maxManifestFileBytes: boundedBudgetValue(options.maxManifestFileBytes, hard.maxManifestFileBytes),
+    maxIgnoreFiles: boundedBudgetValue(options.maxIgnoreFiles, hard.maxIgnoreFiles),
+    maxIgnoreFileBytes: boundedBudgetValue(options.maxIgnoreFileBytes, hard.maxIgnoreFileBytes),
+    maxIgnoreTotalBytes: boundedBudgetValue(options.maxIgnoreTotalBytes, hard.maxIgnoreTotalBytes),
+    maxIgnoreRules: boundedBudgetValue(options.maxIgnoreRules, hard.maxIgnoreRules),
+    maxIgnoreRuleEvaluations: boundedBudgetValue(options.maxIgnoreRuleEvaluations, hard.maxIgnoreRuleEvaluations)
+  };
+}
+
+function createScanState(files, skipped, limits, signal) {
+  return {
+    files,
+    skipped,
+    limits,
+    signal,
+    truncationReasons: new Set(),
+    detailOmissions: new Set(),
+    used: {
+      entriesVisited: 0,
+      directoriesVisited: 0,
+      maxDepthReached: 0,
+      skippedItemsObserved: 0,
+      summaryBytesRead: 0,
+      summaryFilesSkippedByBudget: 0,
+      manifestBytesRead: 0,
+      manifestFilesSkippedByBudget: 0
+    }
+  };
+}
+
+function recordSkipped(state, filePath, reason) {
+  state.used.skippedItemsObserved += 1;
+  if (state.skipped.length < state.limits.maxSkippedItems) {
+    state.skipped.push({ path: filePath, reason });
+  } else {
+    state.truncationReasons.add("max-skipped-items");
+  }
+}
+
+function scanBudgetEvidence(state, ignoreEvidence = null) {
+  const reasons = [...state.truncationReasons].sort();
+  const detailOmissions = [...state.detailOmissions].sort();
+  const ignore = ignoreEvidence || { used: { filesRead: 0, bytesRead: 0, identityChecks: 0, cacheEntries: 0, rulesLoaded: 0, ruleEvaluations: 0 } };
+  return {
+    operation: "repository-scan",
+    limits: { ...state.limits },
+    used: {
+      ...state.used,
+      filesCollected: state.files.length,
+      skippedItemsStored: state.skipped.length,
+      ignoreFilesRead: ignore.used.filesRead,
+      ignoreBytesRead: ignore.used.bytesRead,
+      ignoreIdentityChecks: ignore.used.identityChecks,
+      ignoreCacheEntries: ignore.used.cacheEntries,
+      ignoreRulesLoaded: ignore.used.rulesLoaded,
+      ignoreRuleEvaluations: ignore.used.ruleEvaluations
+    },
+    truncated: reasons.length > 0,
+    reasons,
+    detailOmissions
+  };
+}
+
+function assertFileWithinBudget(size, maxBytes, operation) {
+  if (size <= BigInt(maxBytes)) return;
+  throw runtimeBudgetError(
+    "REPO_SCAN_FILE_BUDGET_EXCEEDED",
+    `Repository metadata read exceeded the ${maxBytes}-byte ${operation} budget.`,
+    { operation, limit: maxBytes, observed: safeBigIntNumber(size) }
+  );
+}
+
+function safeBigIntNumber(value) {
+  return value > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(value);
 }
 
 function sameStableFileStat(left, right) {

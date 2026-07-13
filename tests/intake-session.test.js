@@ -1,28 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createIsolatedProject } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptPath = path.join(rootPath, "scripts", "generate-intake-session.js");
 
 test("intake-session generates a tester session pack from ready intake", async (t) => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-session-ok-"));
+  const isolated = await createIsolatedProject(t, rootPath, "codeclaw-intake-session-ok-");
+  const tempRoot = isolated.path("inputs");
+  await fs.mkdir(tempRoot, { recursive: true });
   const intakePath = path.join(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json");
-  const outputPath = path.join(rootPath, "dist", "test-intake-session", `tester-ok-${Date.now()}`);
+  const outputPath = path.join(isolated.projectRoot, "dist", "test-intake-session", "tester-ok");
   const jsonPath = path.join(tempRoot, "intake-session-report.json");
   const markdownPath = path.join(tempRoot, "intake-session-report.md");
-  t.after(() => Promise.all([
-    fs.rm(tempRoot, { recursive: true, force: true }),
-    fs.rm(outputPath, { recursive: true, force: true })
-  ]));
 
   await writeJson(intakePath, readyIntakeReport());
 
-  const result = await runIntakeSession([
+  const result = await runIntakeSession(isolated, [
     "--intake", intakePath,
     "--out", outputPath,
     "--json", jsonPath,
@@ -52,15 +48,13 @@ test("intake-session generates a tester session pack from ready intake", async (
 });
 
 test("intake-session blocks when intake is not ready", async (t) => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-intake-session-hold-"));
+  const isolated = await createIsolatedProject(t, rootPath, "codeclaw-intake-session-hold-");
+  const tempRoot = isolated.path("inputs");
+  await fs.mkdir(tempRoot, { recursive: true });
   const intakePath = path.join(tempRoot, "TRIAL_TESTER_INTAKE_REPORT.json");
-  const outputPath = path.join(rootPath, "dist", "test-intake-session", `tester-hold-${Date.now()}`);
+  const outputPath = path.join(isolated.projectRoot, "dist", "test-intake-session", "tester-hold");
   const jsonPath = path.join(tempRoot, "intake-session-report.json");
   const markdownPath = path.join(tempRoot, "intake-session-report.md");
-  t.after(() => Promise.all([
-    fs.rm(tempRoot, { recursive: true, force: true }),
-    fs.rm(outputPath, { recursive: true, force: true })
-  ]));
 
   await writeJson(intakePath, {
     ok: true,
@@ -70,7 +64,7 @@ test("intake-session blocks when intake is not ready", async (t) => {
     nextTester: null
   });
 
-  const result = await runIntakeSession([
+  const result = await runIntakeSession(isolated, [
     "--intake", intakePath,
     "--out", outputPath,
     "--json", jsonPath,
@@ -114,20 +108,8 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function runIntakeSession(args) {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], { cwd: rootPath }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== "number") {
-        reject(error);
-        return;
-      }
-      resolve({
-        code: typeof error?.code === "number" ? error.code : 0,
-        stdout,
-        stderr
-      });
-    });
-  });
+function runIntakeSession(isolated, args) {
+  return isolated.execNodeScript("generate-intake-session.js", args, { label: "isolated intake-session" });
 }
 
 async function exists(targetPath) {

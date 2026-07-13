@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "review-trial-session.js");
 
-test("review-session proceeds when reports are complete and clean", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-review-proceed-"));
+test("review-session proceeds when reports are complete and clean", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-review-proceed-");
   const jsonPath = path.join(tempRoot, "review.json");
   const markdownPath = path.join(tempRoot, "review.md");
 
@@ -24,8 +24,8 @@ test("review-session proceeds when reports are complete and clean", async () => 
   assert.equal(report.actionItems.length, 0);
 });
 
-test("review-session allows next tester with P1 watch ownership and verification", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-review-watch-"));
+test("review-session allows next tester with P1 watch ownership and verification", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-review-watch-");
   const jsonPath = path.join(tempRoot, "review.json");
   const markdownPath = path.join(tempRoot, "review.md");
 
@@ -53,8 +53,8 @@ test("review-session allows next tester with P1 watch ownership and verification
   assert.match(report.actionItems[0].verificationCommand, /trial:host-ready/);
 });
 
-test("review-session blocks when P0 must-fix exists", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-review-fix-"));
+test("review-session blocks when P0 must-fix exists", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-review-fix-");
   const jsonPath = path.join(tempRoot, "review.json");
   const markdownPath = path.join(tempRoot, "review.md");
 

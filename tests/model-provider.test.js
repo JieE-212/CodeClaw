@@ -427,6 +427,59 @@ test("mock prepare and execute supports all four operations without transport", 
   assert.equal(lookups, 0);
 });
 
+test("mock execution checks cancellation before and after local work", async () => {
+  const provider = new ModelProvider({ type: "mock" });
+  const beforePrepared = provider.prepare("task-suggest", { goal: "inspect cancellation" });
+  const beforeController = new AbortController();
+  beforeController.abort();
+
+  await assert.rejects(
+    provider.executePrepared(beforePrepared, { signal: beforeController.signal }),
+    { code: "request_cancelled", status: 409 }
+  );
+  const retry = await provider.executePrepared(beforePrepared);
+  assert.match(retry.content, /Mock suggestion/);
+
+  const duringPrepared = provider.prepare("task-suggest", { goal: "cancel local work" });
+  const duringController = new AbortController();
+  const pending = provider.executePrepared(duringPrepared, { signal: duringController.signal });
+  duringController.abort();
+  await assert.rejects(pending, { code: "request_cancelled", status: 409 });
+});
+
+test("online execution passes cancellation through pending endpoint resolution", async () => {
+  const controller = new AbortController();
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  let finishLookup;
+  const provider = new ModelProvider({
+    type: "openai-compatible",
+    name: "cancel-online",
+    baseUrl: "https://models.example.test/v1",
+    apiKey: "test-key",
+    model: "m",
+    transport: {
+      lookup: async () => {
+        markStarted();
+        return new Promise((resolve) => {
+          finishLookup = resolve;
+        });
+      }
+    }
+  });
+  const pending = provider.executePrepared(
+    provider.prepare("task-suggest", { goal: "cancel before transport" }),
+    { signal: controller.signal }
+  );
+
+  await started;
+  controller.abort();
+  await assert.rejects(pending, { code: "request_cancelled", status: 409 });
+  finishLookup([{ address: "8.8.8.8", family: 4 }]);
+});
+
 test("online execute sends the privately retained preview buffer exactly once", async () => {
   const requests = [];
   await withModelServer(async (request, response) => {

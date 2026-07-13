@@ -55,7 +55,8 @@ export function buildOpenAICompatibleEndpoint(baseUrl) {
   return endpoint.toString();
 }
 
-export async function resolveModelEndpoint(endpointValue, { lookup = dns.lookup, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function resolveModelEndpoint(endpointValue, { lookup = dns.lookup, timeoutMs = DEFAULT_TIMEOUT_MS, signal = null } = {}) {
+  throwIfSignalAborted(signal);
   const endpoint = parsePreparedEndpoint(endpointValue);
   const hostname = normalizeHostname(endpoint.hostname);
   const literalFamily = net.isIP(hostname);
@@ -65,10 +66,13 @@ export async function resolveModelEndpoint(endpointValue, { lookup = dns.lookup,
     addresses = [{ address: hostname, family: literalFamily }];
   } else {
     try {
-      const resolved = await withTimeout(
-        Promise.resolve(lookup(hostname, { all: true, verbatim: true })),
-        timeoutMs,
-        () => transportError("request_timeout", "Model request timed out.")
+      const resolved = await withAbort(
+        withTimeout(
+          Promise.resolve(lookup(hostname, { all: true, verbatim: true })),
+          timeoutMs,
+          () => transportError("request_timeout", "Model request timed out.")
+        ),
+        signal
       );
       addresses = normalizeLookupResults(resolved);
     } catch (error) {
@@ -106,8 +110,10 @@ export async function requestJsonSafely({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
-  lookup = dns.lookup
+  lookup = dns.lookup,
+  signal = null
 } = {}) {
+  throwIfSignalAborted(signal);
   if (!Buffer.isBuffer(bodyBuffer)) throw transportError("invalid_request", "Prepared model request body is unavailable.");
   if (typeof apiKey !== "string" || !apiKey || /[\u0000-\u001f\u007f]/.test(apiKey)) {
     throw transportError("invalid_request", "Model API credential is invalid.");
@@ -120,17 +126,20 @@ export async function requestJsonSafely({
   }
   const normalizedTimeout = normalizeTimeout(timeoutMs);
   const startedAt = Date.now();
-  const resolved = await resolveModelEndpoint(endpoint, { lookup, timeoutMs: normalizedTimeout });
+  const resolved = await resolveModelEndpoint(endpoint, { lookup, timeoutMs: normalizedTimeout, signal });
   const remainingMs = Math.max(1, normalizedTimeout - (Date.now() - startedAt));
-  return performRequest({
+  const payload = await performRequest({
     endpoint: new URL(resolved.endpoint),
     apiKey: String(apiKey || ""),
     bodyBuffer,
     timeoutMs: remainingMs,
     maxResponseBytes,
     pinnedLookup: resolved.lookup,
-    pinnedAddress: resolved.address
+    pinnedAddress: resolved.address,
+    signal
   });
+  throwIfSignalAborted(signal);
+  return payload;
 }
 
 export function classifyIpAddress(value) {
@@ -150,7 +159,7 @@ export function assertPinnedRemoteAddress(actualAddress, pinnedAddress) {
   return true;
 }
 
-function performRequest({ endpoint, apiKey, bodyBuffer, timeoutMs, maxResponseBytes, pinnedLookup, pinnedAddress }) {
+function performRequest({ endpoint, apiKey, bodyBuffer, timeoutMs, maxResponseBytes, pinnedLookup, pinnedAddress, signal }) {
   return new Promise((resolve, reject) => {
     const client = endpoint.protocol === "https:" ? https : http;
     let settled = false;
@@ -159,15 +168,22 @@ function performRequest({ endpoint, apiKey, bodyBuffer, timeoutMs, maxResponseBy
       if (settled) return;
       settled = true;
       if (deadline) clearTimeout(deadline);
+      signal?.removeEventListener("abort", onAbort);
       request?.destroy();
       reject(error instanceof ModelTransportError ? error : transportError("network_error", "Model request failed."));
     };
     const finishResolve = (value) => {
       if (settled) return;
+      if (signal?.aborted) {
+        finishReject(abortTransportError(signal));
+        return;
+      }
       settled = true;
       if (deadline) clearTimeout(deadline);
+      signal?.removeEventListener("abort", onAbort);
       resolve(value);
     };
+    const onAbort = () => finishReject(abortTransportError(signal));
     let request;
     try {
       request = client.request({
@@ -248,6 +264,8 @@ function performRequest({ endpoint, apiKey, bodyBuffer, timeoutMs, maxResponseBy
 
     deadline = setTimeout(() => finishReject(transportError("request_timeout", "Model request timed out.")), timeoutMs);
     request.on("error", () => finishReject(transportError("network_error", "Model request failed.")));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) return onAbort();
     request.end(bodyBuffer);
   });
 }
@@ -419,6 +437,49 @@ function withTimeout(promise, timeoutMs, createError) {
   });
 }
 
+function withAbort(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const finishResolve = (value) => {
+      if (settled) return;
+      if (signal.aborted) {
+        finishReject(abortTransportError(signal));
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => finishReject(abortTransportError(signal));
+
+    Promise.resolve(promise).then(finishResolve, finishReject);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+function throwIfSignalAborted(signal) {
+  if (signal?.aborted) throw abortTransportError(signal);
+}
+
+function abortTransportError(signal) {
+  if (signal?.reason?.code === "OPERATION_TIMEOUT") {
+    return transportError("request_timeout", "Model request timed out.", { status: 408 });
+  }
+  if (signal?.reason?.code === "OPERATION_COMMIT_TIMEOUT") {
+    return transportError("request_timeout", "The local model-result commit timed out.", { status: 504 });
+  }
+  return transportError("request_cancelled", "Model request was cancelled.");
+}
+
 function normalizeLocalErrorStatus(value) {
   return Number.isInteger(value) && value >= 400 && value <= 599 ? value : null;
 }
@@ -431,7 +492,7 @@ function defaultLocalErrorStatus(code) {
   if (code === "request_timeout") return 504;
   if (["invalid_url", "invalid_request"].includes(code)) return 400;
   if (code === "request_too_large") return 413;
-  if (["provider_not_configured", "invalid_prepared_request", "prepared_request_consumed"].includes(code)) return 409;
+  if (["provider_not_configured", "invalid_prepared_request", "prepared_request_consumed", "request_cancelled"].includes(code)) return 409;
   if ([
     "MODEL_RESPONSE_CREDENTIAL_REFLECTION",
     "destination_blocked",

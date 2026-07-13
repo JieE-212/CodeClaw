@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "privacy-check.js");
 
-test("privacy-check passes clean trial feedback", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-privacy-safe-"));
+test("privacy-check passes clean trial feedback", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-privacy-safe-");
   const inputPath = path.join(tempRoot, "session");
   const jsonPath = path.join(tempRoot, "privacy.json");
   const markdownPath = path.join(tempRoot, "privacy.md");
@@ -34,8 +34,8 @@ test("privacy-check passes clean trial feedback", async () => {
   assert.equal(report.warnings.length, 0);
 });
 
-test("privacy-check blocks unsafe trial records and redacts secret excerpts", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-privacy-risk-"));
+test("privacy-check blocks unsafe trial records and redacts secret excerpts", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-privacy-risk-");
   const riskInput = path.join(tempRoot, "session");
   const jsonPath = path.join(tempRoot, "privacy.json");
   const markdownPath = path.join(tempRoot, "privacy.md");

@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { previewAndApproveModelOperation } from "../scripts/model-operation-client.js";
+import { RUNTIME_BUDGETS } from "../packages/shared/src/runtime-budget.js";
 
 test("POST transport and private workspace state fail closed", async (t) => {
   const fixture = await createFixture("transport");
@@ -28,6 +30,27 @@ test("POST transport and private workspace state fail closed", async (t) => {
   assert.equal(malformed.response.status, 400);
   assert.equal(malformed.payload.code, "JSON_BODY_INVALID");
 
+  const oversizedBody = JSON.stringify({ padding: "x".repeat(RUNTIME_BUDGETS.jsonRequest.maxBytes) });
+  const oversized = await rawPost(server.baseUrl, "/api/repo/scan", oversizedBody, { contentType: "application/json" });
+  assert.equal(oversized.response.status, 413);
+  assert.equal(oversized.payload.code, "JSON_BODY_TOO_LARGE");
+  assert.deepEqual(oversized.payload.budget, {
+    operation: "json-request-body",
+    limit: RUNTIME_BUDGETS.jsonRequest.maxBytes,
+    observed: Buffer.byteLength(oversizedBody, "utf8")
+  });
+  assert.equal((await request(server.baseUrl, "/api/health")).response.status, 200);
+
+  const chunked = await rawChunkedPost(server.baseUrl, "/api/repo/scan", [
+    `{"padding":"${"y".repeat(600_000)}`,
+    `${"z".repeat(600_000)}"}`
+  ]);
+  assert.equal(chunked.status, 413);
+  assert.equal(chunked.payload.code, "JSON_BODY_TOO_LARGE");
+  assert.equal(chunked.payload.budget.limit, RUNTIME_BUDGETS.jsonRequest.maxBytes);
+  assert.ok(chunked.payload.budget.observed > RUNTIME_BUDGETS.jsonRequest.maxBytes);
+  assert.equal((await request(server.baseUrl, "/api/health")).response.status, 200);
+
   for (const origin of ["https://example.com", "null", "http://127.0.0.1:1", "https://localhost:4173"]) {
     const result = await rawPost(server.baseUrl, "/api/repo/scan", JSON.stringify({ path: fixture.original }), {
       contentType: "application/json",
@@ -46,6 +69,32 @@ test("POST transport and private workspace state fail closed", async (t) => {
   assert.equal(sameOrigin.response.status, 200);
   assert.equal(sameOrigin.payload.workspace.kind, "original-readonly");
 
+  for (let index = 0; index < 10; index += 1) {
+    await fs.writeFile(path.join(fixture.original, "src", `context-${index}.js`), `export const context${index} = ${index};\n`, "utf8");
+  }
+  const boundedPreflight = await request(server.baseUrl, "/api/preflight/run", {
+    path: fixture.original,
+    goal: "review source files",
+    limit: Number.MAX_SAFE_INTEGER
+  });
+  assert.equal(boundedPreflight.response.status, 200);
+  assert.equal(boundedPreflight.payload.report.contextFiles.length, RUNTIME_BUDGETS.preflight.maxContextFiles);
+  assert.ok(boundedPreflight.payload.report.readFiles.every((item) => item.budget?.operation === "tool-read-file"));
+  assert.equal(boundedPreflight.payload.report.repo.budget.operation, "repository-scan");
+  assert.equal(boundedPreflight.payload.report.search.budget.operation, "tool-search-code");
+  const planned = await request(server.baseUrl, "/api/agent/plan", {
+    goal: "review source files",
+    taskId: boundedPreflight.payload.task.id
+  });
+  assert.equal(planned.response.status, 200);
+  const forgedPlanProfile = await request(server.baseUrl, "/api/agent/plan", {
+    goal: "review source files",
+    taskId: boundedPreflight.payload.task.id,
+    repoProfile: { files: [{ path: ".env", summary: "client-forged" }] }
+  });
+  assert.equal(forgedPlanProfile.response.status, 400);
+  assert.equal(forgedPlanProfile.payload.code, "AGENT_PLAN_FIELDS_INVALID");
+
   for (const pathname of [
     "/api/model/suggest",
     "/api/model/context-files",
@@ -58,8 +107,11 @@ test("POST transport and private workspace state fail closed", async (t) => {
     assert.equal(removed.payload.code, "API_NOT_FOUND", pathname);
   }
 
-  for (const pathname of ["/api/repo/scan", "/api/preflight/run"]) {
-    const result = await request(server.baseUrl, pathname, { path: fixture.stateDir, goal: "read private state" });
+  for (const [pathname, body] of [
+    ["/api/repo/scan", { path: fixture.stateDir }],
+    ["/api/preflight/run", { path: fixture.stateDir, goal: "read private state" }]
+  ]) {
+    const result = await request(server.baseUrl, pathname, body);
     assert.equal(result.response.status, 403, pathname);
     assert.equal(result.payload.code, "PATH_PROTECTED_STATE");
   }
@@ -105,6 +157,15 @@ test("task-bound and active-workspace reads reject a same-path junction replacem
     goal: "review the original before any change"
   });
   assert.equal(preflight.response.status, 200);
+  assert.equal(preflight.payload.task.revision, 1);
+  assert.equal(preflight.payload.task.status, "running");
+  assert.ok(preflight.payload.task.plan);
+  assert.ok(preflight.payload.task.toolCalls.length >= 1);
+  assert.deepEqual(preflight.payload.report.persistence, {
+    taskRecorded: true,
+    memoryRecorded: true,
+    auditRecorded: true
+  });
   const taskId = preflight.payload.task.id;
   const owner = JSON.parse(await fs.readFile(path.join(fixture.stateDir, "workspace-owner.json"), "utf8"));
   assert.match(owner.secret, /^[A-Za-z0-9_-]{43}$/);
@@ -404,6 +465,29 @@ async function rawPost(baseUrl, pathname, body, { contentType, origin } = {}) {
   if (origin) headers.origin = origin;
   const response = await fetch(`${baseUrl}${pathname}`, { method: "POST", headers, body });
   return { response, payload: await response.json().catch(() => ({})) };
+}
+
+function rawChunkedPost(baseUrl, pathname, chunks) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(pathname, baseUrl);
+    const request = http.request({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: "POST",
+      headers: { "content-type": "application/json", "transfer-encoding": "chunked" }
+    }, (response) => {
+      const responseChunks = [];
+      response.on("data", (chunk) => responseChunks.push(chunk));
+      response.on("end", () => {
+        const raw = Buffer.concat(responseChunks).toString("utf8");
+        resolve({ status: response.statusCode, payload: JSON.parse(raw || "{}") });
+      });
+    });
+    request.on("error", reject);
+    for (const chunk of chunks) request.write(chunk);
+    request.end();
+  });
 }
 
 async function waitForHealth(server) {

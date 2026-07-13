@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "tester-launch-plan.js");
 
-test("tester-launch-plan waits for local tester intake when roster is empty", async () => {
-  const fixture = await makeFixture();
+test("tester-launch-plan waits for local tester intake when roster is empty", async (t) => {
+  const fixture = await makeFixture(t);
   await writeJson(path.join(fixture.reportsPath, "TRIAL_TESTER_INTAKE_REPORT.json"), {
     ok: true,
     mode: "trial-tester-intake",
@@ -30,8 +30,8 @@ test("tester-launch-plan waits for local tester intake when roster is empty", as
   assert.ok(report.rosterChecklist.some((item) => item.includes("tester-2")));
 });
 
-test("tester-launch-plan recommends intake-session after ready intake", async () => {
-  const fixture = await makeFixture();
+test("tester-launch-plan recommends intake-session after ready intake", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyIntake(fixture.reportsPath, "tester-2");
 
   const result = await runPlan(fixture.args);
@@ -43,8 +43,8 @@ test("tester-launch-plan recommends intake-session after ready intake", async ()
   assert.match(report.nextCommand, /trial:intake-session/);
 });
 
-test("tester-launch-plan treats stale current-step holds as rerun warnings", async () => {
-  const fixture = await makeFixture();
+test("tester-launch-plan treats stale current-step holds as rerun warnings", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyIntake(fixture.reportsPath, "tester-2");
   await writeJson(path.join(fixture.reportsPath, "TRIAL_INTAKE_SESSION_REPORT.json"), {
     ok: false,
@@ -64,8 +64,8 @@ test("tester-launch-plan treats stale current-step holds as rerun warnings", asy
   assert.ok(report.warnings.some((item) => item.includes("INTAKE_SESSION_HOLD")));
 });
 
-test("tester-launch-plan reaches ready-to-host after next-live passes", async () => {
-  const fixture = await makeFixture();
+test("tester-launch-plan reaches ready-to-host after next-live passes", async (t) => {
+  const fixture = await makeFixture(t);
   await writeFullLaunchReports(fixture.reportsPath, "tester-2");
 
   const result = await runPlan(fixture.args);
@@ -77,8 +77,8 @@ test("tester-launch-plan reaches ready-to-host after next-live passes", async ()
   assert.match(report.nextCommand, /NEXT_LIVE_HOST_HANDOFF/);
 });
 
-test("tester-launch-plan can launch a first real tester without previous after-live", async () => {
-  const fixture = await makeFixture(["--first-live"]);
+test("tester-launch-plan can launch a first real tester without previous after-live", async (t) => {
+  const fixture = await makeFixture(t, ["--first-live"]);
   await writeFirstLiveReports(fixture.reportsPath, "tester-2");
 
   const result = await runPlan(fixture.args);
@@ -94,8 +94,8 @@ test("tester-launch-plan can launch a first real tester without previous after-l
   assert.ok(!report.commandSequence.some((item) => item.includes("trial:next-live")));
 });
 
-test("tester-launch-plan blocks mismatched tester ids", async () => {
-  const fixture = await makeFixture();
+test("tester-launch-plan blocks mismatched tester ids", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyIntake(fixture.reportsPath, "tester-2");
   await writeJson(path.join(fixture.reportsPath, "TRIAL_INTAKE_SESSION_REPORT.json"), readyReport("trial-intake-session", "INTAKE_SESSION_READY", "tester-2"));
   await writeJson(path.join(fixture.reportsPath, "TRIAL_HOST_READY_REPORT.json"), {
@@ -115,8 +115,8 @@ test("tester-launch-plan blocks mismatched tester ids", async () => {
   assert.ok(report.blockers.some((item) => item.includes("does not match target tester tester-2")));
 });
 
-async function makeFixture(extraArgs = []) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-launch-plan-"));
+async function makeFixture(t, extraArgs = []) {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-launch-plan-");
   const reportsPath = path.join(tempRoot, "reports");
   const jsonPath = path.join(tempRoot, "TRIAL_TESTER_LAUNCH_PLAN.json");
   const markdownPath = path.join(tempRoot, "TRIAL_TESTER_LAUNCH_PLAN.md");

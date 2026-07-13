@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { getEventListeners } from "node:events";
 import { promisify } from "node:util";
 import { ToolRegistry } from "../packages/tool-registry/src/index.js";
 import { patchWriteTemporaryPath } from "../packages/shared/src/atomic-file.js";
@@ -419,7 +420,334 @@ test("ToolRegistry run_command reports timeouts", async () => {
     allowedCommands: [{ name: "slow", command: "node -e \"setTimeout(() => {}, 1000)\"" }]
   });
 
-  const result = await registry.call("run_command", { name: "slow", timeoutMs: 50 }, { approved: true });
-  assert.equal(result.ok, true);
-  assert.equal(result.result.timedOut, true);
+  try {
+    const result = await registry.call("run_command", { name: "slow", timeoutMs: 50 }, { approved: true });
+    assert.equal(result.ok, true);
+    assert.equal(result.result.timedOut, true);
+    assert.equal(result.result.treeTermination.treeTerminationVerified, true);
+  } catch (error) {
+    if (process.platform !== "win32" || error.code !== "PROCESS_TREE_TERMINATION_UNVERIFIED") throw error;
+    assert.equal(error.trigger, "timeout");
+    assert.equal(error.treeTermination.treeTerminationVerified, false);
+  }
 });
+
+test("ToolRegistry exposes bounded list, read, and search evidence without changing result types", async () => {
+  const root = await makeTemporaryRoot("codeclaw-tools-budget-");
+  await fs.writeFile(path.join(root, "a.txt"), "find-me-a", "utf8");
+  await fs.writeFile(path.join(root, "b.txt"), "find-me-b", "utf8");
+  const registry = new ToolRegistry({
+    rootPath: root,
+    runtimeBudget: {
+      maxListFiles: 1,
+      maxReadBytes: 32,
+      maxSearchFiles: 2,
+      maxSearchTotalBytes: 18,
+      maxSearchResults: 1
+    }
+  });
+
+  const listed = await registry.call("list_files");
+  assert.ok(Array.isArray(listed.result));
+  assert.equal(listed.result.length, 1);
+  assert.equal(listed.truncated, true);
+  assert.ok(listed.budget.reasons.includes("max-files"));
+
+  const read = await registry.call("read_file", { path: "a.txt" });
+  assert.equal(read.result, "find-me-a");
+  assert.equal(read.truncated, false);
+  assert.equal(read.budget.used.bytesRead, 9);
+
+  const searched = await registry.call("search_code", { query: "find-me" });
+  assert.ok(Array.isArray(searched.result));
+  assert.deepEqual(searched.result.map((item) => item.path), ["a.txt"]);
+  assert.equal(searched.truncated, true);
+  assert.ok(searched.budget.reasons.includes("max-results"));
+  assert.equal(searched.budget.used.resultBytes, Buffer.byteLength(JSON.stringify(searched.result), "utf8"));
+});
+
+test("ToolRegistry refuses a file that grows beyond the read budget after stat", async (t) => {
+  const root = await makeTemporaryRoot("codeclaw-tools-read-growth-budget-");
+  const target = path.join(root, "growing.txt");
+  await fs.writeFile(target, "1234", "utf8");
+  const originalOpen = fs.open.bind(fs);
+  let grew = false;
+  t.mock.method(fs, "open", async (filePath, ...args) => {
+    const handle = await originalOpen(filePath, ...args);
+    if (path.resolve(filePath) !== path.resolve(target)) return handle;
+    const originalRead = handle.read.bind(handle);
+    handle.read = async (...readArgs) => {
+      if (!grew) {
+        grew = true;
+        await fs.appendFile(target, "567890", "utf8");
+      }
+      return originalRead(...readArgs);
+    };
+    return handle;
+  });
+  const registry = new ToolRegistry({ rootPath: root, runtimeBudget: { maxReadBytes: 4 } });
+
+  await assert.rejects(
+    () => registry.call("read_file", { path: "growing.txt" }),
+    (error) => error.code === "TOOL_READ_FILE_TOO_LARGE"
+      && error.status === 413
+      && error.runtimeBudget.limit === 4
+      && error.runtimeBudget.observed === 5
+  );
+});
+
+test("ToolRegistry bounds aggregate search bytes and keeps extensionless code searchable", async () => {
+  const root = await makeTemporaryRoot("codeclaw-tools-search-budget-");
+  await fs.writeFile(path.join(root, "a.txt"), "1234567890", "utf8");
+  await fs.writeFile(path.join(root, "b.txt"), "find-me", "utf8");
+  const byteLimited = new ToolRegistry({
+    rootPath: root,
+    runtimeBudget: { maxReadBytes: 32, maxSearchFiles: 2, maxSearchTotalBytes: 10 }
+  });
+  const searched = await byteLimited.call("search_code", { query: "find-me" });
+  assert.deepEqual(searched.result, []);
+  assert.equal(searched.truncated, true);
+  assert.ok(searched.budget.reasons.includes("max-total-read-bytes"));
+  assert.equal(searched.budget.used.bytesRead, 10);
+
+  await fs.writeFile(path.join(root, "Makefile"), "build: # extensionless-marker\n", "utf8");
+  await fs.writeFile(path.join(root, "native.h"), "#define HEADER_MARKER 1\n", "utf8");
+  await fs.writeFile(path.join(root, "image.png"), Buffer.from([0xff, 0xfe, 0xfd]));
+  const compatible = new ToolRegistry({ rootPath: root });
+  assert.deepEqual((await compatible.call("search_code", { query: "extensionless-marker" })).result.map((item) => item.path), ["Makefile"]);
+  assert.deepEqual((await compatible.call("search_code", { query: "HEADER_MARKER" })).result.map((item) => item.path), ["native.h"]);
+  const binary = await compatible.call("search_code", { query: "not-present" });
+  assert.equal(binary.budget.used.nonTextFilesSkipped, 1);
+  assert.equal(binary.truncated, false);
+});
+
+test("ToolRegistry caps long-line search output around the actual match", async () => {
+  const root = await makeTemporaryRoot("codeclaw-tools-search-output-budget-");
+  await fs.writeFile(path.join(root, "long.txt"), `${"x".repeat(500)}needle${"y".repeat(500)}\n`, "utf8");
+  const registry = new ToolRegistry({
+    rootPath: root,
+    runtimeBudget: { maxSearchLineChars: 40, maxSearchResultBytes: 512 }
+  });
+
+  const searched = await registry.call("search_code", { query: "needle" });
+  assert.equal(searched.result.length, 1);
+  const match = searched.result[0].matches[0];
+  assert.ok(match.text.length <= 40);
+  assert.match(match.text, /needle/);
+  assert.ok(match.textStartColumn > 1);
+  assert.equal(match.textTruncated, true);
+  assert.ok(searched.budget.used.resultBytes <= searched.budget.limits.maxResultBytes);
+});
+
+test("ToolRegistry enforces custom ignore rule evaluation budgets", async () => {
+  const root = await makeTemporaryRoot("codeclaw-tools-ignore-budget-");
+  await fs.writeFile(path.join(root, ".gitignore"), "*.tmp\n*.log\n", "utf8");
+  await fs.writeFile(path.join(root, "a.txt"), "visible\n", "utf8");
+  const registry = new ToolRegistry({ rootPath: root, runtimeBudget: { maxIgnoreRuleEvaluations: 1 } });
+
+  await assert.rejects(
+    () => registry.call("list_files"),
+    (error) => error.code === "GITIGNORE_RUNTIME_BUDGET_EXCEEDED"
+      && error.runtimeBudget.operation === "gitignore-rule-evaluations"
+      && error.runtimeBudget.limit === 1
+  );
+});
+
+test("ToolRegistry rejects an already-aborted signal before every cancellable tool", async () => {
+  const root = await makeFixture();
+  const command = "node -e \"setTimeout(() => {}, 1000)\"";
+  const registry = new ToolRegistry({ rootPath: root, allowedCommands: [{ name: "slow", command }] });
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("tool cancelled"), { code: "OPERATION_CANCELLED", status: 409 });
+  controller.abort(reason);
+
+  for (const [tool, args, options] of [
+    ["list_files", {}, {}],
+    ["read_file", { path: "src/index.js" }, {}],
+    ["search_code", { query: "marker" }, {}],
+    ["git_status", {}, {}],
+    ["run_command", { name: "slow" }, { approved: true }]
+  ]) {
+    await assert.rejects(
+      () => registry.call(tool, args, { ...options, signal: controller.signal }),
+      (error) => error === reason,
+      tool
+    );
+  }
+});
+
+test("ToolRegistry aborts during ignore reads and never returns a partial success", async (t) => {
+  const root = await makeFixture();
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("ignore cancelled"), { code: "OPERATION_CANCELLED", status: 409 });
+  const originalOpen = fs.open.bind(fs);
+  t.mock.method(fs, "open", async (filePath, ...args) => {
+    const handle = await originalOpen(filePath, ...args);
+    if (path.basename(filePath) === ".gitignore") controller.abort(reason);
+    return handle;
+  });
+  const registry = new ToolRegistry({ rootPath: root });
+
+  await assert.rejects(() => registry.call("list_files", {}, { signal: controller.signal }), (error) => error === reason);
+});
+
+test("ToolRegistry search does not convert cancellation into an unreadable-file omission", async (t) => {
+  const root = await makeFixture();
+  const target = path.join(root, "src", "index.js");
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("search cancelled"), { code: "OPERATION_CANCELLED", status: 409 });
+  const originalOpen = fs.open.bind(fs);
+  t.mock.method(fs, "open", async (filePath, ...args) => {
+    const handle = await originalOpen(filePath, ...args);
+    if (path.resolve(filePath) === path.resolve(target)) controller.abort(reason);
+    return handle;
+  });
+  const registry = new ToolRegistry({ rootPath: root });
+
+  await assert.rejects(
+    () => registry.call("search_code", { query: "find-me" }, { signal: controller.signal }),
+    (error) => error === reason
+  );
+});
+
+test("ToolRegistry cancellation terminates a command wrapper and descendant or fails closed", { timeout: 15_000 }, async (t) => {
+  const root = await makeFixture();
+  const pidFile = "command-cancel-pids.json";
+  const command = commandTreeFixture(pidFile);
+  const registry = new ToolRegistry({ rootPath: root, allowedCommands: [{ name: "tree", command }] });
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("command cancelled"), { code: "OPERATION_CANCELLED", status: 409 });
+  const pending = registry.call("run_command", { name: "tree" }, { approved: true, signal: controller.signal });
+  const pids = await waitForPidFile(path.join(root, pidFile));
+  t.after(() => {
+    stopProcess(pids.parent);
+    stopProcess(pids.child);
+  });
+
+  controller.abort(reason);
+  let rejected;
+  try {
+    await pending;
+    assert.fail("A cancelled command must not return success.");
+  } catch (error) {
+    rejected = error;
+  }
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  if (rejected.code === "PROCESS_TREE_TERMINATION_UNVERIFIED") {
+    assert.equal(rejected.operationCode, "OPERATION_CANCELLED");
+    assert.equal(rejected.treeTermination.treeTerminationVerified, false);
+    if (process.platform === "win32") {
+      t.skip("Windows taskkill tree verification is unavailable in this sandbox; the command failed closed.");
+      return;
+    }
+    assert.fail("POSIX process-group termination should be verifiable.");
+  }
+  assert.equal(rejected, reason);
+  assert.equal(rejected.treeTermination.treeTerminationVerified, true);
+  await waitForProcessesToStop([pids.parent, pids.child]);
+});
+
+test("ToolRegistry preserves OPERATION_TIMEOUT while terminating the command tree", { timeout: 15_000 }, async (t) => {
+  const root = await makeFixture();
+  const command = "node -e \"setInterval(() => {}, 1000)\"";
+  const registry = new ToolRegistry({ rootPath: root, allowedCommands: [{ name: "slow-signal", command }] });
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("operation deadline"), { code: "OPERATION_TIMEOUT", status: 408 });
+  const pending = registry.call("run_command", { name: "slow-signal" }, { approved: true, signal: controller.signal });
+  setTimeout(() => controller.abort(reason), 75);
+
+  await assert.rejects(pending, (error) => {
+    if (error.code === "PROCESS_TREE_TERMINATION_UNVERIFIED" && process.platform === "win32") {
+      assert.equal(error.operationCode, "OPERATION_TIMEOUT");
+      return true;
+    }
+    assert.equal(error, reason);
+    assert.equal(error.treeTermination.treeTerminationVerified, true);
+    return true;
+  });
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("ToolRegistry gives abort precedence when it overlaps command timeout and supports frozen reasons", { timeout: 15_000 }, async () => {
+  const root = await makeFixture();
+  const command = "node -e \"setInterval(() => {}, 1000)\"";
+  const registry = new ToolRegistry({ rootPath: root, allowedCommands: [{ name: "overlap", command }] });
+  const controller = new AbortController();
+  const reason = Object.freeze(Object.assign(new Error("overlap cancelled"), { code: "OPERATION_CANCELLED", status: 409 }));
+  const pending = registry.call("run_command", { name: "overlap", timeoutMs: 50 }, { approved: true, signal: controller.signal });
+  setTimeout(() => controller.abort(reason), 60);
+
+  await assert.rejects(pending, (error) => {
+    if (error.code === "PROCESS_TREE_TERMINATION_UNVERIFIED") {
+      assert.equal(error.trigger, "abort");
+      assert.equal(error.operationCode, "OPERATION_CANCELLED");
+      assert.equal(error.treeTermination.treeTerminationVerified, false);
+      return true;
+    }
+    assert.equal(error.code, "OPERATION_CANCELLED");
+    assert.equal(error.status, 409);
+    assert.equal(error.treeTermination.treeTerminationVerified, true);
+    return true;
+  });
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("ToolRegistry removes abort listeners after a normal command", async () => {
+  const root = await makeFixture();
+  const command = "node -e \"console.log('done')\"";
+  const registry = new ToolRegistry({ rootPath: root, allowedCommands: [{ name: "done", command }] });
+  const controller = new AbortController();
+  const result = await registry.call("run_command", { name: "done" }, { approved: true, signal: controller.signal });
+  assert.equal(result.result.exitCode, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+function commandTreeFixture(pidFile) {
+  const script = [
+    "const fs=require('node:fs')",
+    "const {spawn}=require('node:child_process')",
+    "const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true})",
+    `fs.writeFileSync('${pidFile}',JSON.stringify({parent:process.pid,child:child.pid}))`,
+    "setInterval(()=>{},1000)"
+  ].join(";");
+  return `node -e \"${script}\"`;
+}
+
+async function waitForPidFile(filePath) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+      if (Number.isSafeInteger(parsed.parent) && Number.isSafeInteger(parsed.child)) return parsed;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Timed out waiting for the command process fixture.");
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopProcess(pid) {
+  if (!processIsAlive(pid)) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {}
+}
+
+async function waitForProcessesToStop(pids) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (pids.every((pid) => !processIsAlive(pid))) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail("The cancelled command process tree remained alive.");
+}

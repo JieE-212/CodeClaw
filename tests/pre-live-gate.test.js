@@ -1,17 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createIsolatedProject } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptPath = path.join(rootPath, "scripts", "pre-live-gate.js");
 
 test("pre-live gate passes when real tester reports are aligned", async (t) => {
-  const fixture = await makeFixture("tester-1");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
-  const result = await runPreLive(fixture.args);
+  const fixture = await makeFixture(t, "tester-1");
+  const result = await runPreLive(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
   assert.equal(result.code, 0);
@@ -23,9 +21,8 @@ test("pre-live gate passes when real tester reports are aligned", async (t) => {
 });
 
 test("pre-live gate blocks dry-run tester ids", async (t) => {
-  const fixture = await makeFixture("tester-dry-run-1");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
-  const result = await runPreLive(fixture.args);
+  const fixture = await makeFixture(t, "tester-dry-run-1");
+  const result = await runPreLive(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
   assert.notEqual(result.code, 0);
@@ -33,9 +30,11 @@ test("pre-live gate blocks dry-run tester ids", async (t) => {
   assert.ok(report.blockers.some((item) => item.includes("dry-run tester ids cannot be used")));
 });
 
-async function makeFixture(testerId) {
+async function makeFixture(t, testerId) {
+  const isolated = await createIsolatedProject(t, rootPath, "codeclaw-pre-live-");
+  const projectRoot = isolated.projectRoot;
   const safeId = testerId.replace(/[^a-z0-9._-]/gi, "-").toLowerCase();
-  const runRoot = path.join(rootPath, "dist", `pre-live-test-${process.pid}-${Date.now()}-${safeId}`);
+  const runRoot = path.join(projectRoot, "dist", `pre-live-test-${safeId}`);
   const sessionPath = path.join(runRoot, "session");
   const rosterPath = path.join(runRoot, "TESTER_ROSTER.json");
   const jsonPath = path.join(runRoot, "TRIAL_PRE_LIVE_REPORT.json");
@@ -56,7 +55,7 @@ async function makeFixture(testerId) {
     ok: true,
     mode: "trial-tester-intake",
     decision: "READY_FOR_SESSION",
-    rosterRelativePath: path.relative(rootPath, rosterPath).split(path.sep).join("/"),
+    rosterRelativePath: path.relative(projectRoot, rosterPath).split(path.sep).join("/"),
     testers: [{
       id: testerId,
       language: "zh-CN",
@@ -84,7 +83,7 @@ async function makeFixture(testerId) {
     decision: "INTAKE_SESSION_READY",
     testerId,
     sessionFolder: sessionPath,
-    sessionRelativePath: path.relative(rootPath, sessionPath).split(path.sep).join("/"),
+    sessionRelativePath: path.relative(projectRoot, sessionPath).split(path.sep).join("/"),
     blockers: [],
     warnings: []
   });
@@ -94,7 +93,7 @@ async function makeFixture(testerId) {
     decision: "READY_TO_HOST",
     testerId,
     sessionFolder: sessionPath,
-    sessionRelativePath: path.relative(rootPath, sessionPath).split(path.sep).join("/"),
+    sessionRelativePath: path.relative(projectRoot, sessionPath).split(path.sep).join("/"),
     blockers: [],
     warnings: []
   });
@@ -104,7 +103,7 @@ async function makeFixture(testerId) {
     decision: "HOST_RUN_READY",
     testerId,
     sessionFolder: sessionPath,
-    sessionRelativePath: path.relative(rootPath, sessionPath).split(path.sep).join("/"),
+    sessionRelativePath: path.relative(projectRoot, sessionPath).split(path.sep).join("/"),
     blockers: [],
     warnings: []
   });
@@ -115,24 +114,25 @@ async function makeFixture(testerId) {
     blockers: [],
     warnings: []
   });
-  await writeSessionFiles(sessionPath, testerId);
+  await writeSessionFiles(sessionPath, testerId, projectRoot);
 
   return {
+    isolated,
     runRoot,
     jsonPath,
     args: [
       "--allow-custom-roster",
       "--tester", testerId,
-      "--roster", path.relative(rootPath, rosterPath),
-      "--dry-run", path.relative(rootPath, path.join(runRoot, "DRY_RUN.json")),
-      "--intake", path.relative(rootPath, path.join(runRoot, "INTAKE.json")),
-      "--intake-session", path.relative(rootPath, path.join(runRoot, "INTAKE_SESSION.json")),
-      "--host-ready", path.relative(rootPath, path.join(runRoot, "HOST_READY.json")),
-      "--host-run", path.relative(rootPath, path.join(runRoot, "HOST_RUN.json")),
-      "--status", path.relative(rootPath, path.join(runRoot, "STATUS.json")),
-      "--session", path.relative(rootPath, sessionPath),
-      "--json", path.relative(rootPath, jsonPath),
-      "--markdown", path.relative(rootPath, markdownPath)
+      "--roster", path.relative(projectRoot, rosterPath),
+      "--dry-run", path.relative(projectRoot, path.join(runRoot, "DRY_RUN.json")),
+      "--intake", path.relative(projectRoot, path.join(runRoot, "INTAKE.json")),
+      "--intake-session", path.relative(projectRoot, path.join(runRoot, "INTAKE_SESSION.json")),
+      "--host-ready", path.relative(projectRoot, path.join(runRoot, "HOST_READY.json")),
+      "--host-run", path.relative(projectRoot, path.join(runRoot, "HOST_RUN.json")),
+      "--status", path.relative(projectRoot, path.join(runRoot, "STATUS.json")),
+      "--session", path.relative(projectRoot, sessionPath),
+      "--json", path.relative(projectRoot, jsonPath),
+      "--markdown", path.relative(projectRoot, markdownPath)
     ]
   };
 }
@@ -150,7 +150,7 @@ function testerRecord(testerId) {
   };
 }
 
-async function writeSessionFiles(sessionPath, testerId) {
+async function writeSessionFiles(sessionPath, testerId, projectRoot) {
   await fs.writeFile(path.join(sessionPath, "BEGINNER_FIRST_LIVE_GUIDE.md"), "# Beginner Guide\n\nReconfirm consent.\n", "utf8");
   await fs.writeFile(path.join(sessionPath, "SESSION_BRIEF.md"), `# Session\n\nTester id: ${testerId}\n`, "utf8");
   await fs.writeFile(path.join(sessionPath, "HOST_RUNBOOK.md"), `# Runbook\n\nTester id: ${testerId}\n`, "utf8");
@@ -162,7 +162,7 @@ async function writeSessionFiles(sessionPath, testerId) {
     mode: "trial-session-pack",
     testerId,
     outputPath: sessionPath,
-    outputRelativePath: path.relative(rootPath, sessionPath).split(path.sep).join("/"),
+    outputRelativePath: path.relative(projectRoot, sessionPath).split(path.sep).join("/"),
     testerIntake: {
       id: testerId,
       consent: true,
@@ -177,18 +177,6 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function runPreLive(args) {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], { cwd: rootPath }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== "number") {
-        reject(error);
-        return;
-      }
-      resolve({
-        code: typeof error?.code === "number" ? error.code : 0,
-        stdout,
-        stderr
-      });
-    });
-  });
+function runPreLive(fixture) {
+  return fixture.isolated.execNodeScript("pre-live-gate.js", fixture.args, { label: "isolated pre-live gate" });
 }

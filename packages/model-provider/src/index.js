@@ -50,7 +50,7 @@ export class ModelProvider {
     return prepareModelOperation(this, operation, input);
   }
 
-  async executePrepared(prepared) {
+  async executePrepared(prepared, { signal } = {}) {
     const record = PREPARED_REQUESTS.get(prepared);
     if (!record || record.provider !== this) {
       throw new ModelTransportError("invalid_prepared_request", "Prepared model request is invalid or belongs to another provider.");
@@ -58,18 +58,27 @@ export class ModelProvider {
     if (record.consumed) {
       throw new ModelTransportError("prepared_request_consumed", "Prepared model request has already been consumed.");
     }
+    throwIfExecutionAborted(signal);
     record.consumed = true;
 
-    if (!record.networkRequired) return executeLocalPrepared(record);
+    if (!record.networkRequired) {
+      const localResult = await executeLocalPrepared(record);
+      throwIfExecutionAborted(signal);
+      return localResult;
+    }
     const payload = await requestJsonSafely({
       endpoint: record.endpoint,
       apiKey: record.apiKey,
       bodyBuffer: record.bodyBuffer,
-      ...record.transport
+      ...record.transport,
+      signal
     });
+    throwIfExecutionAborted(signal);
     const content = extractAssistantContent(payload);
     assertCredentialNotReflected(content, record.apiKey);
-    return resultForPreparedResponse(record, content);
+    const result = resultForPreparedResponse(record, content);
+    throwIfExecutionAborted(signal);
+    return result;
   }
 
   async embedding(input) {
@@ -77,6 +86,18 @@ export class ModelProvider {
       provider: this.name,
       vector: simpleEmbedding(input)
     };
+  }
+}
+
+function throwIfExecutionAborted(signal) {
+  if (signal?.aborted) {
+    if (signal.reason?.code === "OPERATION_TIMEOUT") {
+      throw new ModelTransportError("request_timeout", "Model request timed out.", { status: 408 });
+    }
+    if (signal.reason?.code === "OPERATION_COMMIT_TIMEOUT") {
+      throw new ModelTransportError("request_timeout", "The local model-result commit timed out.", { status: 504 });
+    }
+    throw new ModelTransportError("request_cancelled", "Model request was cancelled.");
   }
 }
 

@@ -2,175 +2,308 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { SKIPPED_DIRECTORIES } from "../../shared/src/constants.js";
-import { createIgnoreDecisionMatcher } from "../../shared/src/ignore-utils.js";
+import { createStrictIgnoreMatcher } from "../../shared/src/ignore-utils.js";
+import { throwIfAborted } from "../../shared/src/operation-manager.js";
 import { isSensitiveDirectory, isSensitiveFile, relativePath } from "../../shared/src/path-utils.js";
+import { RUNTIME_BUDGETS, boundedBudgetValue, runtimeBudgetError } from "../../shared/src/runtime-budget.js";
+import { openStableDirectory } from "../../shared/src/stable-directory.js";
 import { captureWorkspaceIdentity } from "../../shared/src/workspace-identity.js";
 
 export const DATA_BOUNDARY_POLICY_VERSION = "codeclaw-data-boundary-v2";
 export const DISPOSABLE_COPY_MARKER = ".codeclaw-disposable-copy.json";
 
-const DEFAULT_MAX_FILES = 100_000;
-const DEFAULT_MAX_BYTES = 10 * 1024 * 1024 * 1024;
 const DEFAULT_READ_MAX_FILE_BYTES = 1024 * 1024;
 const DEFAULT_READ_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const VCS_DIRECTORIES = new Set([".git", ".hg", ".svn"]);
 const NORMALIZED_SKIPPED_DIRECTORIES = new Set([...SKIPPED_DIRECTORIES].map((item) => item.toLocaleLowerCase("en-US")));
 
 export async function buildDataBoundaryManifest(rootPath, options = {}) {
+  const signal = options.signal || null;
+  throwIfAborted(signal);
   const requestedRoot = path.resolve(rootPath || ".");
   const requestedStat = await fs.lstat(requestedRoot, { bigint: true }).catch((error) => {
+    throwIfAborted(signal);
     if (error.code === "ENOENT") throw boundaryError("DATA_BOUNDARY_ROOT_MISSING", "The data-boundary source does not exist.");
     throw error;
   });
+  throwIfAborted(signal);
   if (!requestedStat.isDirectory() || requestedStat.isSymbolicLink()) {
     throw boundaryError("DATA_BOUNDARY_ROOT_UNSAFE", "The data-boundary source must be a normal directory, not a file, symbolic link, or junction.");
   }
-  const workspace = await captureWorkspaceIdentity(rootPath);
+  const workspace = await captureWorkspaceIdentity(requestedRoot);
+  throwIfAborted(signal);
   const root = workspace.rootPath;
   const suppliedIgnoreMatcher = options.ignoreMatcher || null;
-  const maxFiles = positiveLimit(options.maxFiles, DEFAULT_MAX_FILES);
-  const maxBytes = positiveLimit(options.maxBytes, DEFAULT_MAX_BYTES);
+  const limits = normalizeDataBoundaryBudget(options);
   const allowMarker = Boolean(options.allowDisposableMarker);
   const files = [];
   const directories = [];
   const excluded = [];
   const blockers = [];
   const portablePaths = new Map();
-  let totalBytes = 0;
-
-  await walk(root, []);
-  const finalWorkspace = await captureWorkspaceIdentity(root);
-  if (finalWorkspace.digest !== workspace.digest) {
-    throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", "The source workspace changed while CodeClaw was building its data-boundary manifest.");
-  }
-
-  files.sort(comparePath);
-  directories.sort(comparePath);
-  excluded.sort(comparePath);
-  blockers.sort(comparePath);
-  const payload = {
-    schemaVersion: 1,
-    policyVersion: DATA_BOUNDARY_POLICY_VERSION,
-    directories: directories.map(payloadDirectory),
-    files: files.map(payloadFile)
-  };
-  const payloadDigest = digestJson(payload);
-  const entryIdentityDigest = digestJson({
-    schemaVersion: 1,
-    policyVersion: DATA_BOUNDARY_POLICY_VERSION,
-    directories,
-    files
-  });
-  const manifestDigest = digestJson({
-    schemaVersion: 1,
-    policyVersion: DATA_BOUNDARY_POLICY_VERSION,
-    rootIdentity: workspace.digest,
-    directories,
+  const state = {
+    limits,
+    signal,
     files,
-    excluded,
-    blockers
-  });
-
-  return {
-    schemaVersion: 1,
-    policyVersion: DATA_BOUNDARY_POLICY_VERSION,
     directories,
-    files,
-    rootPath: root,
-    rootIdentity: workspace.digest,
-    fileCount: files.length,
-    directoryCount: directories.length,
-    totalBytes,
     excluded,
     blockers,
-    eligible: blockers.length === 0,
-    payloadDigest,
-    entryIdentityDigest,
-    manifestDigest,
-    createdAt: new Date().toISOString()
+    portablePaths,
+    totalBytes: 0,
+    used: { entriesVisited: 0, directoriesVisited: 0, maxDepthReached: 0 },
+    ignoreSession: null
   };
+  const ignoreSession = suppliedIgnoreMatcher ? null : createStrictIgnoreMatcher(root, {
+    profile: "dataBoundary",
+    signal,
+    maxFiles: limits.maxIgnoreFiles,
+    maxFileBytes: limits.maxIgnoreFileBytes,
+    maxTotalBytes: limits.maxIgnoreTotalBytes,
+    maxRules: limits.maxIgnoreRules,
+    maxRuleEvaluations: limits.maxIgnoreRuleEvaluations,
+    maxPatternChars: limits.maxIgnorePatternChars,
+    maxMatchSteps: limits.maxIgnoreMatchSteps
+  });
+  state.ignoreSession = ignoreSession;
+  const isIgnored = suppliedIgnoreMatcher
+    ? async (relative, isDirectory) => {
+      throwIfAborted(signal);
+      const ignored = await suppliedIgnoreMatcher(relative, isDirectory, { signal });
+      throwIfAborted(signal);
+      return Boolean(ignored);
+    }
+    : ignoreSession.isIgnoredTraversed;
 
-  async function walk(currentPath, parentIgnoreRules) {
-    const before = await safeLstat(currentPath);
+  try {
+    await walk(root, 0);
+    throwIfAborted(signal);
+    await ignoreSession?.verify();
+    throwIfAborted(signal);
+    const finalWorkspace = await captureWorkspaceIdentity(root);
+    throwIfAborted(signal);
+    if (finalWorkspace.digest !== workspace.digest) {
+      throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", "The source workspace changed while CodeClaw was building its data-boundary manifest.");
+    }
+
+    files.sort(comparePath);
+    directories.sort(comparePath);
+    excluded.sort(comparePath);
+    blockers.sort(comparePath);
+    const payload = {
+      schemaVersion: 1,
+      policyVersion: DATA_BOUNDARY_POLICY_VERSION,
+      directories: directories.map(payloadDirectory),
+      files: files.map(payloadFile)
+    };
+    const payloadDigest = digestJson(payload);
+    const entryIdentityDigest = digestJson({
+      schemaVersion: 1,
+      policyVersion: DATA_BOUNDARY_POLICY_VERSION,
+      directories,
+      files
+    });
+    const manifestDigest = digestJson({
+      schemaVersion: 1,
+      policyVersion: DATA_BOUNDARY_POLICY_VERSION,
+      rootIdentity: workspace.digest,
+      directories,
+      files,
+      excluded,
+      blockers
+    });
+    const budget = dataBoundaryBudgetEvidence(state);
+
+    return {
+      schemaVersion: 1,
+      policyVersion: DATA_BOUNDARY_POLICY_VERSION,
+      directories,
+      files,
+      rootPath: root,
+      rootIdentity: workspace.digest,
+      fileCount: files.length,
+      directoryCount: directories.length,
+      totalBytes: state.totalBytes,
+      excluded,
+      blockers,
+      eligible: blockers.length === 0,
+      payloadDigest,
+      entryIdentityDigest,
+      manifestDigest,
+      truncated: false,
+      truncationReasons: [],
+      budget,
+      createdAt: new Date().toISOString()
+    };
+  } catch (error) {
+    throw normalizeDataBoundaryBuildError(error, state);
+  }
+
+  async function walk(currentPath, depth) {
+    throwIfAborted(signal);
+    if (depth > limits.maxDepth) {
+      throw dataBoundaryBudgetError(
+        state,
+        "DATA_BOUNDARY_DEPTH_LIMIT",
+        "max-depth",
+        "data-boundary-depth",
+        limits.maxDepth,
+        depth,
+        `The source exceeds the ${limits.maxDepth}-level data-boundary traversal depth; CodeClaw stopped instead of producing a partial manifest.`
+      );
+    }
+    const directoriesObserved = state.used.directoriesVisited + 1;
+    if (directoriesObserved > limits.maxDirectories) {
+      throw dataBoundaryBudgetError(
+        state,
+        "DATA_BOUNDARY_DIRECTORY_LIMIT",
+        "max-directories",
+        "data-boundary-directories",
+        limits.maxDirectories,
+        directoriesObserved,
+        `The source contains more than ${limits.maxDirectories} traversed directories; CodeClaw stopped instead of producing a partial manifest.`
+      );
+    }
+    state.used.directoriesVisited = directoriesObserved;
+    state.used.maxDepthReached = Math.max(state.used.maxDepthReached, depth);
+
+    const before = await safeLstat(currentPath, signal);
     if (!before.isDirectory() || before.isSymbolicLink()) {
-      blockers.push({ path: relativePath(root, currentPath) || ".", reason: "unsafe-directory" });
+      recordBoundaryItem(state, "blocker", { path: relativePath(root, currentPath) || ".", reason: "unsafe-directory" });
       return;
     }
-    const currentRel = relativePath(root, currentPath);
-    const ignoreRules = suppliedIgnoreMatcher
-      ? [{ basePath: "", decide: (entryPath, isDirectory) => suppliedIgnoreMatcher(entryPath, isDirectory) ? true : null }]
-      : [...parentIgnoreRules, ...await loadDirectoryIgnoreRule(currentPath, currentRel)];
-    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    const entries = [];
+    const openedDirectory = await openStableDirectory(root, currentPath, "build the data-boundary manifest", signal);
+    for await (const entry of openedDirectory.directory) {
+      throwIfAborted(signal);
+      const entriesObserved = state.used.entriesVisited + 1;
+      if (entriesObserved > limits.maxEntries) {
+        throw dataBoundaryBudgetError(
+          state,
+          "DATA_BOUNDARY_ENTRY_LIMIT",
+          "max-entries",
+          "data-boundary-entries",
+          limits.maxEntries,
+          entriesObserved,
+          `The source contains more than ${limits.maxEntries} filesystem entries; CodeClaw stopped instead of producing a partial manifest.`
+        );
+      }
+      state.used.entriesVisited = entriesObserved;
+      entries.push(entry);
+    }
+    throwIfAborted(signal);
+    await openedDirectory.verify();
     entries.sort((left, right) => left.name.localeCompare(right.name));
 
     for (const entry of entries) {
-      const absolutePath = path.join(currentPath, entry.name);
-      const rel = relativePath(root, absolutePath);
-      const portableIssue = registerPortablePath(rel, portablePaths);
-      if (portableIssue) {
-        blockers.push({ path: rel, reason: portableIssue.reason, conflictsWith: portableIssue.conflictsWith || null });
-        continue;
-      }
-
-      const stat = await safeLstat(absolutePath);
-      if (stat.isSymbolicLink()) {
-        blockers.push({ path: rel, reason: "symbolic-link" });
-        continue;
-      }
-      if (entry.name === DISPOSABLE_COPY_MARKER) {
-        if (allowMarker && stat.isFile()) excluded.push({ path: rel, reason: "codeclaw-marker" });
-        else blockers.push({ path: rel, reason: "reserved-codeclaw-marker" });
-        continue;
-      }
-      if (stat.isDirectory()) {
-        if (isSensitiveDirectory(entry.name)) {
-          blockers.push({ path: rel, reason: "sensitive-directory" });
+      throwIfAborted(signal);
+      await openedDirectory.verify();
+      try {
+        const absolutePath = path.join(currentPath, entry.name);
+        const rel = relativePath(root, absolutePath);
+        const portableIssue = registerPortablePath(rel, portablePaths);
+        if (portableIssue) {
+          recordBoundaryItem(state, "blocker", { path: rel, reason: portableIssue.reason, conflictsWith: portableIssue.conflictsWith || null });
           continue;
         }
-        const exclusion = directoryExclusion(entry.name, rel, ignoreRules);
-        if (exclusion) {
-          excluded.push({ path: rel, reason: exclusion });
+
+        const stat = await safeLstat(absolutePath, signal);
+        if (stat.isSymbolicLink()) {
+          recordBoundaryItem(state, "blocker", { path: rel, reason: "symbolic-link" });
           continue;
         }
-        directories.push({ path: rel, mode: Number(stat.mode & 0o777n), sourceIdentity: statIdentity(stat) });
-        await walk(absolutePath, ignoreRules);
-        continue;
-      }
-      if (!stat.isFile()) {
-        blockers.push({ path: rel, reason: "unsupported-filesystem-entry" });
-        continue;
-      }
-      if (stat.nlink !== 1n) {
-        blockers.push({ path: rel, reason: "hard-link" });
-        continue;
-      }
-      if (isSensitiveFile(entry.name)) {
-        blockers.push({ path: rel, reason: "sensitive-file" });
-        continue;
-      }
-      if (isIgnoredByRules(rel, false, ignoreRules)) {
-        excluded.push({ path: rel, reason: "gitignore" });
-        continue;
-      }
-      if (files.length >= maxFiles) {
-        throw boundaryError("DATA_BOUNDARY_FILE_LIMIT", `The source contains more than ${maxFiles} copyable files; CodeClaw stopped instead of producing a partial manifest.`);
-      }
+        if (entry.name === DISPOSABLE_COPY_MARKER) {
+          if (allowMarker && stat.isFile()) recordBoundaryItem(state, "excluded", { path: rel, reason: "codeclaw-marker" });
+          else recordBoundaryItem(state, "blocker", { path: rel, reason: "reserved-codeclaw-marker" });
+          continue;
+        }
+        if (stat.isDirectory()) {
+          if (isSensitiveDirectory(entry.name)) {
+            recordBoundaryItem(state, "blocker", { path: rel, reason: "sensitive-directory" });
+            continue;
+          }
+          const exclusion = staticDirectoryExclusion(entry.name)
+            || (await isIgnored(rel, true) ? "gitignore" : "");
+          throwIfAborted(signal);
+          if (exclusion) {
+            recordBoundaryItem(state, "excluded", { path: rel, reason: exclusion });
+            continue;
+          }
+          directories.push({ path: rel, mode: Number(stat.mode & 0o777n), sourceIdentity: statIdentity(stat) });
+          await walk(absolutePath, depth + 1);
+          continue;
+        }
+        if (!stat.isFile()) {
+          recordBoundaryItem(state, "blocker", { path: rel, reason: "unsupported-filesystem-entry" });
+          continue;
+        }
+        if (stat.nlink !== 1n) {
+          recordBoundaryItem(state, "blocker", { path: rel, reason: "hard-link" });
+          continue;
+        }
+        if (isSensitiveFile(entry.name)) {
+          recordBoundaryItem(state, "blocker", { path: rel, reason: "sensitive-file" });
+          continue;
+        }
+        if (await isIgnored(rel, false)) {
+          throwIfAborted(signal);
+          recordBoundaryItem(state, "excluded", { path: rel, reason: "gitignore" });
+          continue;
+        }
+        const filesObserved = files.length + 1;
+        if (filesObserved > limits.maxFiles) {
+          throw dataBoundaryBudgetError(
+            state,
+            "DATA_BOUNDARY_FILE_LIMIT",
+            "max-files",
+            "data-boundary-files",
+            limits.maxFiles,
+            filesObserved,
+            `The source contains more than ${limits.maxFiles} copyable files; CodeClaw stopped instead of producing a partial manifest.`
+          );
+        }
 
-      const fingerprint = await hashStableFile(absolutePath, stat);
-      totalBytes += fingerprint.size;
-      if (totalBytes > maxBytes) {
-        throw boundaryError("DATA_BOUNDARY_BYTE_LIMIT", `The source contains more than ${maxBytes} copyable bytes; CodeClaw stopped instead of producing a partial manifest.`);
+        const remainingBytes = limits.maxTotalBytes - state.totalBytes;
+        const byteLimitError = (fileBytes) => dataBoundaryBudgetError(
+          state,
+          "DATA_BOUNDARY_BYTE_LIMIT",
+          "max-total-bytes",
+          "data-boundary-total-bytes",
+          limits.maxTotalBytes,
+          safeBigIntNumber(BigInt(state.totalBytes) + BigInt(fileBytes)),
+          `The source contains more than ${limits.maxTotalBytes} copyable bytes; CodeClaw stopped instead of producing a partial manifest.`
+        );
+        if (stat.size > BigInt(remainingBytes)) throw byteLimitError(stat.size);
+        const fingerprint = await hashStableFile(absolutePath, stat, signal, {
+          maxBytes: remainingBytes,
+          byteLimitError
+        });
+        const bytesObserved = state.totalBytes + fingerprint.size;
+        if (bytesObserved > limits.maxTotalBytes) {
+          throw dataBoundaryBudgetError(
+            state,
+            "DATA_BOUNDARY_BYTE_LIMIT",
+            "max-total-bytes",
+            "data-boundary-total-bytes",
+            limits.maxTotalBytes,
+            bytesObserved,
+            `The source contains more than ${limits.maxTotalBytes} copyable bytes; CodeClaw stopped instead of producing a partial manifest.`
+          );
+        }
+        state.totalBytes = bytesObserved;
+        files.push({
+          path: rel,
+          size: fingerprint.size,
+          sha256: fingerprint.sha256,
+          mode: Number(stat.mode & 0o777n),
+          sourceIdentity: statIdentity(stat)
+        });
+      } finally {
+        throwIfAborted(signal);
+        await openedDirectory.verify();
       }
-      files.push({
-        path: rel,
-        size: fingerprint.size,
-        sha256: fingerprint.sha256,
-        mode: Number(stat.mode & 0o777n),
-        sourceIdentity: statIdentity(stat)
-      });
     }
 
-    const after = await safeLstat(currentPath);
+    const after = await safeLstat(currentPath, signal);
     if (!sameStableStat(before, after) || !after.isDirectory() || after.isSymbolicLink()) {
       throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A source directory changed while CodeClaw was reading it: ${relativePath(root, currentPath) || "."}.`);
     }
@@ -512,10 +645,16 @@ function canonicalFilesystemPath(value) {
   return process.platform === "win32" ? resolved.toLocaleLowerCase("en-US") : resolved;
 }
 
-async function hashStableFile(filePath, expectedStat) {
+async function hashStableFile(filePath, expectedStat, signal = null, {
+  maxBytes = Number.MAX_SAFE_INTEGER,
+  byteLimitError = null
+} = {}) {
+  throwIfAborted(signal);
   const handle = await fs.open(filePath, "r");
   try {
+    throwIfAborted(signal);
     const before = await handle.stat({ bigint: true });
+    throwIfAborted(signal);
     if (!before.isFile() || before.nlink !== 1n || !sameStableStat(before, expectedStat)) {
       throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A source file changed while CodeClaw was opening it: ${filePath}.`);
     }
@@ -523,19 +662,38 @@ async function hashStableFile(filePath, expectedStat) {
     const buffer = Buffer.allocUnsafe(256 * 1024);
     let total = 0;
     for (;;) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      throwIfAborted(signal);
+      const remaining = Math.max(0, maxBytes - total);
+      const readLength = Math.min(buffer.length, remaining + 1);
+      const { bytesRead } = await handle.read(buffer, 0, readLength, null);
+      throwIfAborted(signal);
       if (!bytesRead) break;
-      hash.update(buffer.subarray(0, bytesRead));
       total += bytesRead;
+      if (total > maxBytes) {
+        throw typeof byteLimitError === "function"
+          ? byteLimitError(total)
+          : boundaryError("DATA_BOUNDARY_BYTE_LIMIT", `The file exceeded its ${maxBytes}-byte hashing budget.`, 413);
+      }
+      hash.update(buffer.subarray(0, bytesRead));
     }
     const after = await handle.stat({ bigint: true });
+    throwIfAborted(signal);
     if (!sameStableStat(before, after) || BigInt(total) !== after.size) {
       throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A source file changed while CodeClaw was hashing it: ${filePath}.`);
     }
     return { size: total, sha256: hash.digest("hex") };
   } finally {
-    await handle.close();
+    try {
+      await handle.close();
+    } catch (error) {
+      throwIfAborted(signal);
+      throw error;
+    }
   }
+}
+
+function safeBigIntNumber(value) {
+  return value > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(value);
 }
 
 async function copyStableFile(sourcePath, targetPath, expectedStat, manifestFile) {
@@ -574,12 +732,125 @@ async function copyStableFile(sourcePath, targetPath, expectedStat, manifestFile
   }
 }
 
-function directoryExclusion(name, rel, ignoreRules) {
+function staticDirectoryExclusion(name) {
   const normalizedName = name.toLocaleLowerCase("en-US");
   if (VCS_DIRECTORIES.has(normalizedName)) return "vcs-metadata";
   if (NORMALIZED_SKIPPED_DIRECTORIES.has(normalizedName)) return "generated-directory";
-  if (isIgnoredByRules(rel, true, ignoreRules)) return "gitignore";
   return "";
+}
+
+function normalizeDataBoundaryBudget(options) {
+  const hard = RUNTIME_BUDGETS.dataBoundary;
+  return {
+    maxFiles: boundedBudgetValue(options.maxFiles, hard.maxFiles),
+    maxTotalBytes: boundedBudgetValue(options.maxBytes ?? options.maxTotalBytes, hard.maxTotalBytes),
+    maxEntries: boundedBudgetValue(options.maxEntries, hard.maxEntries),
+    maxDirectories: boundedBudgetValue(options.maxDirectories, hard.maxDirectories),
+    maxDepth: boundedBudgetValue(options.maxDepth, hard.maxDepth, hard.maxDepth, 0),
+    maxExcludedItems: boundedBudgetValue(options.maxExcludedItems, hard.maxExcludedItems),
+    maxBlockerItems: boundedBudgetValue(options.maxBlockerItems, hard.maxBlockerItems),
+    maxIgnoreFiles: boundedBudgetValue(options.maxIgnoreFiles, hard.maxIgnoreFiles),
+    maxIgnoreFileBytes: boundedBudgetValue(options.maxIgnoreFileBytes, hard.maxIgnoreFileBytes),
+    maxIgnoreTotalBytes: boundedBudgetValue(options.maxIgnoreTotalBytes, hard.maxIgnoreTotalBytes),
+    maxIgnoreRules: boundedBudgetValue(options.maxIgnoreRules, hard.maxIgnoreRules),
+    maxIgnoreRuleEvaluations: boundedBudgetValue(options.maxIgnoreRuleEvaluations, hard.maxIgnoreRuleEvaluations),
+    maxIgnorePatternChars: boundedBudgetValue(options.maxIgnorePatternChars, hard.maxIgnorePatternChars),
+    maxIgnoreMatchSteps: boundedBudgetValue(options.maxIgnoreMatchSteps, hard.maxIgnoreMatchSteps)
+  };
+}
+
+function recordBoundaryItem(state, kind, item) {
+  const isExcluded = kind === "excluded";
+  const collection = isExcluded ? state.excluded : state.blockers;
+  const limit = isExcluded ? state.limits.maxExcludedItems : state.limits.maxBlockerItems;
+  const observed = collection.length + 1;
+  if (observed > limit) {
+    const label = isExcluded ? "excluded items" : "blocking items";
+    throw dataBoundaryBudgetError(
+      state,
+      isExcluded ? "DATA_BOUNDARY_EXCLUDED_LIMIT" : "DATA_BOUNDARY_BLOCKER_LIMIT",
+      isExcluded ? "max-excluded-items" : "max-blocker-items",
+      isExcluded ? "data-boundary-excluded-items" : "data-boundary-blocker-items",
+      limit,
+      observed,
+      `The source contains more than ${limit} ${label}; CodeClaw stopped instead of omitting data-boundary evidence.`
+    );
+  }
+  collection.push(item);
+}
+
+function dataBoundaryBudgetError(state, code, reason, operation, limit, observed, message) {
+  const error = runtimeBudgetError(code, message, { operation, limit, observed, status: 413 });
+  error.runtimeBudget.reason = reason;
+  error.budget = dataBoundaryBudgetEvidence(state, true, [reason]);
+  return error;
+}
+
+function dataBoundaryBudgetEvidence(state, truncated = false, reasons = []) {
+  const ignore = state.ignoreSession?.evidence() || {
+    used: {
+      filesRead: 0,
+      bytesRead: 0,
+      identityChecks: 0,
+      cacheEntries: 0,
+      rulesLoaded: 0,
+      ruleEvaluations: 0,
+      maxPatternCharsObserved: 0,
+      matchSteps: 0
+    }
+  };
+  return {
+    operation: "data-boundary-manifest",
+    limits: { ...state.limits },
+    used: {
+      ...state.used,
+      filesCollected: state.files.length,
+      totalBytes: state.totalBytes,
+      directoriesCollected: state.directories.length,
+      excludedItemsStored: state.excluded.length,
+      blockerItemsStored: state.blockers.length,
+      portablePathsTracked: state.portablePaths.size,
+      ignoreFilesRead: ignore.used.filesRead,
+      ignoreBytesRead: ignore.used.bytesRead,
+      ignoreIdentityChecks: ignore.used.identityChecks,
+      ignoreCacheEntries: ignore.used.cacheEntries,
+      ignoreRulesLoaded: ignore.used.rulesLoaded,
+      ignoreRuleEvaluations: ignore.used.ruleEvaluations,
+      ignoreMaxPatternCharsObserved: ignore.used.maxPatternCharsObserved,
+      ignoreMatchSteps: ignore.used.matchSteps
+    },
+    truncated,
+    reasons: [...new Set(reasons)].sort()
+  };
+}
+
+function normalizeDataBoundaryBuildError(error, state) {
+  if (error?.code?.startsWith("DATA_BOUNDARY_") || error?.code?.startsWith("OPERATION_")) return error;
+  if (error?.code === "GITIGNORE_RUNTIME_BUDGET_EXCEEDED") {
+    const evidence = error.runtimeBudget || {};
+    const reason = String(evidence.operation || "gitignore-runtime-budget");
+    const wrapped = runtimeBudgetError(
+      "DATA_BOUNDARY_IGNORE_BUDGET_EXCEEDED",
+      "CodeClaw stopped because .gitignore processing exceeded the data-boundary runtime budget; no partial manifest was produced.",
+      {
+        operation: reason,
+        limit: evidence.limit,
+        observed: evidence.observed,
+        status: 413
+      }
+    );
+    wrapped.runtimeBudget.reason = reason;
+    wrapped.budget = dataBoundaryBudgetEvidence(state, true, [reason]);
+    return wrapped;
+  }
+  const ignoreMappings = {
+    GITIGNORE_UNSAFE: ["DATA_BOUNDARY_IGNORE_UNSAFE", "A .gitignore is not a normal owned file, so CodeClaw refused to guess the copy boundary."],
+    GITIGNORE_CHANGED: ["DATA_BOUNDARY_SOURCE_CHANGED", "A .gitignore changed while CodeClaw was building the data boundary."],
+    GITIGNORE_INVALID_UTF8: ["DATA_BOUNDARY_IGNORE_UNREADABLE", "A .gitignore is not valid UTF-8, so CodeClaw refused to guess the copy boundary."],
+    GITIGNORE_UNREADABLE: ["DATA_BOUNDARY_IGNORE_UNREADABLE", "CodeClaw could not safely read .gitignore, so it refused to guess the copy boundary."]
+  };
+  const mapped = ignoreMappings[error?.code];
+  return mapped ? boundaryError(mapped[0], mapped[1]) : error;
 }
 
 function registerPortablePath(rel, seen) {
@@ -609,10 +880,14 @@ function resolveManifestPath(rootPath, relative) {
   return absolute;
 }
 
-async function safeLstat(targetPath) {
+async function safeLstat(targetPath, signal = null) {
+  throwIfAborted(signal);
   try {
-    return await fs.lstat(targetPath, { bigint: true });
+    const stat = await fs.lstat(targetPath, { bigint: true });
+    throwIfAborted(signal);
+    return stat;
   } catch (error) {
+    throwIfAborted(signal);
     if (error.code === "ENOENT") throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `A data-boundary path disappeared during inspection: ${targetPath}.`);
     throw error;
   }
@@ -663,54 +938,6 @@ function payloadDirectory(directory) {
 
 function payloadFile(file) {
   return { path: file.path, size: file.size, sha256: file.sha256, mode: file.mode };
-}
-
-async function loadDirectoryIgnoreRule(directoryPath, basePath) {
-  const ignorePath = path.join(directoryPath, ".gitignore");
-  let handle;
-  let found = false;
-  try {
-    const before = await fs.lstat(ignorePath, { bigint: true });
-    found = true;
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) {
-      throw boundaryError("DATA_BOUNDARY_IGNORE_UNSAFE", `${basePath ? `${basePath}/` : ""}.gitignore is not a normal owned file.`);
-    }
-    handle = await fs.open(ignorePath, "r");
-    const opened = await handle.stat({ bigint: true });
-    if (!sameStableStat(before, opened) || !opened.isFile() || opened.nlink !== 1n) {
-      throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `${basePath ? `${basePath}/` : ""}.gitignore changed before CodeClaw could read it.`);
-    }
-    const rawContent = await handle.readFile();
-    let content;
-    try {
-      content = new TextDecoder("utf-8", { fatal: true }).decode(rawContent);
-    } catch {
-      throw boundaryError("DATA_BOUNDARY_IGNORE_UNREADABLE", `${basePath ? `${basePath}/` : ""}.gitignore is not valid UTF-8, so CodeClaw refused to guess the copy boundary.`);
-    }
-    const after = await handle.stat({ bigint: true });
-    const pathAfter = await fs.lstat(ignorePath, { bigint: true });
-    if (!sameStableStat(opened, after) || !sameEntity(opened, pathAfter)) {
-      throw boundaryError("DATA_BOUNDARY_SOURCE_CHANGED", `${basePath ? `${basePath}/` : ""}.gitignore changed during inspection.`);
-    }
-    return [{ basePath, decide: createIgnoreDecisionMatcher(content) }];
-  } catch (error) {
-    if (error.code === "ENOENT" && !found) return [];
-    if (error.code?.startsWith("DATA_BOUNDARY_")) throw error;
-    throw boundaryError("DATA_BOUNDARY_IGNORE_UNREADABLE", `CodeClaw could not read ${basePath ? `${basePath}/` : ""}.gitignore, so it refused to guess the copy boundary.`);
-  } finally {
-    await handle?.close();
-  }
-}
-
-function isIgnoredByRules(rel, isDirectory, rules) {
-  let decision = null;
-  for (const rule of rules) {
-    const scoped = rule.basePath ? path.posix.relative(rule.basePath, rel) : rel;
-    if (!scoped || scoped.startsWith("../") || scoped === "..") continue;
-    const next = rule.decide(scoped, isDirectory);
-    if (next !== null && next !== undefined) decision = next;
-  }
-  return decision === true;
 }
 
 async function assertWorkspaceAndParents(
@@ -768,10 +995,6 @@ async function assertWorkspaceAndParents(
 
 function comparePath(left, right) {
   return String(left.path || "").localeCompare(String(right.path || ""));
-}
-
-function positiveLimit(value, fallback) {
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
 function digestJson(value) {

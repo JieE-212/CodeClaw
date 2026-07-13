@@ -1,26 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptPath = path.join(rootPath, "scripts", "run-intake-review-dry-run.js");
 
 test("intake-review dry run rehearses an anonymous tester without packaged local roster", async (t) => {
-  const runId = `test-intake-review-${process.pid}-${Date.now()}`;
-  const runPath = path.join(rootPath, "dist", "trial-dry-runs", runId);
+  const resources = await createTestResources(t, "codeclaw-intake-review-");
+  const isolatedProject = await resources.copyProject(rootPath);
+  const scriptPath = path.join(isolatedProject, "scripts", "run-intake-review-dry-run.js");
+  const runId = "test-intake-review-isolated";
+  const runPath = path.join(isolatedProject, "dist", "trial-dry-runs", runId);
   const jsonPath = path.join(runPath, "DRY_RUN_REPORT.json");
   const markdownPath = path.join(runPath, "DRY_RUN_REPORT.md");
-  t.after(() => fs.rm(runPath, { recursive: true, force: true }));
 
-  const result = await runDryRun([
+  const result = await resources.execFile(process.execPath, [scriptPath,
     "--force",
     "--run-id", runId,
-    "--json", path.relative(rootPath, jsonPath),
-    "--markdown", path.relative(rootPath, markdownPath)
-  ]);
+    "--json", path.relative(isolatedProject, jsonPath),
+    "--markdown", path.relative(isolatedProject, markdownPath)
+  ], {
+    cwd: isolatedProject,
+    maxBuffer: 1024 * 1024 * 5,
+    label: "isolated intake-review dry run"
+  });
   const report = JSON.parse(await fs.readFile(jsonPath, "utf8"));
 
   assert.equal(result.code, 0);
@@ -35,22 +40,6 @@ test("intake-review dry run rehearses an anonymous tester without packaged local
   assert.equal(await exists(path.join(runPath, "package", ".codeclaw")), false);
   assert.equal(await exists(path.join(runPath, "package", "dist", "trial-dry-runs")), false);
 });
-
-function runDryRun(args) {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], { cwd: rootPath, maxBuffer: 1024 * 1024 * 5 }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== "number") {
-        reject(error);
-        return;
-      }
-      resolve({
-        code: typeof error?.code === "number" ? error.code : 0,
-        stdout,
-        stderr
-      });
-    });
-  });
-}
 
 async function exists(targetPath) {
   try {

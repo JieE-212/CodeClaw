@@ -42,7 +42,7 @@ await withAutomationResources(async (scope) => {
   await waitForHealth();
   const scan = await request("/api/repo/scan", { path: rootPath });
   const task = await request("/api/tasks/create", { goal: "explain CodeClaw memory and context selection flow", rootPath: scan.profile.rootPath });
-  const plan = await request("/api/agent/plan", { goal: task.task.goal, repoProfile: scan.profile, taskId: task.task.id });
+  const plan = await request("/api/agent/plan", { goal: task.task.goal, taskId: task.task.id });
   const context = (await previewAndApproveModelOperation(request, {
     operation: "context-files",
     taskId: task.task.id

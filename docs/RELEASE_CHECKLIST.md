@@ -2,6 +2,8 @@
 
 Use this checklist before sharing the MVP with another tester.
 
+Current status: real-person testing is paused. This checklist does not authorize a new live session, rerunning tester-2 after-live, or creating tester-3. Tester-2 remains `AFTER_LIVE_BLOCKED` and remediation remains `REMEDIATION_HOLD`.
+
 ## Environment
 
 - Node.js 20 or newer.
@@ -11,6 +13,8 @@ Use this checklist before sharing the MVP with another tester.
 ## Required Checks
 
 Run these commands sequentially because several pilots temporarily patch and restore fixture files.
+
+`npm.cmd test` is bounded to concurrency 4. The final Stage 3.0.14 bounded full-suite baseline is 398 total, 394 pass, 0 fail, and 4 environment-only skips. The single-concurrency full baseline was 397/393/0/4; its sole subsequently added file-growth budget regression also passed at concurrency 1. i18n has 723 keys per language with 0 warnings/failures.
 
 Run from `项目工程`:
 
@@ -207,6 +211,22 @@ Expected result:
 - Memory notes and completion-summary mutations are atomic across instances; startup reconciles summaries before and after patch recovery.
 - `npm.cmd run i18n:check` reports 710 keys for each supported language and rejects replacement characters, damaged question-mark runs, missing target script, and placeholder drift.
 - Pixel, full keyboard, NVDA, and real Windows high-contrast checks remain manual and must not be inferred from static contracts.
+
+## Stage 3.0.14 Stability and Runtime-Budget Gate
+
+- Test fixtures that can write use owned temporary project copies, register cleanup immediately, close listeners/servers, avoid fixed ports, and leave no repository-local `dist` or `.codeclaw` residue.
+- JSON bodies, repository traversal, file/depth/summary/Manifest/rule evaluation, preflight context, tool read/search bytes, long lines, and serialized results have explicit limits. Data Boundary manifests reject stat-known oversized files before hashing and fail closed rather than returning partial authority.
+- Partial scans and reads expose structured `partial`, `truncated`, and bounded reasons; they are never presented as complete results.
+- Sensitive traversal revalidates the stable parent-directory chain and rejects persistent replacement as `TRAVERSAL_PATH_CHANGED`.
+- Scan, Preflight, model Send, tool work, and Verify run as managed operations with global/per-kind concurrency, deadlines, explicit cancellation, and a one-way `running -> committing -> committed` boundary. A confirmed authoritative write wins a deadline overlap instead of being misreported as an unsaved 504.
+- Scan, Preflight, model Send, and Verify expose active/cancelling/cancelled UI states. Client disconnect cancels running work; late commit cancellation is rejected with a specific explanation.
+- SIGINT/SIGTERM stops new API work and aborts running operations. Running cleanup has a 2.5-second wait; an in-flight commit receives its separate 10-second deadline plus a 750 ms margin, followed by up to 1 second for connection close. The force-exit ceiling is 13.25 seconds.
+- Task, memory, and audit state have file/record/history limits and startup migration. Audit rotation is locked and digest-linked; active patch/recovery evidence is not silently evicted.
+- POSIX process groups receive TERM then KILL. Windows uses a parameterized, deadline-bound `taskkill.exe /PID <pid> /T /F` attempt and fails closed when descendant termination cannot be verified.
+- The final default bounded full suite reports 398 total, 394 pass, 0 fail, and 4 environment-only skips. The single-concurrency full baseline reports 397/393/0/4, and the sole subsequently added file-growth budget regression passes separately at concurrency 1. `check` passes; i18n reports 723 keys per language, 0 warnings, and 0 failures.
+- Explicit in-flight model cancellation and bounded SIGTERM integration tests release operation capacity and do not persist a successful model result.
+
+Manual/unverified boundary: the current sandbox cannot execute the real Windows `taskkill /T` descendant-tree case. A wrapper that already exited may require Job Object ownership for reliable child cleanup. Node has no `openat`-style directory-handle-relative traversal, so path-identity revalidation does not eliminate every external replacement race. Do not infer real power-loss, large-project subjective performance, pixel, complete keyboard, NVDA, high-contrast, clean Windows 10/11, non-admin, Defender/SmartScreen, default-browser, or real double-click acceptance from this gate.
 
 ## Safety Review
 

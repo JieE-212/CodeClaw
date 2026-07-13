@@ -167,10 +167,12 @@ test("ignored manifests cannot contribute derived metadata to an outbound previe
   assert.deepEqual(preflight.payload.report.commands, []);
   assert.equal(preflight.payload.profile.frameworks.includes("React"), false);
   assert.equal(preflight.payload.profile.packageManagers.includes("npm"), false);
-  const preview = (await request(server.baseUrl, "/api/model/preview", {
+  const previewResponse = await request(server.baseUrl, "/api/model/preview", {
     operation: "task-suggest",
     taskId: preflight.payload.task.id
-  })).payload.preview;
+  });
+  assert.equal(previewResponse.response.status, 200, JSON.stringify(previewResponse.payload));
+  const preview = previewResponse.payload.preview;
   assert.doesNotMatch(preview.request.bodyUtf8, /IGNORED_SCRIPT_SENTINEL|IGNORED_DEPENDENCY_SENTINEL|npm run test|React/);
   assert.deepEqual(preview.disclosure.files, []);
 });
@@ -353,6 +355,32 @@ test("Mock patch send stores the applicable proposal and minimized event in one 
   assert.doesNotMatch(rawTasks, new RegExp(SOURCE_ONLY_SENTINEL));
 });
 
+test("a supplemental audit write failure remains visible without reversing a saved model result", async (t) => {
+  const fixture = await createFixture("model-audit-failure");
+  let server;
+  t.after(() => cleanupFixture(server, fixture));
+  server = await startCodeClaw(fixture);
+  const preflight = await request(server.baseUrl, "/api/preflight/run", {
+    path: fixture.project,
+    goal: "Suggest the next safe task"
+  });
+  const taskId = preflight.payload.task.id;
+  const preview = (await request(server.baseUrl, "/api/model/preview", {
+    operation: "task-suggest",
+    taskId
+  })).payload.preview;
+
+  const auditPath = path.join(fixture.stateDir, "audit.jsonl");
+  await fs.rm(auditPath, { force: true });
+  await fs.mkdir(auditPath);
+  const sent = await approvePreview(server, preview);
+
+  assert.equal(sent.response.status, 200);
+  assert.deepEqual(sent.payload.persistence, { taskRecorded: true, auditRecorded: false });
+  const task = await new TaskStore({ storagePath: path.join(fixture.stateDir, "tasks.json") }).get(taskId);
+  assert.equal(task.modelEvents.at(-1).status, "ok");
+});
+
 test("failure-fix disclosure keeps separate context and patch-diff records for the same manifest path", async (t) => {
   const fixture = await createFixture("disclosure-components");
   let server;
@@ -513,6 +541,168 @@ test("a config change during an online response rejects attachment and records o
     await fs.readFile(path.join(fixture.stateDir, "model.json"), "utf8")
   ].join("\n");
   assert.doesNotMatch(persisted, /DELAYED_MODEL_RESPONSE_MUST_NOT_PERSIST|MODEL_API_KEY_MUST_NOT_PERSIST/);
+});
+
+test("an explicit operation cancellation aborts an in-flight model send without saving success", async (t) => {
+  const fixture = await createFixture("explicit-operation-cancel");
+  let fakeModel;
+  let server;
+  t.after(async () => {
+    fakeModel?.release();
+    await cleanupFixture(server, fixture);
+    await stopHttpServer(fakeModel?.server);
+  });
+  fakeModel = await startDelayedModel();
+  server = await startCodeClaw(fixture);
+
+  const preflight = await request(server.baseUrl, "/api/preflight/run", {
+    path: fixture.project,
+    goal: "Suggest the next safe task"
+  });
+  const taskId = preflight.payload.task.id;
+  await request(server.baseUrl, "/api/model/config", {
+    type: "openai-compatible",
+    name: "cancel-test",
+    baseUrl: `http://127.0.0.1:${fakeModel.port}/v1`,
+    model: "test-model",
+    apiKey: "CANCEL_TEST_KEY_MUST_NOT_PERSIST"
+  });
+  const preview = (await request(server.baseUrl, "/api/model/preview", {
+    operation: "task-suggest",
+    taskId
+  })).payload.preview;
+  const operationId = "model-send-explicit-cancel";
+  const pendingSend = request(server.baseUrl, "/api/model/send", {
+    previewId: preview.previewId,
+    approvalDigest: preview.approvalDigest,
+    approved: true,
+    operationId
+  });
+
+  await fakeModel.received;
+  const active = await request(server.baseUrl, "/api/operations");
+  assert.deepEqual(active.payload.operations.map((item) => item.id), [operationId]);
+  assert.equal(active.payload.operations[0].kind, "model-send");
+  assert.equal(active.payload.operations[0].phase, "running");
+  const cancelled = await request(server.baseUrl, "/api/operations/cancel", { operationId });
+  assert.equal(cancelled.response.status, 200);
+  assert.equal(cancelled.payload.cancelled, true);
+
+  const result = await pendingSend;
+  assert.equal(result.response.status, 409);
+  assert.equal(result.payload.code, "OPERATION_CANCELLED");
+  fakeModel.release();
+  const after = await request(server.baseUrl, "/api/operations");
+  assert.deepEqual(after.payload.operations, []);
+  const task = await new TaskStore({ storagePath: path.join(fixture.stateDir, "tasks.json") }).get(taskId);
+  assert.equal(task.modelEvents.at(-1).status, "error");
+  assert.doesNotMatch(await readStateFiles(fixture), /CANCEL_TEST_KEY_MUST_NOT_PERSIST|DELAYED_MODEL_RESPONSE_MUST_NOT_PERSIST/);
+});
+
+test("SIGTERM performs bounded shutdown while a model operation is in flight", async (t) => {
+  const fixture = await createFixture("bounded-operation-shutdown");
+  let fakeModel;
+  let server;
+  t.after(async () => {
+    fakeModel?.release();
+    await cleanupFixture(server, fixture);
+    await stopHttpServer(fakeModel?.server);
+  });
+  fakeModel = await startDelayedModel();
+  server = await startCodeClaw(fixture, { controlledSignal: true });
+  const preflight = await request(server.baseUrl, "/api/preflight/run", {
+    path: fixture.project,
+    goal: "Suggest the next safe task"
+  });
+  const taskId = preflight.payload.task.id;
+  await request(server.baseUrl, "/api/model/config", {
+    type: "openai-compatible",
+    name: "shutdown-test",
+    baseUrl: `http://127.0.0.1:${fakeModel.port}/v1`,
+    model: "test-model",
+    apiKey: "SHUTDOWN_TEST_KEY_MUST_NOT_PERSIST"
+  });
+  const preview = (await request(server.baseUrl, "/api/model/preview", {
+    operation: "task-suggest",
+    taskId
+  })).payload.preview;
+  const pendingSend = request(server.baseUrl, "/api/model/send", {
+    previewId: preview.previewId,
+    approvalDigest: preview.approvalDigest,
+    approved: true,
+    operationId: "model-send-shutdown"
+  }).catch((error) => ({ error }));
+  await fakeModel.received;
+
+  server.signal("SIGTERM");
+  assert.equal(await waitForChildExit(server.child, 4500), true);
+  const result = await pendingSend;
+  if (!result.error) {
+    assert.equal(result.response.status, 409);
+    assert.equal(result.payload.code, "OPERATION_CANCELLED");
+  }
+  fakeModel.release();
+  assert.doesNotMatch(await readStateFiles(fixture), /SHUTDOWN_TEST_KEY_MUST_NOT_PERSIST|DELAYED_MODEL_RESPONSE_MUST_NOT_PERSIST/);
+});
+
+test("SIGTERM waits for an in-flight model commit to finish within its commit deadline", { timeout: 15_000 }, async (t) => {
+  const fixture = await createFixture("bounded-commit-shutdown");
+  let fakeModel;
+  let server;
+  let heldLock;
+  t.after(async () => {
+    if (heldLock) {
+      heldLock.release();
+      await heldLock.done.catch(() => {});
+    }
+    await cleanupFixture(server, fixture);
+    await stopHttpServer(fakeModel?.server);
+  });
+  fakeModel = await startStaticModel("COMMIT_RESPONSE_MUST_BE_SAVED");
+  server = await startCodeClaw(fixture, { controlledSignal: true });
+  const preflight = await request(server.baseUrl, "/api/preflight/run", {
+    path: fixture.project,
+    goal: "Suggest the next safe task"
+  });
+  const taskId = preflight.payload.task.id;
+  await request(server.baseUrl, "/api/model/config", {
+    type: "openai-compatible",
+    name: "commit-shutdown-test",
+    baseUrl: `http://127.0.0.1:${fakeModel.port}/v1`,
+    model: "test-model",
+    apiKey: "COMMIT_SHUTDOWN_KEY_MUST_NOT_PERSIST"
+  });
+  const preview = (await request(server.baseUrl, "/api/model/preview", {
+    operation: "task-suggest",
+    taskId
+  })).payload.preview;
+
+  heldLock = await holdTaskStoreLock(fixture);
+  const pendingSend = request(server.baseUrl, "/api/model/send", {
+    previewId: preview.previewId,
+    approvalDigest: preview.approvalDigest,
+    approved: true,
+    operationId: "model-send-commit-shutdown"
+  }).catch((error) => ({ error }));
+  await fakeModel.received;
+  await waitForOperationPhase(server, "model-send-commit-shutdown", "committing");
+
+  server.signal("SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(exited(server.child), false);
+  heldLock.release();
+  await heldLock.done;
+  heldLock = null;
+
+  const sent = await pendingSend;
+  if (!sent.error) {
+    assert.equal(sent.response.status, 200);
+    assert.equal(sent.payload.persistence.taskRecorded, true);
+  }
+  assert.equal(await waitForChildExit(server.child, 5000), true);
+  const task = await new TaskStore({ storagePath: path.join(fixture.stateDir, "tasks.json") }).get(taskId);
+  assert.equal(task.modelEvents.at(-1).status, "ok");
+  assert.doesNotMatch(await readStateFiles(fixture), /COMMIT_SHUTDOWN_KEY_MUST_NOT_PERSIST/);
 });
 
 test("the TaskStore-lock commit guard rechecks the Manifest after a delayed model result", async (t) => {
@@ -789,9 +979,16 @@ function assertPreviewConsumed(result) {
   assert.equal(result.payload.code, "MODEL_PREVIEW_UNKNOWN");
 }
 
-async function startCodeClaw(fixture) {
+async function startCodeClaw(fixture, { controlledSignal = false } = {}) {
   const port = await findFreePort();
-  const child = spawn(process.execPath, ["apps/web/server.js"], {
+  const args = controlledSignal
+    ? [
+      "--input-type=module",
+      "--eval",
+      "await import('./apps/web/server.js'); process.on('message', (message) => { if (message?.codeclawTestSignal === 'SIGTERM') process.emit('SIGTERM'); });"
+    ]
+    : ["apps/web/server.js"];
+  const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -800,13 +997,22 @@ async function startCodeClaw(fixture) {
       CODECLAW_PROJECT_LOCK_DIR: fixture.lockDir,
       CODECLAW_DISPOSABLE_ROOT: fixture.copyRoot
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: controlledSignal ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
   let output = "";
   child.stdout.on("data", (chunk) => { output += String(chunk); });
   child.stderr.on("data", (chunk) => { output += String(chunk); });
-  const server = { child, port, baseUrl: `http://127.0.0.1:${port}`, output: () => output };
+  const server = {
+    child,
+    port,
+    baseUrl: `http://127.0.0.1:${port}`,
+    output: () => output,
+    signal: (signal) => {
+      if (controlledSignal && child.connected) child.send({ codeclawTestSignal: signal });
+      else child.kill(signal);
+    }
+  };
   try {
     await waitForHealth(server);
     return server;
@@ -980,6 +1186,16 @@ async function waitForHealth(server) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Server did not start.\n${server.output()}`);
+}
+
+async function waitForOperationPhase(server, operationId, phase) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const active = await request(server.baseUrl, "/api/operations");
+    const operation = active.payload.operations?.find((item) => item.id === operationId);
+    if (operation?.phase === phase) return operation;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Operation ${operationId} did not enter ${phase}.`);
 }
 
 async function withTimeout(promise, timeoutMs, message) {

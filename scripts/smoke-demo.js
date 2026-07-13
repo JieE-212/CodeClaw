@@ -41,7 +41,7 @@ await withAutomationResources(async (scope) => {
   await waitForHealth();
   const scan = await request("/api/repo/scan", { path: demoPath });
   const task = await request("/api/tasks/create", { goal: "add divide by zero test and verify the project", rootPath: scan.profile.rootPath });
-  await request("/api/agent/plan", { goal: task.task.goal, repoProfile: scan.profile, taskId: task.task.id });
+  await request("/api/agent/plan", { goal: task.task.goal, taskId: task.task.id });
   await request("/api/tools/call", { tool: "read_file", args: { path: "test/calculator.test.js" }, rootPath: scan.profile.rootPath, taskId: task.task.id });
   const patch = (await previewAndApproveModelOperation(request, {
     operation: "patch-proposal",

@@ -332,6 +332,178 @@ test("hard-linked source files block the whole copy boundary", async (t) => {
   assert.equal(manifest.blockers.filter((item) => item.reason === "hard-link").length, 2);
 });
 
+test("data-boundary manifests expose complete runtime-budget evidence", async (t) => {
+  const root = await temporaryDirectory(t, "codeclaw-boundary-evidence-");
+  await fs.writeFile(path.join(root, "source.txt"), "safe\n", "utf8");
+
+  const manifest = await buildDataBoundaryManifest(root);
+
+  assert.equal(manifest.truncated, false);
+  assert.deepEqual(manifest.truncationReasons, []);
+  assert.equal(manifest.budget.operation, "data-boundary-manifest");
+  assert.equal(manifest.budget.truncated, false);
+  assert.deepEqual(manifest.budget.reasons, []);
+  assert.equal(manifest.budget.used.entriesVisited, 1);
+  assert.equal(manifest.budget.used.filesCollected, 1);
+});
+
+test("data-boundary traversal and evidence collections fail closed at hard budgets", async (t) => {
+  const bytesRoot = await temporaryDirectory(t, "codeclaw-boundary-byte-budget-");
+  const oversizedFile = path.join(bytesRoot, "oversized.bin");
+  await fs.writeFile(oversizedFile, Buffer.alloc(32, 1));
+  const originalOpen = fs.open;
+  let oversizedFileOpened = false;
+  fs.open = async (...args) => {
+    if (path.resolve(args[0]) === path.resolve(oversizedFile) && args[1] === "r") oversizedFileOpened = true;
+    return originalOpen(...args);
+  };
+  try {
+    await assert.rejects(
+      () => buildDataBoundaryManifest(bytesRoot, { maxBytes: 8 }),
+      budgetFailure("DATA_BOUNDARY_BYTE_LIMIT", "max-total-bytes")
+    );
+  } finally {
+    fs.open = originalOpen;
+  }
+  assert.equal(oversizedFileOpened, false, "a stat-known oversized file must be rejected before hashing I/O");
+
+  const entriesRoot = await temporaryDirectory(t, "codeclaw-boundary-entry-budget-");
+  await fs.writeFile(path.join(entriesRoot, "one.txt"), "1", "utf8");
+  await fs.writeFile(path.join(entriesRoot, "two.txt"), "2", "utf8");
+  await assert.rejects(
+    () => buildDataBoundaryManifest(entriesRoot, { maxEntries: 1 }),
+    budgetFailure("DATA_BOUNDARY_ENTRY_LIMIT", "max-entries")
+  );
+
+  const directoryRoot = await temporaryDirectory(t, "codeclaw-boundary-directory-budget-");
+  await fs.mkdir(path.join(directoryRoot, "one"));
+  await assert.rejects(
+    () => buildDataBoundaryManifest(directoryRoot, { maxDirectories: 1 }),
+    budgetFailure("DATA_BOUNDARY_DIRECTORY_LIMIT", "max-directories")
+  );
+
+  const depthRoot = await temporaryDirectory(t, "codeclaw-boundary-depth-budget-");
+  await fs.mkdir(path.join(depthRoot, "one", "two"), { recursive: true });
+  await assert.rejects(
+    () => buildDataBoundaryManifest(depthRoot, { maxDepth: 1 }),
+    budgetFailure("DATA_BOUNDARY_DEPTH_LIMIT", "max-depth")
+  );
+
+  const excludedRoot = await temporaryDirectory(t, "codeclaw-boundary-excluded-budget-");
+  await fs.writeFile(path.join(excludedRoot, ".gitignore"), "one.txt\ntwo.txt\n", "utf8");
+  await fs.writeFile(path.join(excludedRoot, "one.txt"), "1", "utf8");
+  await fs.writeFile(path.join(excludedRoot, "two.txt"), "2", "utf8");
+  await assert.rejects(
+    () => buildDataBoundaryManifest(excludedRoot, { maxExcludedItems: 1 }),
+    budgetFailure("DATA_BOUNDARY_EXCLUDED_LIMIT", "max-excluded-items")
+  );
+
+  const blockerRoot = await temporaryDirectory(t, "codeclaw-boundary-blocker-budget-");
+  await fs.writeFile(path.join(blockerRoot, ".env"), "SECRET=1\n", "utf8");
+  await fs.writeFile(path.join(blockerRoot, ".npmrc"), "token=1\n", "utf8");
+  await assert.rejects(
+    () => buildDataBoundaryManifest(blockerRoot, { maxBlockerItems: 1 }),
+    budgetFailure("DATA_BOUNDARY_BLOCKER_LIMIT", "max-blocker-items")
+  );
+});
+
+test("data-boundary applies bounded strict .gitignore processing", async (t) => {
+  const bytesRoot = await temporaryDirectory(t, "codeclaw-boundary-ignore-bytes-");
+  await fs.writeFile(path.join(bytesRoot, ".gitignore"), "oversized-pattern\n", "utf8");
+  await assert.rejects(
+    () => buildDataBoundaryManifest(bytesRoot, { maxIgnoreFileBytes: 4 }),
+    budgetFailure("DATA_BOUNDARY_IGNORE_BUDGET_EXCEEDED", "gitignore-file-bytes")
+  );
+
+  const rulesRoot = await temporaryDirectory(t, "codeclaw-boundary-ignore-rules-");
+  await fs.writeFile(path.join(rulesRoot, ".gitignore"), "one.txt\ntwo.txt\n", "utf8");
+  await assert.rejects(
+    () => buildDataBoundaryManifest(rulesRoot, { maxIgnoreRules: 1 }),
+    budgetFailure("DATA_BOUNDARY_IGNORE_BUDGET_EXCEEDED", "gitignore-rules")
+  );
+
+  const matchRoot = await temporaryDirectory(t, "codeclaw-boundary-ignore-match-");
+  await fs.writeFile(path.join(matchRoot, ".gitignore"), `${"*a".repeat(20)}b\n`, "utf8");
+  await fs.writeFile(path.join(matchRoot, `${"a".repeat(100)}.txt`), "safe\n", "utf8");
+  await assert.rejects(
+    () => buildDataBoundaryManifest(matchRoot, { maxIgnoreMatchSteps: 100 }),
+    budgetFailure("DATA_BOUNDARY_IGNORE_BUDGET_EXCEEDED", "gitignore-match-steps")
+  );
+});
+
+test("data-boundary cancellation during hashing never returns a partial manifest", async (t) => {
+  const root = await temporaryDirectory(t, "codeclaw-boundary-cancel-hash-");
+  const target = path.join(root, "source.bin");
+  await fs.writeFile(target, Buffer.alloc(1024, 1));
+  const controller = new AbortController();
+  const cancellation = Object.assign(new Error("cancelled during hash"), { code: "OPERATION_CANCELLED", status: 409 });
+  const originalOpen = fs.open;
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (path.resolve(args[0]) !== path.resolve(target) || args[1] !== "r") return handle;
+    return {
+      stat: handle.stat.bind(handle),
+      close: handle.close.bind(handle),
+      read: async (...readArgs) => {
+        const result = await handle.read(...readArgs);
+        controller.abort(cancellation);
+        return result;
+      }
+    };
+  };
+  try {
+    await assert.rejects(
+      () => buildDataBoundaryManifest(root, { signal: controller.signal }),
+      (error) => error === cancellation
+    );
+  } finally {
+    fs.open = originalOpen;
+  }
+});
+
+test("data-boundary hashing stops at remaining plus one byte when a file grows after stat", async (t) => {
+  const root = await temporaryDirectory(t, "codeclaw-boundary-grow-hash-");
+  const target = path.join(root, "source.bin");
+  await fs.writeFile(target, Buffer.alloc(4, 1));
+  const originalOpen = fs.open;
+  const requestedReadLengths = [];
+  let grew = false;
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (path.resolve(args[0]) !== path.resolve(target) || args[1] !== "r") return handle;
+    return {
+      stat: handle.stat.bind(handle),
+      close: handle.close.bind(handle),
+      read: async (buffer, offset, length, position) => {
+        requestedReadLengths.push(length);
+        const result = await handle.read(buffer, offset, length, position);
+        if (!grew && result.bytesRead) {
+          grew = true;
+          await fs.appendFile(target, Buffer.alloc(8, 2));
+        }
+        return result;
+      }
+    };
+  };
+  try {
+    await assert.rejects(
+      () => buildDataBoundaryManifest(root, { maxBytes: 4 }),
+      budgetFailure("DATA_BOUNDARY_BYTE_LIMIT", "max-total-bytes")
+    );
+  } finally {
+    fs.open = originalOpen;
+  }
+  assert.deepEqual(requestedReadLengths, [5, 1]);
+});
+
+function budgetFailure(code, reason) {
+  return (error) => error.code === code
+    && error.status === 413
+    && error.runtimeBudget?.reason === reason
+    && error.budget?.truncated === true
+    && error.budget.reasons.includes(reason);
+}
+
 async function temporaryDirectory(t, prefix) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));

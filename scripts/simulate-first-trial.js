@@ -154,7 +154,7 @@ async function runDemoTrial() {
   const goal = "add divide by zero test and verify the project";
   const preflight = await request("/api/preflight/run", { path: demoPath, goal });
   const task = preflight.task;
-  const plan = await request("/api/agent/plan", { goal, repoProfile: preflight.profile, taskId: task.id });
+  const plan = await request("/api/agent/plan", { goal, taskId: task.id });
   const patch = (await previewAndApproveModelOperation(request, {
     operation: "patch-proposal",
     taskId: task.id

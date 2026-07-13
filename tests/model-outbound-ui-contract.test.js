@@ -13,11 +13,17 @@ test("all browser model actions use the reviewed preview and send boundary", () 
     assert.match(app, new RegExp(`executeReviewedModelOperation\\(\\"${operation}\\"`));
   }
   assert.match(app, /request\("\/api\/model\/preview", \{ operation, taskId: currentTask\.id \}\)/);
-  assert.match(app, /request\("\/api\/model\/send", \{[\s\S]*?previewId: payload\.preview\.previewId,[\s\S]*?approvalDigest: payload\.preview\.approvalDigest,[\s\S]*?approved: true/);
+  assert.match(app, /requestManagedOperation\("model-send", "\/api\/model\/send", \{[\s\S]*?previewId: payload\.preview\.previewId,[\s\S]*?approvalDigest: payload\.preview\.approvalDigest,[\s\S]*?approved: true/);
   assert.match(app, /request\("\/api\/model\/cancel", \{[\s\S]*?previewId: preview\.previewId,[\s\S]*?approvalDigest: preview\.approvalDigest/);
   for (const legacy of ["/api/model/suggest", "/api/model/context-files", "/api/model/patch-proposal", "/api/model/fix-from-failure"]) {
     assert.doesNotMatch(app, new RegExp(legacy.replaceAll("/", "\\/")));
   }
+});
+
+test("an approved in-flight model send exposes a separate local-operation cancel control", () => {
+  assert.match(html, /id="cancelModelOperationButton"[^>]+data-i18n="button\.cancelOperation"[^>]+hidden/);
+  assert.match(app, /cancelModelOperationButton\.addEventListener\("click", \(\) => cancelActiveOperation\("model-send", modelState\)\)/);
+  assert.match(app, /activeOperations\.has\("model-send"\)/);
 });
 
 test("outbound review is a labelled native dialog with an independent safe default", () => {

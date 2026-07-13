@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "first-live-standby.js");
 
-test("first-live-standby reports ready when first-live reports and files align", async () => {
-  const fixture = await makeFixture();
+test("first-live-standby reports ready when first-live reports and files align", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyReports(fixture, "tester-2");
   await writeReadySession(fixture.sessionPath, "tester-2");
 
@@ -25,8 +25,8 @@ test("first-live-standby reports ready when first-live reports and files align",
   assert.ok(report.nextSteps.some((item) => item.includes("trial:record-draft") && item.includes("trial:after-live")));
 });
 
-test("first-live-standby waits when tester intake is not filled", async () => {
-  const fixture = await makeFixture();
+test("first-live-standby waits when tester intake is not filled", async (t) => {
+  const fixture = await makeFixture(t);
   await writeJson(path.join(fixture.reportsPath, "TRIAL_TESTER_INTAKE_REPORT.json"), {
     ok: true,
     mode: "trial-tester-intake",
@@ -45,8 +45,8 @@ test("first-live-standby waits when tester intake is not filled", async () => {
   assert.match(report.nextCommand, /trial:intake/);
 });
 
-test("first-live-standby asks for refresh when launch plan is stale", async () => {
-  const fixture = await makeFixture();
+test("first-live-standby asks for refresh when launch plan is stale", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyReports(fixture, "tester-2", { launchFirstLive: false });
   await writeReadySession(fixture.sessionPath, "tester-2");
 
@@ -59,8 +59,8 @@ test("first-live-standby asks for refresh when launch plan is stale", async () =
   assert.match(report.nextCommand, /trial:tester-launch-plan/);
 });
 
-test("first-live-standby blocks mismatched tester ids", async () => {
-  const fixture = await makeFixture();
+test("first-live-standby blocks mismatched tester ids", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyReports(fixture, "tester-2", { hostRunTesterId: "tester-1" });
   await writeReadySession(fixture.sessionPath, "tester-2");
 
@@ -72,8 +72,8 @@ test("first-live-standby blocks mismatched tester ids", async () => {
   assert.ok(report.blockers.some((item) => item.includes("hostRun tester tester-1 does not match tester-2")));
 });
 
-test("first-live-standby blocks missing live capture file", async () => {
-  const fixture = await makeFixture();
+test("first-live-standby blocks missing live capture file", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyReports(fixture, "tester-2");
   await writeReadySession(fixture.sessionPath, "tester-2", { omit: "LIVE_SESSION_CAPTURE.md" });
 
@@ -85,8 +85,8 @@ test("first-live-standby blocks missing live capture file", async () => {
   assert.ok(report.blockers.some((item) => item.includes("LIVE_SESSION_CAPTURE.md")));
 });
 
-test("first-live-standby blocks a session pack without the beginner host guide", async () => {
-  const fixture = await makeFixture();
+test("first-live-standby blocks a session pack without the beginner host guide", async (t) => {
+  const fixture = await makeFixture(t);
   await writeReadyReports(fixture, "tester-2");
   await writeReadySession(fixture.sessionPath, "tester-2", { omit: "BEGINNER_FIRST_LIVE_GUIDE.md" });
 
@@ -98,8 +98,8 @@ test("first-live-standby blocks a session pack without the beginner host guide",
   assert.ok(report.blockers.some((item) => item.includes("BEGINNER_FIRST_LIVE_GUIDE.md")));
 });
 
-async function makeFixture() {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-first-live-standby-"));
+async function makeFixture(t) {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-first-live-standby-");
   const reportsPath = path.join(tempRoot, "reports");
   const sessionPath = path.join(tempRoot, "session");
   const jsonPath = path.join(tempRoot, "TRIAL_FIRST_LIVE_STANDBY.json");

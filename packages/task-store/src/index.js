@@ -4,6 +4,7 @@ import path from "node:path";
 import { atomicWriteFile } from "../../shared/src/atomic-file.js";
 import { CrossProcessLockManager, canonicalPathLockKey } from "../../shared/src/cross-process-lock.js";
 import { captureWorkspaceIdentity, captureWorkspaceParentIdentity, workspaceIdentityMatches } from "../../shared/src/workspace-identity.js";
+import { STATE_LIMITS, assertUtf8Bytes, boundedHistory, stateLimitError } from "../../shared/src/state-limits.js";
 
 const CONTEXT_FILE_SOURCES = new Set(["preflight", "read_file"]);
 
@@ -20,22 +21,49 @@ export class TaskStore {
     this.mutationQueue = Promise.resolve();
   }
 
-  async create({ goal, rootPath, workspaceId = null }) {
+  async create({
+    goal,
+    rootPath,
+    workspaceId = null,
+    plan = null,
+    toolCalls = [],
+    contextFiles = [],
+    status = null,
+    requireRootIdentity = false
+  }) {
     if (!goal?.trim()) throw new Error("Missing task goal.");
-    const workspace = rootPath ? await captureWorkspaceIdentity(rootPath).catch(() => null) : null;
+    assertUtf8Bytes(goal.trim(), STATE_LIMITS.taskGoalBytes, "TASK_GOAL_TOO_LARGE", "Task goal");
+    if (!Array.isArray(toolCalls) || toolCalls.length > STATE_LIMITS.taskToolCalls) {
+      throw stateLimitError("TASK_TOOL_HISTORY_CAPACITY", `Initial task evidence exceeds the ${STATE_LIMITS.taskToolCalls}-tool-call safety limit.`);
+    }
+    if (!Array.isArray(contextFiles) || contextFiles.length > STATE_LIMITS.taskContextFiles) {
+      throw stateLimitError("TASK_CONTEXT_CAPACITY", `Initial task context exceeds the ${STATE_LIMITS.taskContextFiles}-file safety limit.`);
+    }
+    let workspace = null;
+    if (rootPath) {
+      try {
+        workspace = await captureWorkspaceIdentity(rootPath);
+      } catch (error) {
+        if (requireRootIdentity) throw error;
+      }
+    }
     return this.serializeMutation(async () => {
       const now = new Date().toISOString();
-      const task = {
+      const seededToolCalls = toolCalls.map((toolCall) => ({
+        ...toolCall,
+        time: toolCall.time || now
+      }));
+      const task = normalizeTaskForStorage({
         id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         revision: 1,
         goal: goal.trim(),
         rootPath: workspace?.rootPath || (rootPath ? path.resolve(rootPath) : null),
         rootIdentity: workspace?.digest || null,
         workspaceId: typeof workspaceId === "string" && workspaceId ? workspaceId : null,
-        status: "planned",
-        plan: null,
-        toolCalls: [],
-        contextFiles: [],
+        status: normalizeInitialStatus(status, seededToolCalls),
+        plan,
+        toolCalls: seededToolCalls,
+        contextFiles,
         verification: null,
         verificationHistory: [],
         failureSummary: "",
@@ -46,8 +74,11 @@ export class TaskStore {
         reviewDraft: "",
         createdAt: now,
         updatedAt: now
-      };
+      });
       const tasks = await this.readAllUnqueued();
+      if (tasks.length >= STATE_LIMITS.taskCount) {
+        throw stateLimitError("TASK_STORE_CAPACITY", `Task storage reached its ${STATE_LIMITS.taskCount}-task safety limit. Archive or remove old local state before creating another task.`);
+      }
       tasks.push(task);
       await this.writeAll(tasks);
       return task;
@@ -74,10 +105,18 @@ export class TaskStore {
   }
 
   async appendToolCall(id, toolCall) {
-    return this.update(id, (task) => ({
-      status: task.status === "completed" ? "completed" : toolCall.blocked ? "blocked" : "running",
-      toolCalls: [...task.toolCalls, { ...toolCall, time: toolCall.time || new Date().toISOString() }]
-    }));
+    return this.update(id, (task) => {
+      const history = boundedHistory(
+        [...(task.toolCalls || []), { ...toolCall, time: toolCall.time || new Date().toISOString() }],
+        STATE_LIMITS.taskToolCalls,
+        task.toolCallsDropped
+      );
+      return {
+        status: task.status === "completed" ? "completed" : toolCall.blocked ? "blocked" : "running",
+        toolCalls: history.values,
+        toolCallsDropped: history.dropped
+      };
+    });
   }
 
   async setVerification(id, verification, options = {}) {
@@ -93,19 +132,30 @@ export class TaskStore {
         time: verification.time || new Date().toISOString(),
         patchSetDigest: currentPatchSetDigest
       };
+      const history = boundedHistory(
+        [...(task.verificationHistory || []), recorded],
+        STATE_LIMITS.taskVerificationHistory,
+        task.verificationHistoryDropped
+      );
       return {
         status: failed ? "failed" : "verified",
         verification: recorded,
-        verificationHistory: [...(task.verificationHistory || []), recorded],
+        verificationHistory: history.values,
+        verificationHistoryDropped: history.dropped,
         failureSummary: failed ? summarizeVerificationFailure(recorded) : ""
       };
     });
   }
 
   async recordModelEvent(id, event, options = {}) {
-    return this.update(id, (task) => ({
-      modelEvents: [...(task.modelEvents || []), sanitizeModelEvent(event)]
-    }), options);
+    return this.update(id, (task) => {
+      const history = boundedHistory(
+        [...(task.modelEvents || []), sanitizeModelEvent(event)],
+        STATE_LIMITS.taskModelEvents,
+        task.modelEventsDropped
+      );
+      return { modelEvents: history.values, modelEventsDropped: history.dropped };
+    }, options);
   }
 
   async appendContextFile(id, contextFile) {
@@ -113,6 +163,9 @@ export class TaskStore {
       const existing = task.contextFiles || [];
       const nextFile = sanitizeContextFile(contextFile);
       const index = existing.findIndex((item) => item.path === nextFile.path);
+      if (index === -1 && existing.length >= STATE_LIMITS.taskContextFiles) {
+        throw stateLimitError("TASK_CONTEXT_CAPACITY", `Task context reached its ${STATE_LIMITS.taskContextFiles}-file safety limit. Start a new task or remove context before reading another file.`);
+      }
       const contextFiles = index === -1 ? [...existing, nextFile] : existing.map((item, itemIndex) => itemIndex === index ? { ...item, ...nextFile } : item);
       return { contextFiles };
     });
@@ -129,12 +182,17 @@ export class TaskStore {
         time: patchProposal.time || new Date().toISOString()
       };
       proposal.proposalDigest = patchProposalDigest(proposal);
+      const modelHistory = options?.modelEvent
+        ? boundedHistory(
+          [...(task.modelEvents || []), sanitizeModelEvent(options.modelEvent)],
+          STATE_LIMITS.taskModelEvents,
+          task.modelEventsDropped
+        )
+        : null;
       return {
         patchProposal: proposal,
         status: "patch_ready",
-        ...(options?.modelEvent ? {
-          modelEvents: [...(task.modelEvents || []), sanitizeModelEvent(options.modelEvent)]
-        } : {})
+        ...(modelHistory ? { modelEvents: modelHistory.values, modelEventsDropped: modelHistory.dropped } : {})
       };
     }, options);
   }
@@ -158,6 +216,9 @@ export class TaskStore {
           if (JSON.stringify(expectedPaths) !== JSON.stringify(recordedPaths)) throw transactionStateError("Applied patch transaction is only partially recorded.");
           return {};
         }
+      }
+      if (existing.length + patches.length > STATE_LIMITS.taskAppliedPatches) {
+        throw stateLimitError("TASK_PATCH_HISTORY_CAPACITY", `Patch history reached its ${STATE_LIMITS.taskAppliedPatches}-record safety limit. Active and recovery records were preserved; start a new task before applying more changes.`);
       }
       const normalizedPatches = await Promise.all(patches.map(async (patch) => {
         const parentIdentity = patch.parentIdentity
@@ -264,8 +325,15 @@ export class TaskStore {
 
   async readRawUnqueued() {
     try {
+      const stat = await fs.stat(this.storagePath);
+      if (stat.size > STATE_LIMITS.taskStoreBytes) {
+        throw stateLimitError("TASK_STORE_TOO_LARGE", `Task state exceeds the ${STATE_LIMITS.taskStoreBytes}-byte safety limit. Move the state file aside and review it before restarting CodeClaw.`);
+      }
       const tasks = JSON.parse(await fs.readFile(this.storagePath, "utf8"));
       if (!Array.isArray(tasks)) throw new Error("Task state must contain an array.");
+      if (tasks.length > STATE_LIMITS.taskCount) {
+        throw stateLimitError("TASK_STORE_CAPACITY", `Task state contains ${tasks.length} tasks, above the ${STATE_LIMITS.taskCount}-task safety limit. Archive old local state before restarting CodeClaw.`);
+      }
       return tasks;
     } catch (error) {
       if (error.code === "ENOENT") return [];
@@ -274,7 +342,11 @@ export class TaskStore {
   }
 
   async writeAll(tasks) {
-    await atomicWriteFile(this.storagePath, `${JSON.stringify(tasks.map(normalizeTaskForStorage), null, 2)}\n`);
+    const content = `${JSON.stringify(tasks.map(normalizeTaskForStorage), null, 2)}\n`;
+    if (Buffer.byteLength(content, "utf8") > STATE_LIMITS.taskStoreBytes) {
+      throw stateLimitError("TASK_STORE_TOO_LARGE", `The task update would exceed the ${STATE_LIMITS.taskStoreBytes}-byte safety limit. No task state was written.`);
+    }
+    await atomicWriteFile(this.storagePath, content);
   }
 
   serializeMutation(mutation) {
@@ -285,27 +357,49 @@ export class TaskStore {
   }
 }
 
+function normalizeInitialStatus(status, toolCalls) {
+  if (["planned", "running", "blocked"].includes(status)) return status;
+  if (toolCalls.some((toolCall) => toolCall?.blocked)) return "blocked";
+  return toolCalls.length ? "running" : "planned";
+}
+
 function hydrateTask(task = {}) {
   return normalizeTaskForStorage(task);
 }
 
 function normalizeTaskForStorage(task = {}) {
+  if (task.goal) assertUtf8Bytes(task.goal, STATE_LIMITS.taskGoalBytes, "TASK_GOAL_TOO_LARGE", "Task goal");
   const fallbackTime = stableTimestamp(task.updatedAt, task.createdAt);
   const legacyEvents = Array.isArray(task.suggestions)
     ? task.suggestions.map((suggestion) => legacySuggestionEvent(suggestion, fallbackTime))
     : [];
-  const modelEvents = [
+  const modelEventHistory = boundedHistory([
     ...(Array.isArray(task.modelEvents) ? task.modelEvents.map((event) => sanitizeModelEvent(event, fallbackTime)) : []),
     ...legacyEvents
-  ];
+  ], STATE_LIMITS.taskModelEvents, task.modelEventsDropped);
+  const toolCallHistory = boundedHistory(task.toolCalls, STATE_LIMITS.taskToolCalls, task.toolCallsDropped);
+  const verificationHistory = boundedHistory(task.verificationHistory, STATE_LIMITS.taskVerificationHistory, task.verificationHistoryDropped);
+  const contextHistory = boundedHistory(
+    Array.isArray(task.contextFiles) ? task.contextFiles.map((contextFile) => sanitizeContextFile(contextFile, fallbackTime)) : [],
+    STATE_LIMITS.taskContextFiles,
+    task.contextFilesDropped
+  );
+  const appliedPatches = hydrateAppliedPatches(task);
+  if (appliedPatches.length > STATE_LIMITS.taskAppliedPatches) {
+    throw stateLimitError("TASK_PATCH_HISTORY_CAPACITY", `Task ${task.id || "unknown"} contains ${appliedPatches.length} patch records, above the ${STATE_LIMITS.taskAppliedPatches}-record safety limit. Active and recovery records were left untouched.`);
+  }
   const normalized = {
     ...task,
     revision: normalizeRevision(task.revision),
-    modelEvents,
-    contextFiles: Array.isArray(task.contextFiles)
-      ? task.contextFiles.map((contextFile) => sanitizeContextFile(contextFile, fallbackTime))
-      : [],
-    appliedPatches: hydrateAppliedPatches(task)
+    toolCalls: toolCallHistory.values,
+    toolCallsDropped: toolCallHistory.dropped,
+    verificationHistory: verificationHistory.values,
+    verificationHistoryDropped: verificationHistory.dropped,
+    modelEvents: modelEventHistory.values,
+    modelEventsDropped: modelEventHistory.dropped,
+    contextFiles: contextHistory.values,
+    contextFilesDropped: contextHistory.dropped,
+    appliedPatches
   };
   delete normalized.suggestions;
   if (normalized.patchProposal?.applicable === false) {

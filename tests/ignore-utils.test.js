@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createIgnoreDecisionMatcher, isPathIgnoredStrict } from "../packages/shared/src/ignore-utils.js";
+import { createIgnoreDecisionMatcher, createStrictIgnoreMatcher, isPathIgnoredStrict } from "../packages/shared/src/ignore-utils.js";
 
 test("gitignore matcher supports double-star roots, escaped markers, and character classes", () => {
   const decide = createIgnoreDecisionMatcher([
@@ -45,4 +45,31 @@ test("strict ignore decisions apply nested gitignore rules and their negations",
 
   assert.equal(await isPathIgnoredStrict(root, "nested/drop.tmp", false), true);
   assert.equal(await isPathIgnoredStrict(root, "nested/keep.tmp", false), false);
+});
+
+test("gitignore matching is non-backtracking and enforces pattern and match-step budgets", async (t) => {
+  let steps = 0;
+  const decide = createIgnoreDecisionMatcher(`${"*a".repeat(40)}b`, {
+    onMatchStep: (count) => { steps += count; }
+  });
+  assert.equal(decide("a".repeat(200), false), null);
+  assert.ok(steps < 100_000);
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-ignore-budget-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
+  await fs.writeFile(path.join(root, ".gitignore"), `${"*a".repeat(20)}b\n`, "utf8");
+
+  const patternSession = createStrictIgnoreMatcher(root, { maxPatternChars: 8 });
+  await assert.rejects(
+    () => patternSession.isIgnoredTraversed("source.txt", false),
+    (error) => error.code === "GITIGNORE_RUNTIME_BUDGET_EXCEEDED"
+      && error.runtimeBudget.operation === "gitignore-pattern-chars"
+  );
+
+  const matchSession = createStrictIgnoreMatcher(root, { maxMatchSteps: 100 });
+  await assert.rejects(
+    () => matchSession.isIgnoredTraversed("a".repeat(100), false),
+    (error) => error.code === "GITIGNORE_RUNTIME_BUDGET_EXCEEDED"
+      && error.runtimeBudget.operation === "gitignore-match-steps"
+  );
 });

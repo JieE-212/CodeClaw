@@ -119,6 +119,7 @@ export class CrossProcessLockManager {
       lockIdentity = identityFromStat(stat);
     } catch (error) {
       if (error.code === "ENOENT") return true;
+      if (["EACCES", "EBUSY", "EPERM"].includes(error.code)) return false;
       throw error;
     } finally {
       await handle?.close().catch(() => {});

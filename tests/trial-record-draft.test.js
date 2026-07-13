@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "trial-record-draft.js");
 
-test("record-draft extracts only explicit tester notes and leaves gaps", async () => {
-  const fixture = await makeFixture("record-draft-ok");
+test("record-draft extracts only explicit tester notes and leaves gaps", async (t) => {
+  const fixture = await makeFixture(t, "record-draft-ok");
   const notesPath = path.join(fixture.tempRoot, "notes.md");
   await fs.writeFile(notesPath, [
     "- Goal: Try Demo and one real-project read-only preflight.",
@@ -36,8 +36,8 @@ test("record-draft extracts only explicit tester notes and leaves gaps", async (
   assert.equal(report.privacyFindings.blockers.length, 0);
 });
 
-test("record-draft blocks personal contact data", async () => {
-  const fixture = await makeFixture("record-draft-privacy");
+test("record-draft blocks personal contact data", async (t) => {
+  const fixture = await makeFixture(t, "record-draft-privacy");
   const notesPath = path.join(fixture.tempRoot, "unsafe-notes.md");
   await fs.writeFile(notesPath, [
     "- Goal: Try Demo.",
@@ -54,8 +54,8 @@ test("record-draft blocks personal contact data", async () => {
   assert.ok(report.blockers.some((item) => item.includes("Personal email")));
 });
 
-test("record-draft accepts zh-CN labels and does not treat tester wording as instructions", async () => {
-  const fixture = await makeFixture("record-draft-zh");
+test("record-draft accepts zh-CN labels and does not treat tester wording as instructions", async (t) => {
+  const fixture = await makeFixture(t, "record-draft-zh");
   const notesPath = path.join(fixture.tempRoot, "zh-notes.md");
   await fs.writeFile(notesPath, [
     "- \u76ee\u6807: Try the Demo first.",
@@ -74,8 +74,8 @@ test("record-draft accepts zh-CN labels and does not treat tester wording as ins
   assert.ok(report.warnings.some((item) => item.includes("Sensitive artifact reference")));
 });
 
-async function makeFixture(name) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), `codeclaw-${name}-`));
+async function makeFixture(t, name) {
+  const { rootPath: tempRoot } = await createTestResources(t, `codeclaw-${name}-`);
   const sessionPath = path.join(tempRoot, "session");
   const jsonPath = path.join(tempRoot, "TRIAL_RECORD_DRAFT.json");
   const markdownPath = path.join(tempRoot, "TRIAL_RECORD_DRAFT.md");

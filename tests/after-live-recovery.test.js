@@ -1,17 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createIsolatedProject } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptPath = path.join(rootPath, "scripts", "after-live-recovery.js");
 
 test("after-live creates a local evidence packet without raw tester records", async (t) => {
-  const fixture = await makeFixture("tester-after-live-1");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
-  const result = await runAfterLive(fixture.args);
+  const fixture = await makeFixture(t, "tester-after-live-1");
+  const result = await runAfterLive(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
   assert.equal(result.code, 0, result.stderr || result.stdout);
@@ -27,11 +25,10 @@ test("after-live creates a local evidence packet without raw tester records", as
 });
 
 test("after-live stops before privacy-sensitive incomplete sessions are packaged", async (t) => {
-  const fixture = await makeFixture("tester-after-live-hold");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
+  const fixture = await makeFixture(t, "tester-after-live-hold");
   await fs.writeFile(path.join(fixture.sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), "# Empty\n", "utf8");
 
-  const result = await runAfterLive(fixture.args);
+  const result = await runAfterLive(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
   assert.notEqual(result.code, 0);
@@ -42,8 +39,7 @@ test("after-live stops before privacy-sensitive incomplete sessions are packaged
 });
 
 test("after-live does not treat a stale archive as success when the current review blocks", async (t) => {
-  const fixture = await makeFixture("tester-after-live-stale-archive");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
+  const fixture = await makeFixture(t, "tester-after-live-stale-archive");
   const staleArchivePath = path.join(fixture.reportsPath, "TRIAL_ARCHIVE_REPORT.json");
   await writeJson(staleArchivePath, {
     ok: true,
@@ -66,7 +62,7 @@ test("after-live does not treat a stale archive as success when the current revi
     "utf8"
   );
 
-  const result = await runAfterLive(fixture.args);
+  const result = await runAfterLive(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
   const markdown = await fs.readFile(fixture.markdownPath, "utf8");
 
@@ -92,8 +88,10 @@ test("after-live does not treat a stale archive as success when the current revi
   assert.equal(await exists(path.join(fixture.packetPath, "EVIDENCE_PACKET_MANIFEST.json")), false);
 });
 
-async function makeFixture(testerId) {
-  const runRoot = path.join(rootPath, "dist", `after-live-test-${process.pid}-${Date.now()}-${testerId}`);
+async function makeFixture(t, testerId) {
+  const isolated = await createIsolatedProject(t, rootPath, `codeclaw-after-live-${testerId.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-`);
+  const projectRoot = isolated.projectRoot;
+  const runRoot = path.join(projectRoot, "dist", "after-live-test", testerId);
   const sessionPath = path.join(runRoot, "session");
   const packagePath = path.join(runRoot, "package");
   const reportsPath = path.join(runRoot, "reports");
@@ -103,7 +101,7 @@ async function makeFixture(testerId) {
   const markdownPath = path.join(runRoot, "TRIAL_AFTER_LIVE_REPORT.md");
   await fs.mkdir(sessionPath, { recursive: true });
   await fs.mkdir(packagePath, { recursive: true });
-  await writeCompletedSession(sessionPath, testerId);
+  await writeCompletedSession(sessionPath, testerId, projectRoot);
   await writeJson(path.join(reportsPath, "TRIAL_DISPATCH_NOTE.json"), {
     ok: true,
     mode: "trial-dispatch",
@@ -123,6 +121,8 @@ async function makeFixture(testerId) {
     warnings: []
   });
   return {
+    isolated,
+    projectRoot,
     runRoot,
     sessionPath,
     reportsPath,
@@ -131,20 +131,20 @@ async function makeFixture(testerId) {
     jsonPath,
     markdownPath,
     args: [
-      "--session", path.relative(rootPath, sessionPath),
+      "--session", path.relative(projectRoot, sessionPath),
       "--tester", testerId,
       "--next-tester", "tester-after-live-2",
-      "--reports", path.relative(rootPath, reportsPath),
-      "--out", path.relative(rootPath, packetPath),
-      "--archive-out", path.relative(rootPath, archivePath),
-      "--json", path.relative(rootPath, jsonPath),
-      "--markdown", path.relative(rootPath, markdownPath),
+      "--reports", path.relative(projectRoot, reportsPath),
+      "--out", path.relative(projectRoot, packetPath),
+      "--archive-out", path.relative(projectRoot, archivePath),
+      "--json", path.relative(projectRoot, jsonPath),
+      "--markdown", path.relative(projectRoot, markdownPath),
       "--force"
     ]
   };
 }
 
-async function writeCompletedSession(sessionPath, testerId) {
+async function writeCompletedSession(sessionPath, testerId, projectRoot) {
   await fs.writeFile(path.join(sessionPath, "SESSION_BRIEF.md"), `# Session Brief\n\nTester id: ${testerId}\n`, "utf8");
   await fs.writeFile(path.join(sessionPath, "HOST_RUNBOOK.md"), "# Host Runbook\n\nUse Demo, then read-only preflight.\n", "utf8");
   await fs.writeFile(path.join(sessionPath, "LIVE_SESSION_HOST_SUMMARY.md"), [
@@ -163,7 +163,7 @@ async function writeCompletedSession(sessionPath, testerId) {
     mode: "trial-session-pack",
     testerId,
     outputPath: sessionPath,
-    outputRelativePath: path.relative(rootPath, sessionPath).split(path.sep).join("/"),
+    outputRelativePath: path.relative(projectRoot, sessionPath).split(path.sep).join("/"),
     files: ["TRIAL_FEEDBACK_TEMPLATE.md", "HUMAN_TRIAL_OBSERVATION.md", "TRIAL_RESULT_RECORD.md"]
   });
   await fs.writeFile(path.join(sessionPath, "HUMAN_TRIAL_OBSERVATION.md"), recordMarkdown({
@@ -256,19 +256,10 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function runAfterLive(args) {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], { cwd: rootPath }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== "number") {
-        reject(error);
-        return;
-      }
-      resolve({
-        code: typeof error?.code === "number" ? error.code : 0,
-        stdout,
-        stderr
-      });
-    });
+function runAfterLive(fixture) {
+  return fixture.isolated.execNodeScript("after-live-recovery.js", fixture.args, {
+    label: "isolated after-live recovery",
+    maxBuffer: 1024 * 1024 * 5
   });
 }
 

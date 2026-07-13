@@ -22,6 +22,9 @@
 - 服务端权威工作区能力：原项目只读、内置 Demo、已登记可丢弃副本
 - 可丢弃副本 Preview/Create/List/Activate/Cleanup、完整 SHA-256 Manifest 和所有权校验
 - 原子文件替换、工作区/父目录实体身份绑定、任务状态串行写入和 Windows 路径别名防护
+- 请求、仓库遍历、上下文和工具输出的显式运行时预算，超限时返回结构化 partial/truncated 原因
+- Scan、Preflight、模型发送和 Verify 的受控取消、超时与有界服务关停
+- 任务、记忆和审计状态增长上限，以及完全隔离到临时项目副本的测试 fixture
 - OpenAI-compatible 结构化 JSON patch 解析
 - 多文件 patch proposal 展示和应用
 - 真实模型 patch 输出校验和失败原因提示
@@ -117,6 +120,8 @@ npm run scan -- "C:\\path\\to\\repo"
 ```bash
 npm test
 ```
+
+默认完整测试使用有界并发 `4`，避免测试进程按主机 CPU 数量无上限放大并压垮本地端口或子进程资源。Stage 3.0.14 的最终有界全量结果为 398 total、394 pass、0 fail、4 个环境性 skip；单并发完整基线为 397/393/0/4，随后唯一新增的文件增长预算回归也以单并发通过。三语 i18n 各 723 个 key，0 warning/failure。
 
 ## Smoke 验证
 
@@ -285,7 +290,7 @@ Windows 本地启动指南在 [`docs/START_GUIDE.md`](docs/START_GUIDE.md)。
 - 试用包：`docs/LOCAL_TRIAL_PACKAGE.md` 记录本地 trial package 应包含/排除的文件、验证命令、试用任务和停止条件。
 - 试用包脚本：`npm.cmd run package:local-trial` 会生成干净的 `dist/CodeClaw-local-trial-YYYYMMDD` 文件夹和 `PACKAGE_MANIFEST.md`。
 
-当前安全边界：Stage 3.0.11 已完成服务端权威工作区能力和可丢弃副本的机器验证。原项目继续强制只读；写入和项目命令仅限内置 Demo，或由当前服务创建、登记、显式激活并重新验证的可丢弃副本。副本仍含普通源码，不代表无秘密、匿名化或适合分享；真实断电、杀毒软件占用、网络盘、自定义 Windows ACL、真人原项目写入和真实 Windows 视觉体验仍未验收。
+当前安全边界：Stage 3.0.14 已完成机器验证、最终 Git 审计和独立提交。原项目继续强制只读；写入和项目命令仅限内置 Demo，或由当前服务创建、登记、显式激活并重新验证的可丢弃副本。运行时预算、取消、有界关停、状态增长上限和测试资源隔离降低了资源失控与残留风险，但不是操作系统沙箱。Node 没有 `openat` 风格的目录句柄相对操作，最终路径检查仍保留极小 TOCTOU 边界；当前 Windows 沙箱也未完成真实 `taskkill /T` 后代树验证，父包装进程已退出后的可靠后代归属仍需 Job Object 或干净 Windows 验收。真实断电、杀毒软件/网络盘/自定义 ACL、像素、完整键盘、NVDA、高对比度、干净 Windows 和真人原项目写入均未验收。真人测试继续暂停，tester-2 的 `AFTER_LIVE_BLOCKED` 与 remediation 的 `REMEDIATION_HOLD` 保持不变；当前工程阶段是 Stage 4B。
 - 发包检查：`npm.cmd run trial:ready` 会生成试用包、检查敏感文件排除、在包内复跑验证并输出 `dist/TRIAL_READINESS_REPORT.json`。
 - 模拟试用：`npm.cmd run trial:simulate` 会扮演第一位安全路径试用者，输出 `dist/SIMULATED_FIRST_TRIAL_REPORT.md`。
 - 夜跑验证：`npm.cmd run nightly:trial` 会跑 2.5 小时安全检查和模拟试用，输出 `dist/nightly-trial/.../summary.md`。

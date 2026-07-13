@@ -5,13 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { MemoryStore } from "../packages/memory-store/src/index.js";
 
-async function makeStore() {
+async function makeStore(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-memory-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   return new MemoryStore({ storagePath: path.join(root, "memory.json") });
 }
 
-test("MemoryStore upserts repo profile and commands", async () => {
-  const store = await makeStore();
+test("MemoryStore upserts repo profile and commands", async (t) => {
+  const store = await makeStore(t);
   const memory = await store.upsertProfile({
     rootPath: "C:/repo-a",
     name: "repo-a",
@@ -30,15 +31,15 @@ test("MemoryStore upserts repo profile and commands", async () => {
   assert.equal((await store.get("C:/repo-a")).profile.languages[0].name, "JavaScript");
 });
 
-test("MemoryStore updates notes", async () => {
-  const store = await makeStore();
+test("MemoryStore updates notes", async (t) => {
+  const store = await makeStore(t);
   await store.ensure("C:/repo-a");
   const memory = await store.updateNotes("C:/repo-a", "Use small patches.");
   assert.equal(memory.notes, "Use small patches.");
 });
 
-test("MemoryStore returns the latest updated project", async () => {
-  const store = await makeStore();
+test("MemoryStore returns the latest updated project", async (t) => {
+  const store = await makeStore(t);
   await store.ensure("C:/repo-a");
   await store.ensure("C:/repo-b");
   const latest = await store.updateNotes("C:/repo-a", "most recent");
@@ -46,8 +47,8 @@ test("MemoryStore returns the latest updated project", async () => {
   assert.equal((await store.latest()).rootPath, latest.rootPath);
 });
 
-test("MemoryStore appends task summaries and deduplicates task id", async () => {
-  const store = await makeStore();
+test("MemoryStore appends task summaries and deduplicates task id", async (t) => {
+  const store = await makeStore(t);
   await store.ensure("C:/repo-a");
   await store.appendTaskSummary("C:/repo-a", { id: "task-1", goal: "first", status: "completed", verification: { exitCode: 0, timedOut: false } }, "done");
   const memory = await store.appendTaskSummary("C:/repo-a", { id: "task-1", goal: "first again", status: "completed" }, "updated");
@@ -57,8 +58,9 @@ test("MemoryStore appends task summaries and deduplicates task id", async () => 
   assert.equal(memory.taskSummaries[0].goal, "first again");
 });
 
-test("MemoryStore serializes notes and summary removal across instances", async () => {
+test("MemoryStore serializes notes and summary removal across instances", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-memory-race-remove-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const storagePath = path.join(root, "memory.json");
   const notesStore = new MemoryStore({ storagePath });
   const revertStore = new MemoryStore({ storagePath });
@@ -74,8 +76,9 @@ test("MemoryStore serializes notes and summary removal across instances", async 
   assert.deepEqual(memory.taskSummaries, []);
 });
 
-test("MemoryStore serializes a new completion summary and notes across instances", async () => {
+test("MemoryStore serializes a new completion summary and notes across instances", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-memory-race-append-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const storagePath = path.join(root, "memory.json");
   const summaryStore = new MemoryStore({ storagePath });
   const notesStore = new MemoryStore({ storagePath });
@@ -92,8 +95,8 @@ test("MemoryStore serializes a new completion summary and notes across instances
   assert.equal(memory.taskSummaries[0].taskId, "task-2");
 });
 
-test("MemoryStore startup reconciliation removes summaries for reopened tasks", async () => {
-  const store = await makeStore();
+test("MemoryStore startup reconciliation removes summaries for reopened tasks", async (t) => {
+  const store = await makeStore(t);
   await store.appendTaskSummary("C:/repo-a", { id: "task-running", status: "completed" }, "stale");
   await store.appendTaskSummary("C:/repo-a", { id: "task-complete", status: "completed" }, "keep");
 

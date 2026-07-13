@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "cohort-summary.js");
 
-test("cohort-summary finds repeated tester friction and allows watched expansion", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-cohort-sample-"));
+test("cohort-summary finds repeated tester friction and allows watched expansion", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-cohort-sample-");
   const jsonPath = path.join(tempRoot, "cohort.json");
   const markdownPath = path.join(tempRoot, "cohort.md");
   const inputPath = path.join(rootPath, "examples", "trial-cohort-sample");
@@ -30,8 +30,8 @@ test("cohort-summary finds repeated tester friction and allows watched expansion
   assert.match(markdown, /demo-real-mode/);
 });
 
-test("cohort-summary blocks expansion when a tester has privacy hold", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-cohort-hold-"));
+test("cohort-summary blocks expansion when a tester has privacy hold", async (t) => {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-cohort-hold-");
   const testerPath = path.join(tempRoot, "tester-1");
   const jsonPath = path.join(tempRoot, "cohort.json");
   const markdownPath = path.join(tempRoot, "cohort.md");

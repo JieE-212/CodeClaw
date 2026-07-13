@@ -55,7 +55,7 @@ await withAutomationResources(async (scope) => {
 
   const scan = await request("/api/repo/scan", { path: targetRepo });
   const task = await request("/api/tasks/create", { goal, rootPath: scan.profile.rootPath });
-  const plan = await request("/api/agent/plan", { goal, repoProfile: scan.profile, taskId: task.task.id });
+  const plan = await request("/api/agent/plan", { goal, taskId: task.task.id });
   const context = (await previewAndApproveModelOperation(request, {
     operation: "context-files",
     taskId: task.task.id

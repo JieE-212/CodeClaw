@@ -98,7 +98,7 @@ test("patch APIs reject stale and ignored targets, while protecting post-apply e
     const applyCompleted = await request(baseUrl, "/api/tasks/apply-patch", { taskId: orderedTask.id, approved: true });
     assert.equal(applyCompleted.response.status, 409);
     assert.equal(applyCompleted.payload.code, "TASK_ALREADY_COMPLETED");
-    const replanCompleted = await request(baseUrl, "/api/agent/plan", { taskId: orderedTask.id, goal: "change again", repoProfile: { rootPath: workspace } });
+    const replanCompleted = await request(baseUrl, "/api/agent/plan", { taskId: orderedTask.id, goal: "change again" });
     assert.equal(replanCompleted.response.status, 409);
     assert.equal(replanCompleted.payload.code, "TASK_ALREADY_COMPLETED");
     await fs.writeFile(firstPath, "first-old\n", "utf8");

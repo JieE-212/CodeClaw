@@ -76,7 +76,6 @@ await withAutomationResources(async (scope) => {
   });
   const plan = await appRequest("/api/agent/plan", {
     goal: task.task.goal,
-    repoProfile: scan.profile,
     taskId: task.task.id
   });
 

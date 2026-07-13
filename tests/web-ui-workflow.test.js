@@ -65,6 +65,8 @@ test("preflight workflow state comes from currentPreflight while repoProfile onl
   const snapshot = functionBody(app, "buildWorkflowSnapshot");
   const receipt = functionBody(app, "renderPreflightReceipt");
   const stepRenderer = functionBody(app, "renderWorkflowSteps");
+  const preflightRenderer = functionBody(app, "renderPreflightReport");
+  const repoRenderer = functionBody(app, "renderRepoSummary");
   assert.match(snapshot, /const hasPath\s*=\s*Boolean\([^;]*repoProfile\?\.rootPath/);
   assert.match(snapshot, /const preflightWarnings\s*=\s*currentPreflight\?/);
   assert.match(snapshot, /const preflightBlockers\s*=\s*currentPreflight\?/);
@@ -72,6 +74,11 @@ test("preflight workflow state comes from currentPreflight while repoProfile onl
   assert.doesNotMatch(snapshot, /(?:preflightWarnings|preflightBlockers)\s*=\s*repoProfile/);
   assert.match(receipt, /currentPreflight/);
   assert.doesNotMatch(receipt, /repoProfile/);
+  assert.match(preflightRenderer, /report\.repo\?\.budget/);
+  assert.match(preflightRenderer, /report\.search\?\.budget/);
+  assert.match(preflightRenderer, /report\.readFiles/);
+  assert.match(repoRenderer, /profile\.budget/);
+  assert.match(app, /function formatRuntimeBudgetEvidence\s*\(/);
 
   assert.match(stepRenderer, /data-workflow-step/);
   assert.match(stepRenderer, /setAttribute\(["']aria-current["']\s*,\s*["']step["']\)/);
@@ -143,6 +150,26 @@ test("stateful async UI responses are bound to one workflow generation and targe
     assert.match(body, /captureWorkflowTarget\(/, `${name} must capture its target`);
     assert.match(body, /workflowTargetIsCurrent\(/, `${name} must reject a stale response`);
   }
+});
+
+test("long local operations have explicit cancel controls and stable operation IDs", () => {
+  for (const id of ["cancelScanButton", "cancelPreflightButton", "cancelModelOperationButton", "cancelVerifyButton"]) {
+    assert.match(html, new RegExp(`id="${id}"[^>]+data-i18n="button\\.cancelOperation"[^>]+hidden`));
+  }
+  for (const [kind, endpoint] of [
+    ["scan", "/api/repo/scan"],
+    ["preflight", "/api/preflight/run"],
+    ["model-send", "/api/model/send"],
+    ["verify", "/api/tools/call"]
+  ]) {
+    assert.match(app, new RegExp(`requestManagedOperation\\("${kind}", "${endpoint.replaceAll("/", "\\/")}"`));
+  }
+  const managed = functionBody(app, "requestManagedOperation");
+  const cancellation = functionBody(app, "cancelActiveOperation");
+  assert.match(managed, /operationId: operation\.id/);
+  assert.match(managed, /finally\s*\{/);
+  assert.match(cancellation, /"\/api\/operations\/cancel"/);
+  assert.match(cancellation, /operation\.cancelling = true/);
 });
 
 test("every workflow module has localized semantics and all data boundaries are explicit", () => {

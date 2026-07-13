@@ -1,17 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createIsolatedProject } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptPath = path.join(rootPath, "scripts", "live-session-capture.js");
 
 test("live-capture writes host capture files for a clean session folder", async (t) => {
-  const fixture = await makeFixture("tester-1");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
-  const result = await runLiveCapture(fixture.args);
+  const fixture = await makeFixture(t, "tester-1");
+  const result = await runLiveCapture(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
   assert.equal(result.code, 0);
@@ -26,12 +24,11 @@ test("live-capture writes host capture files for a clean session folder", async 
 });
 
 test("live-capture blocks screenshots and personal contact data", async (t) => {
-  const fixture = await makeFixture("tester-1");
-  t.after(() => fs.rm(fixture.runRoot, { recursive: true, force: true }));
+  const fixture = await makeFixture(t, "tester-1");
   await fs.writeFile(path.join(fixture.sessionPath, "screenshot.png"), "not a real image", "utf8");
   await fs.appendFile(path.join(fixture.sessionPath, "TRIAL_FEEDBACK_TEMPLATE.md"), "\n- Name: Real Person\n- Contact: person@example.com\n", "utf8");
 
-  const result = await runLiveCapture(fixture.args);
+  const result = await runLiveCapture(fixture);
   const report = JSON.parse(await fs.readFile(fixture.jsonPath, "utf8"));
 
   assert.notEqual(result.code, 0);
@@ -41,8 +38,10 @@ test("live-capture blocks screenshots and personal contact data", async (t) => {
   assert.ok(report.blockers.some((item) => item.includes("Personal Name field")));
 });
 
-async function makeFixture(testerId) {
-  const runRoot = path.join(rootPath, "dist", `live-capture-test-${process.pid}-${Date.now()}`);
+async function makeFixture(t, testerId) {
+  const isolated = await createIsolatedProject(t, rootPath, "codeclaw-live-capture-");
+  const projectRoot = isolated.projectRoot;
+  const runRoot = path.join(projectRoot, "dist", "live-capture-test");
   const sessionPath = path.join(runRoot, "session");
   const preLivePath = path.join(runRoot, "TRIAL_PRE_LIVE_REPORT.json");
   const jsonPath = path.join(runRoot, "TRIAL_LIVE_CAPTURE_REPORT.json");
@@ -55,20 +54,21 @@ async function makeFixture(testerId) {
     decision: "PRE_LIVE_READY_TO_HOST",
     testerId,
     sessionFolder: sessionPath,
-    sessionRelativePath: path.relative(rootPath, sessionPath).split(path.sep).join("/"),
+    sessionRelativePath: path.relative(projectRoot, sessionPath).split(path.sep).join("/"),
     blockers: [],
     warnings: []
   });
   return {
+    isolated,
     runRoot,
     sessionPath,
     jsonPath,
     args: [
       "--tester", testerId,
-      "--session", path.relative(rootPath, sessionPath),
-      "--pre-live", path.relative(rootPath, preLivePath),
-      "--json", path.relative(rootPath, jsonPath),
-      "--markdown", path.relative(rootPath, markdownPath)
+      "--session", path.relative(projectRoot, sessionPath),
+      "--pre-live", path.relative(projectRoot, preLivePath),
+      "--json", path.relative(projectRoot, jsonPath),
+      "--markdown", path.relative(projectRoot, markdownPath)
     ]
   };
 }
@@ -93,20 +93,8 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function runLiveCapture(args) {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], { cwd: rootPath }, (error, stdout, stderr) => {
-      if (error && typeof error.code !== "number") {
-        reject(error);
-        return;
-      }
-      resolve({
-        code: typeof error?.code === "number" ? error.code : 0,
-        stdout,
-        stderr
-      });
-    });
-  });
+function runLiveCapture(fixture) {
+  return fixture.isolated.execNodeScript("live-session-capture.js", fixture.args, { label: "isolated live-session capture" });
 }
 
 async function exists(targetPath) {

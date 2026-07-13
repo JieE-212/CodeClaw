@@ -5,13 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { AuditLog, summarizeToolResult } from "../packages/audit-log/src/index.js";
 
-async function makeLog() {
+async function makeLog(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-audit-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   return new AuditLog({ storagePath: path.join(root, "audit.jsonl") });
 }
 
-test("AuditLog records and returns latest events first", async () => {
-  const log = await makeLog();
+test("AuditLog records and returns latest events first", async (t) => {
+  const log = await makeLog(t);
   await log.record({ type: "repo.scan", title: "Scan", rootPath: "C:/repo-a", detail: "first" });
   await log.record({ type: "tool.call", title: "Tool", rootPath: "C:/repo-a", detail: "second" });
 
@@ -21,8 +22,9 @@ test("AuditLog records and returns latest events first", async () => {
   assert.equal(events[1].title, "Scan");
 });
 
-test("AuditLog filters by root path and ignores malformed lines", async () => {
+test("AuditLog filters by root path and ignores malformed lines", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-audit-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const storagePath = path.join(root, "audit.jsonl");
   const log = new AuditLog({ storagePath });
   await log.record({ type: "repo.scan", rootPath: "C:/repo-a" });
@@ -38,6 +40,10 @@ test("summarizeToolResult creates compact descriptions", () => {
   assert.equal(summarizeToolResult({ blocked: true, message: "needs approval" }), "needs approval");
   assert.equal(summarizeToolResult({ result: { exitCode: 0, timedOut: false } }), "exitCode=0, timedOut=false");
   assert.equal(summarizeToolResult({ result: ["a", "b"] }), "2 item(s) returned.");
+  assert.equal(
+    summarizeToolResult({ result: ["a"], truncated: true, budget: { reasons: ["max-files"] } }),
+    "1 item(s) returned. Partial result (max-files)."
+  );
 });
 
 test("model audit events retain only bounded metadata and never persist bodies", async (t) => {

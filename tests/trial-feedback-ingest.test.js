@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestResources } from "./helpers/test-resources.js";
 
 const rootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = path.join(rootPath, "scripts", "ingest-trial-feedback.js");
 
-test("feedback ingest recognizes neutral next-tester decision fields", async () => {
-  const fixture = await makeFixture([
+test("feedback ingest recognizes neutral next-tester decision fields", async (t) => {
+  const fixture = await makeFixture(t, [
     "- Safe to continue to the next tester: Yes",
     "- Should this build continue to the next tester? Yes",
     "- Proceed to the next tester: Yes"
@@ -26,8 +26,8 @@ test("feedback ingest recognizes neutral next-tester decision fields", async () 
   assert.ok(report.nextSteps.every((item) => !/tester[ -]?2/i.test(item)));
 });
 
-test("feedback ingest blocks a neutral next-tester no decision with neutral guidance", async () => {
-  const fixture = await makeFixture([
+test("feedback ingest blocks a neutral next-tester no decision with neutral guidance", async (t) => {
+  const fixture = await makeFixture(t, [
     "- Proceed to the next tester: No"
   ]);
   const result = await runIngest(fixture);
@@ -41,8 +41,8 @@ test("feedback ingest blocks a neutral next-tester no decision with neutral guid
   assert.ok(report.nextSteps.every((item) => !/tester 2/i.test(item)));
 });
 
-test("feedback ingest keeps legacy tester-2 decision fields compatible", async () => {
-  const fixture = await makeFixture([
+test("feedback ingest keeps legacy tester-2 decision fields compatible", async (t) => {
+  const fixture = await makeFixture(t, [
     "- Should this build go to tester 2? Yes"
   ]);
   const result = await runIngest(fixture);
@@ -53,8 +53,8 @@ test("feedback ingest keeps legacy tester-2 decision fields compatible", async (
   assert.equal(report.decisionSignals.length, 1);
 });
 
-async function makeFixture(fields) {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "codeclaw-feedback-ingest-"));
+async function makeFixture(t, fields) {
+  const { rootPath: tempRoot } = await createTestResources(t, "codeclaw-feedback-ingest-");
   const inputPath = path.join(tempRoot, "feedback");
   const jsonPath = path.join(tempRoot, "TRIAL_FEEDBACK_SUMMARY.json");
   const markdownPath = path.join(tempRoot, "TRIAL_FEEDBACK_SUMMARY.md");

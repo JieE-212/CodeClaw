@@ -59,7 +59,11 @@ test("two server processes sharing one authoritative disposable workspace serial
   }
 
   const results = await Promise.all(ports.map((port, index) => request(`http://127.0.0.1:${port}`, "/api/tasks/apply-patch", approvals[index])));
-  assert.deepEqual(results.map((result) => result.response.status).sort(), [200, 409]);
+  assert.deepEqual(
+    results.map((result) => result.response.status).sort(),
+    [200, 409],
+    JSON.stringify(results.map((result) => ({ status: result.response.status, code: result.payload.code, error: result.payload.error })))
+  );
   assert.equal(results.find((result) => result.response.status === 409).payload.code, "PATCH_BASELINE_CONFLICT");
   assert.equal(await fs.readFile(path.join(workspace, "file.txt"), "utf8"), "after\n");
 

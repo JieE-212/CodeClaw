@@ -4,7 +4,7 @@
 
 ## 1. 当前决策
 
-CodeClaw 已完成第一轮真人测试、第一批问题修复和 `Stage 3.0.9` remediation 工程闭环。真人复测继续暂停；当前按用户授权进入无需逐项确认的工程加固循环。`Stage 3.0.10` 至 `3.0.13` 已完成机器验证，当前下一阶段是 `3.0.14`，之后推进 `4B`。
+CodeClaw 已完成第一轮真人测试、第一批问题修复和 `Stage 3.0.9` remediation 工程闭环。真人复测继续暂停；当前按用户授权进入无需逐项确认的工程加固循环。`Stage 3.0.10` 至 `3.0.14` 已完成机器验证和独立提交；当前直接推进 `4B`。
 
 这里的“工程闭环”不等于复测准入已经通过：host-1 的七项人工验收尚未完成，真实 remediation 状态继续是 `REMEDIATION_HOLD`。后续阶段的机器通过不会改写 tester-2 的 `AFTER_LIVE_BLOCKED`，也不会自动开放真实原项目写入。
 
@@ -343,8 +343,8 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 | 3.0.11 可丢弃项目副本 | machine verified；host acceptance pending | 统一数据边界策略、预览/创建/激活/清理、哈希 Manifest、原项目服务端只读能力 | “副本可安全分享”或“副本不含普通源码” |
 | 3.0.12 隐私与模型出站透明度 | machine verified；committed | 所有模型操作两阶段 preview/send、精确披露、秘密/ignored 阻断、endpoint 范围限制、本地状态最小化；全量门禁通过 | 在线模型零出站；本机模型零本地 HTTP 数据传输；所有外部 TOCTOU 已完全关闭 |
 | 3.0.13 新手界面与无障碍 | machine verified；committed | 单一权威流程、新手/高级模式、语义标签、焦点/键盘/响应式静态契约、三语门禁；顺序/竞态门禁通过 | 新手主观清晰度、NVDA/高对比度/真实像素验收 |
-| 3.0.14 稳定性与性能 | planned | 测试 fixture 全隔离、请求/扫描/模型预算、取消与超时、进程/端口/状态清理、增长上限 | 真实大型项目的主观等待感和真实断电体验 |
-| 4B Windows 启动器与候选包 | planned | 候选身份校验、回环监听、就绪后开页、端口冲突分流、哈希 Manifest/篡改检测、无孤儿进程 | 干净 Windows 10/11、Defender/SmartScreen、双击体验等人工验收 |
+| 3.0.14 稳定性与性能 | machine verified；committed | 测试 fixture 全隔离、请求/扫描/模型预算、取消与超时、进程/端口/状态清理、增长上限 | 真实大型项目的主观等待感、真实断电、Windows 后代树完整验收 |
+| 4B Windows 启动器与候选包 | planned；next | 候选身份校验、回环监听、就绪后开页、端口冲突分流、哈希 Manifest/篡改检测、无孤儿进程 | 干净 Windows 10/11、Defender/SmartScreen、双击体验等人工验收 |
 
 ### 15.1 Stage 3.0.10 已完成的机器证据
 
@@ -387,7 +387,7 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 
 诚实边界：Node 路径 API 仍有极小 TOCTOU 窗口；未验证真实断电、异常文件系统、ACL/杀毒软件干预和真人副本使用。若 `.gitignore` 忽略其自身，该规则文件不会进入副本，因此不宣称原 ignore 规则快照会约束副本未来新建路径。浏览器插件缺少自动化 helper，像素、键盘、NVDA、高对比度和干净 Windows 验收仍为人工项。
 
-当前正式状态：`Stage 3.0.13 machine verified and committed; Stage 3.0.14 next; remediation REMEDIATION_HOLD`。host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
+当前正式状态：`Stage 3.0.14 machine verified and committed; Stage 4B in progress; remediation REMEDIATION_HOLD`。host-1 七项人工验收仍待完成，真人 tester-3 保持 `not scheduled`，真实原项目写入没有因此开放。
 
 ### 15.4 Stage 3.0.12 已完成的机器证据
 
@@ -408,13 +408,13 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 2. `npm.cmd run check` 通过，三语各 714 个 key；health、smoke、`pilot:self`、`pilot:fixture`、`pilot:inbox`、`pilot:model`、real-repo preflight 和 first-trial simulation 全部通过，`pilot:model` 为 9 次 exact send。
 3. 默认 `.codeclaw` 已完成启动迁移：26 个 task、59 个 context record，正文 0，当前 59 个 source 均为白名单内的 `read_file`；legacy suggestion entry 0；`model.json` 无凭据字段；model/server-error audit detail 均为空。`.codeclaw` 仍是本地状态，不进入 Git。
 4. 14 个自动化 `%TEMP%` 前缀剩余数为 0，已知历史临时目录和 `server-bg.log` 已删除；4173 无监听，三个 example 无 diff，未保留一次性调试代码、测试开关或墓碑分支。
-5. 最终 Git 审计与独立提交仍待主线程执行：检查完整 diff、`git diff --check`、明确暂存清单和禁入项；不得把 `dist/`、`.codeclaw/`、日志、截图、evidence 或真人记录加入提交，不直接 push。
+5. 最终 Git 审计与独立提交已由主线程完成；`dist/`、`.codeclaw/`、日志、截图、evidence 和真人记录均未进入提交，也未 push。
 
 诚实边界：在线 provider 会收到用户审核过的请求正文，CodeClaw 无法控制其后续保留；本机 provider 仍通过 loopback HTTP 传输；JavaScript 缓冲覆写只是 best effort；本阶段未重新运行任何真实云模型，也未完成真人、像素、NVDA、高对比度或干净 Windows 验收。Manifest 最终复验与随后 TaskStore 原子 rename 不是一个文件系统原子快照，极端外部并发编辑仍可能留下过时补丁草案；Apply 的 baseline hash 复验会阻止它覆盖已变化文件，因此不得宣称完全关闭所有外部 TOCTOU。
 
 ### 15.5 Stage 3.0.13 已完成的机器证据
 
-当前状态是 `machine verified; final Git audit/commit pending`。已完成的实现包括：
+当前状态是 `machine verified; committed`。已完成的实现包括：
 
 - 删除 Quick Start、旧 Guide 和 trial-host 产品路径，建立唯一的八步流程：`project -> preflight -> plan -> context -> patch -> workspace -> verify -> complete`。默认新手模式；高级模式只改变呈现，不进入请求或权限判断。
 - 每一步都有语义 section、用途、读取/项目写入/联网/命令/本地状态五类影响说明；桌面侧栏 sticky，900/620/390px 有响应式契约，导航和步骤使用 `aria-current`，表单标签、单主状态区、focus-visible、reduced-motion、forced-colors 和 AA 主按钮对比度均有静态门禁。
@@ -432,3 +432,21 @@ planned -> in progress -> machine verified -> host reviewed -> ready/hold
 4. 真实仓库预检明确 `writeAttempted:false`；模拟报告显示 Demo 恢复、真实仓库 0 写入、未确认 Apply/Verify 均被阻断。生成的两份 `dist` 模拟报告已在记录结果后删除，不进入 Git。
 
 诚实边界：浏览器插件缺少必需的自动化 helper，因此没有宣称真实像素、完整键盘、NVDA 或 Windows 高对比度实测通过；静态响应式/无障碍契约不能代替真人主观清晰度。浏览器、模型和外部编辑仍存在无法完全消除的调度窗口，但权威服务端门禁会拒绝陈旧对象落盘或完成。真人测试继续暂停，host-1 人工验收仍未完成，故 remediation 保持 `REMEDIATION_HOLD`。
+
+### 15.6 Stage 3.0.14 已完成的机器证据
+
+当前状态是 `machine verified; committed`。已完成的实现包括：
+
+- 测试 fixture 不再写仓库 `dist`，临时项目、状态目录、listener 和 server 统一登记并幂等清理；源契约门禁拒绝固定端口、未关闭服务以及没有可靠 cleanup 的临时目录。
+- JSON 请求体、仓库遍历、文件/深度/摘要/Manifest/ignore 规则、上下文、ToolRegistry 读取/搜索/总字节/长行/结果序列化均有明确预算。可安全保留的超限结果用结构化 `partial`/`truncated` 与原因呈现；Data Boundary Manifest 则 fail closed，并在 stat 已知超限时于哈希 I/O 前拒绝。
+- 敏感遍历复验目录父链身份；持续路径替换返回 `TRAVERSAL_PATH_CHANGED`。Node 没有 `openat` 风格 API，因此该复验是风险收窄，不是绝对消除外部 TOCTOU。
+- OperationManager 提供全局/同类并发、deadline、显式取消、`running -> committing -> committed` 单向边界和有界 `waitForIdle`。Scan、Preflight、模型 Send、工具调用和 Verify 纳入统一管理；客户端断开可取消 running 操作，进入 commit 后不再接受迟到的用户取消，但仍受独立 commit deadline 约束。权威原子写完成后显式确认 committed，避免 deadline 与落盘完成重叠时出现“已保存却返回 504”。
+- 服务收到 SIGINT/SIGTERM 后先停止接收新 API，再取消 running 操作：普通 running 清理最多等待 2.5 秒，已进入 commit 的操作按独立 10 秒 deadline 加 750 ms 余量完成；连接另有 1 秒收口，整体 13.25 秒强制退出上限。POSIX 使用独立进程组 TERM/KILL；Windows 使用参数化 `taskkill /PID /T /F` 路径并在无法验证后代终止时 fail closed。
+- TaskStore、MemoryStore 和 AuditLog 均有文件/集合/条目增长上限与启动迁移；审计跨实例加锁、两代轮转并连接 rotation digest。活动补丁和恢复证据不会为满足普通历史上限而被自动删除。
+- UI 为 Scan、Preflight、模型 Send 和 Verify 提供明确取消按钮和 active/cancelling/cancelled 状态；三语词典为每语种 723 个同键，0 warning/failure。
+
+最终机器证据：默认 `npm.cmd test` 已限制为并发 4；最终有界全量为 398 total、394 pass、0 fail、4 个环境性 skip。单并发完整基线为 397/393/0/4，随后唯一新增的文件增长预算回归也以单并发通过。`npm.cmd run check`、health、i18n、UI/accessibility/workflow 静态契约及聚焦 operation/process/stable-directory/state/server 集成回归通过；在途模型显式取消、提交中的 SIGTERM 等待、审计写入故障、原子 preflight 和 Windows 瞬时锁竞争均由集成测试覆盖。取消场景没有保存成功模型结果，已确认的原子提交也不会因 deadline 竞态被误报为 504。
+
+诚实边界：当前 Windows 沙箱拒绝真实 `taskkill /T`，相关后代树测试诚实 skip；父 wrapper 已退出后的可靠 Windows 后代归属仍可能需要 Job Object，不能宣称真实 Windows 进程树已验收。Node 缺少 `openat`，不能宣称所有目录替换竞态已关闭。真实断电、异常文件系统、真实大型项目主观等待感、像素、完整键盘、NVDA、高对比度、干净 Windows 10/11、非管理员账户、Defender/SmartScreen、默认浏览器和双击体验均未验收。真人测试继续暂停；tester-2 的 `AFTER_LIVE_BLOCKED`、remediation 的 `REMEDIATION_HOLD`、tester-3 `not scheduled` 和原项目只读边界保持不变。
+
+最终 diff/Git/禁入项/临时产物审计与独立提交已完成；`dist/`、`.codeclaw/`、日志、截图、真人记录或证据包均未提交，也未保留临时测试代码或墓碑分支。当前进入 Stage 4B，不直接 push。
